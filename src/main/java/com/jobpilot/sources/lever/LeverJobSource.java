@@ -1,0 +1,55 @@
+package com.jobpilot.sources.lever;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.jobpilot.common.ExternalHttpClient;
+import com.jobpilot.config.JobPilotProperties;
+import com.jobpilot.jobs.domain.RawJob;
+import com.jobpilot.sources.JobSource;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import org.springframework.stereotype.Component;
+import org.springframework.web.util.HtmlUtils;
+
+@Component
+public class LeverJobSource implements JobSource {
+    private final ExternalHttpClient http;
+    private final List<String> companies;
+
+    public LeverJobSource(ExternalHttpClient http, JobPilotProperties properties) {
+        this.http = http;
+        this.companies = properties.sources().leverCompanyIds();
+    }
+
+    @Override
+    public String getSourceName() {
+        return "lever";
+    }
+
+    @Override
+    public List<RawJob> fetchJobs() {
+        List<RawJob> jobs = new ArrayList<>();
+        for (String company : companies) {
+            jobs.addAll(parse(company, http.getJson("https://api.lever.co/v0/postings/" + company + "?mode=json")));
+        }
+        return jobs;
+    }
+
+    public List<RawJob> parse(String company, JsonNode root) {
+        List<RawJob> result = new ArrayList<>();
+        for (JsonNode item : root) {
+            String rawDescription = item.path("descriptionPlain").asText(item.path("description").asText(""));
+            result.add(new RawJob(getSourceName(), item.path("id").asText(),
+                    item.path("hostedUrl").asText(), item.path("text").asText(), company,
+                    item.path("categories").path("location").asText(""),
+                    plainText(rawDescription), item.path("categories").path("commitment").asText(null),
+                    item.hasNonNull("createdAt") ? Instant.ofEpochMilli(item.path("createdAt").asLong()) : null,
+                    null, item.toString()));
+        }
+        return result;
+    }
+
+    private String plainText(String html) {
+        return HtmlUtils.htmlUnescape(html.replaceAll("<[^>]+>", " ")).replaceAll("\\s+", " ").trim();
+    }
+}

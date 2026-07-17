@@ -1,0 +1,15 @@
+.idea/
+.vscode/
+*.iml
+target/
+.env
+.env.*
+!.env.example
+data/
+*.log
+*.pdf
+*.docx
+.DS_Store
+dependency-check-report.*
+.mvn/repository/
+.mvn/wrapper/dists/
