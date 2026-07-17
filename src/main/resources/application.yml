@@ -1,0 +1,63 @@
+spring:
+  application:
+    name: jobpilot
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/jobpilot}
+    username: ${POSTGRES_USER:jobpilot}
+    password: ${POSTGRES_PASSWORD:jobpilot}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc.time_zone: UTC
+  flyway:
+    enabled: true
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+server:
+  shutdown: graceful
+  port: ${PORT:8080}
+management:
+  endpoints.web.exposure.include: health,info,metrics
+  endpoint.health.probes.enabled: true
+logging:
+  level:
+    root: INFO
+    com.jobpilot: INFO
+    org.springframework.web.reactive.function.client: WARN
+
+jobpilot:
+  telegram:
+    bot-token: ${TELEGRAM_BOT_TOKEN:}
+    channel-id: ${TELEGRAM_CHANNEL_ID:}
+    admin-user-ids: ${TELEGRAM_ADMIN_USER_IDS:}
+  sources:
+    greenhouse-board-tokens: ${GREENHOUSE_BOARD_TOKENS:}
+    lever-company-ids: ${LEVER_COMPANY_IDS:}
+  http:
+    connect-timeout: 5s
+    response-timeout: 20s
+    max-response-bytes: 2097152
+  scheduling:
+    fetch-cron: ${JOB_FETCH_CRON:0 0 */6 * * *}
+    digest-cron: ${DAILY_DIGEST_CRON:0 0 9 * * *}
+    stale-days: ${STALE_DAYS:30}
+  search-terms:
+    - Java Internship
+    - Java Developer Intern
+    - Java Trainee
+    - Java Academy
+    - Junior Java Developer
+    - Entry-Level Java Developer
+    - Backend Developer Intern
+    - Fullstack Developer Intern
+    - Software Engineer Intern
+    - Graduate Software Engineer
+    - Junior Backend Developer
+    - Spring Boot Internship
+    - Mentorship
+    - Apprenticeship
+    - Trainee Program
+  locations: [Bucharest, București, Romania, Remote Romania, Hybrid Bucharest]
