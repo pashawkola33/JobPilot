@@ -19,9 +19,6 @@ spring:
 server:
   shutdown: graceful
   port: ${PORT:8080}
-management:
-  endpoints.web.exposure.include: health,info,metrics
-  endpoint.health.probes.enabled: true
 logging:
   level:
     root: INFO
@@ -32,10 +29,17 @@ jobpilot:
   telegram:
     bot-token: ${TELEGRAM_BOT_TOKEN:}
     channel-id: ${TELEGRAM_CHANNEL_ID:}
-    admin-user-ids: ${TELEGRAM_ADMIN_USER_IDS:}
   sources:
     greenhouse-board-tokens: ${GREENHOUSE_BOARD_TOKENS:}
     lever-company-ids: ${LEVER_COMPANY_IDS:}
+  candidate:
+    home-country: Romania
+    preferred-locations: [Bucharest, București, Romania, Remote Romania]
+    backend-skills: [Java, Spring Boot, REST, SQL, PostgreSQL, JPA, Maven, JUnit]
+    supporting-skills: [React, TypeScript, JavaScript, HTML, CSS, Git, CI/CD, GitHub Actions]
+    current-student: true
+    final-year-student: false
+    commercial-java-years: 0
   http:
     connect-timeout: 5s
     response-timeout: 20s

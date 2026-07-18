@@ -23,6 +23,9 @@ public class JobDeduplicationService {
             Optional<Job> byExternalId = repository.findBySourceAndExternalId(job.getSource(), job.getExternalId());
             if (byExternalId.isPresent()) return byExternalId;
         }
+        if (job.getDescription().isBlank()) {
+            return repository.findFirstByNormalizedFingerprint(job.getNormalizedFingerprint());
+        }
         return repository.findFirstByNormalizedFingerprintOrDescriptionHash(
                 job.getNormalizedFingerprint(), job.getDescriptionHash());
     }

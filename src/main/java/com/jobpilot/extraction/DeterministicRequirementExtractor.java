@@ -29,7 +29,8 @@ public class DeterministicRequirementExtractor {
         List<String> spoken = spokenLanguages(text);
         List<String> mentoring = signals(lower, Map.of(
                 "mentorship", "mentorship", "mentor", "mentor", "structured learning", "structured learning",
-                "training program", "training program", "academy", "academy", "pair programming", "pair programming"));
+                "structured mentorship", "structured mentorship", "training program", "training program",
+                "academy", "academy", "pair programming", "pair programming"));
         return new ExtractedRequirements(seniority(lower), trainee, experience(text),
                 education(text), finalYear, technologies, programming, spoken,
                 job.getLocation(), remoteEligibility(lower), mentoring, workAuthorization(text),
@@ -42,8 +43,8 @@ public class DeterministicRequirementExtractor {
                 "PostgreSQL", "JPA", "Hibernate", "Maven", "JUnit", "Mockito", "React", "React Native",
                 "TypeScript", "JavaScript", "HTML", "CSS", "Git", "GitHub Actions", "CI/CD", "Docker",
                 "Kubernetes", "Python", "Kotlin", "C#", "C++", "Go", "AWS", "Azure", "GCP")) {
-            String expression = "(?i)(?<![\\p{L}\\p{N}])" + Pattern.quote(tech)
-                    .replace("CI/CD", "CI(?:/|\\s*)CD") + "(?![\\p{L}\\p{N}])";
+            String token = "CI/CD".equals(tech) ? "CI(?:/|\\s*)CD" : Pattern.quote(tech);
+            String expression = "(?i)(?<![\\p{L}\\p{N}])" + token + "(?![\\p{L}\\p{N}])";
             map.put(tech, Pattern.compile(expression));
         }
         return Map.copyOf(map);
