@@ -1,27 +1,22 @@
 package com.jobpilot.jobs.service;
 
 import com.jobpilot.common.Hashing;
+import com.jobpilot.common.UrlCanonicalizer;
 import com.jobpilot.jobs.domain.Job;
 import com.jobpilot.jobs.domain.RawJob;
 import com.jobpilot.jobs.domain.RemoteType;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.time.Clock;
-import java.util.Arrays;
 import java.util.Locale;
-import java.util.Set;
-import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 
 @Service
 public class JobNormalizer {
-    private static final Set<String> TRACKING_PARAMETERS = Set.of(
-            "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
-            "ref", "referrer", "source", "gh_src");
     private final Clock clock;
+    private final UrlCanonicalizer urlCanonicalizer;
 
-    public JobNormalizer(Clock clock) {
+    public JobNormalizer(Clock clock, UrlCanonicalizer urlCanonicalizer) {
         this.clock = clock;
+        this.urlCanonicalizer = urlCanonicalizer;
     }
 
     public Job normalize(RawJob raw) {
@@ -41,30 +36,7 @@ public class JobNormalizer {
     }
 
     public String canonicalizeUrl(String raw) {
-        try {
-            URI uri = new URI(raw.strip()).normalize();
-            String scheme = uri.getScheme() == null ? null : uri.getScheme().toLowerCase(Locale.ROOT);
-            String host = uri.getHost() == null ? null : uri.getHost().toLowerCase(Locale.ROOT);
-            if (scheme == null || host == null || !(scheme.equals("http") || scheme.equals("https"))) {
-                throw new IllegalArgumentException("Invalid job URL");
-            }
-            String query = uri.getRawQuery();
-            if (query != null) {
-                query = Arrays.stream(query.split("&"))
-                        .filter(part -> !TRACKING_PARAMETERS.contains(part.split("=", 2)[0].toLowerCase(Locale.ROOT)))
-                        .sorted().collect(Collectors.joining("&"));
-                if (query.isBlank()) {
-                    query = null;
-                }
-            }
-            String path = uri.getRawPath();
-            if (path != null && path.length() > 1 && path.endsWith("/")) {
-                path = path.substring(0, path.length() - 1);
-            }
-            return new URI(scheme, null, host, uri.getPort(), path, query, null).toString();
-        } catch (URISyntaxException exception) {
-            throw new IllegalArgumentException("Invalid job URL", exception);
-        }
+        return urlCanonicalizer.canonicalize(raw).toString();
     }
 
     private RemoteType remoteType(String location, String description) {

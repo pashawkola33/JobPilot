@@ -2,6 +2,7 @@ package com.jobpilot.extraction;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.jobpilot.common.UrlCanonicalizer;
 import com.jobpilot.jobs.domain.Job;
 import com.jobpilot.jobs.domain.RemoteType;
 import com.jobpilot.jobs.service.JobNormalizer;
@@ -14,7 +15,7 @@ import org.junit.jupiter.api.Test;
 
 class DeterministicRequirementExtractorTest {
     private final Clock clock = Clock.fixed(Instant.parse("2026-07-17T12:00:00Z"), ZoneOffset.UTC);
-    private final JobNormalizer normalizer = new JobNormalizer(clock);
+    private final JobNormalizer normalizer = new JobNormalizer(clock, new UrlCanonicalizer());
     private final DeterministicRequirementExtractor extractor = new DeterministicRequirementExtractor();
 
     @Test

@@ -46,6 +46,13 @@ jobpilot:
     connect-timeout: 5s
     response-timeout: 20s
     max-response-bytes: 2097152
+  manual-url:
+    connect-timeout: ${MANUAL_URL_CONNECT_TIMEOUT:5s}
+    response-timeout: ${MANUAL_URL_RESPONSE_TIMEOUT:15s}
+    max-redirects: ${MANUAL_URL_MAX_REDIRECTS:3}
+    max-response-bytes: ${MANUAL_URL_MAX_RESPONSE_BYTES:1048576}
+    max-title-length: ${MANUAL_URL_MAX_TITLE_LENGTH:500}
+    max-description-length: ${MANUAL_URL_MAX_DESCRIPTION_LENGTH:100000}
   scheduling:
     fetch-cron: ${JOB_FETCH_CRON:0 0 */6 * * *}
     digest-cron: ${DAILY_DIGEST_CRON:0 0 9 * * *}

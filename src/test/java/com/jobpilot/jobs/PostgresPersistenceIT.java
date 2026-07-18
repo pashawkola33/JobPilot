@@ -26,6 +26,7 @@ import com.jobpilot.llm.domain.LlmOperationType;
 import com.jobpilot.llm.domain.LlmUsageEvent;
 import com.jobpilot.llm.domain.LlmUsageStatus;
 import com.jobpilot.llm.repository.LlmUsageEventRepository;
+import com.jobpilot.manualurl.application.ManualJobPersistenceService;
 import com.jobpilot.resume.domain.CoverNote;
 import com.jobpilot.resume.domain.ResumeVersion;
 import com.jobpilot.resume.repository.CoverNoteRepository;
@@ -77,6 +78,8 @@ class PostgresPersistenceIT {
     private JobScoreRepository scores;
     @Autowired
     private JobProcessor processor;
+    @Autowired
+    private ManualJobPersistenceService manualJobPersistence;
     @Autowired
     private JdbcTemplate jdbcTemplate;
     @Autowired
@@ -133,6 +136,33 @@ class PostgresPersistenceIT {
         assertThat(jobs.findByCanonicalUrl("https://example.com/jobs/rt-1")).isPresent();
         assertThat(requirements.findByJobId(result.job().getId())).isPresent();
         assertThat(scores.findByJobId(result.job().getId())).isPresent();
+    }
+
+    @Test
+    void persistsManualVacancyThroughExistingPipelineAndDeduplicatesIt() {
+        RawJob manual = new RawJob(
+                "manual-schema-org", "manual-pg-1",
+                "https://PUBLIC.example/jobs/manual-pg-1?utm_source=feed&language=java",
+                "Java Backend Intern", "Public Example", "Bucharest, Romania",
+                "Java backend internship with mentorship using Java, Spring Boot, SQL, and Docker. "
+                        + "Candidates collaborate with the engineering team and build production services.",
+                "INTERN", Instant.parse("2026-07-18T10:00:00Z"), null,
+                "deterministic schema.org fixture");
+
+        var created = manualJobPersistence.persist(manual);
+        var duplicate = manualJobPersistence.persist(manual);
+
+        assertThat(created.newlyCreated()).isTrue();
+        assertThat(duplicate.newlyCreated()).isFalse();
+        assertThat(duplicate.job().getId()).isEqualTo(created.job().getId());
+        assertThat(created.job().getCanonicalUrl())
+                .isEqualTo("https://public.example/jobs/manual-pg-1?language=java");
+        assertThat(jobs.findByCanonicalUrl(created.job().getCanonicalUrl())).isPresent();
+        assertThat(requirements.findByJobId(created.job().getId()))
+                .hasValueSatisfying(requirement -> assertThat(requirement.toValue().technologies())
+                        .contains("Spring Boot", "Docker"));
+        assertThat(scores.findByJobId(created.job().getId())).isPresent();
+        assertThat(jobs.count()).isEqualTo(1);
     }
 
     @Test

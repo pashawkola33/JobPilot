@@ -40,13 +40,17 @@ public class GreenhouseJobSource implements JobSource {
     public List<RawJob> parse(String company, JsonNode root) {
         List<RawJob> result = new ArrayList<>();
         for (JsonNode item : root.path("jobs")) {
-            String description = plainText(item.path("content").asText(""));
-            result.add(new RawJob(getSourceName(), item.path("id").asText(),
-                    item.path("absolute_url").asText(), item.path("title").asText(),
-                    company, item.path("location").path("name").asText(""), description,
-                    null, parseInstant(item.path("updated_at").asText()), null, item.toString()));
+            result.add(parseOne(company, item));
         }
         return result;
+    }
+
+    public RawJob parseOne(String company, JsonNode item) {
+        String description = plainText(item.path("content").asText(""));
+        return new RawJob(getSourceName(), item.path("id").asText(),
+                item.path("absolute_url").asText(), item.path("title").asText(),
+                company, item.path("location").path("name").asText(""), description,
+                null, parseInstant(item.path("updated_at").asText()), null, item.toString());
     }
 
     private Instant parseInstant(String value) {

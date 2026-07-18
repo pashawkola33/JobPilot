@@ -38,15 +38,19 @@ public class LeverJobSource implements JobSource {
     public List<RawJob> parse(String company, JsonNode root) {
         List<RawJob> result = new ArrayList<>();
         for (JsonNode item : root) {
-            String rawDescription = item.path("descriptionPlain").asText(item.path("description").asText(""));
-            result.add(new RawJob(getSourceName(), item.path("id").asText(),
-                    item.path("hostedUrl").asText(), item.path("text").asText(), company,
-                    item.path("categories").path("location").asText(""),
-                    plainText(rawDescription), item.path("categories").path("commitment").asText(null),
-                    item.hasNonNull("createdAt") ? Instant.ofEpochMilli(item.path("createdAt").asLong()) : null,
-                    null, item.toString()));
+            result.add(parseOne(company, item));
         }
         return result;
+    }
+
+    public RawJob parseOne(String company, JsonNode item) {
+        String rawDescription = item.path("descriptionPlain").asText(item.path("description").asText(""));
+        return new RawJob(getSourceName(), item.path("id").asText(),
+                item.path("hostedUrl").asText(), item.path("text").asText(), company,
+                item.path("categories").path("location").asText(""),
+                plainText(rawDescription), item.path("categories").path("commitment").asText(null),
+                item.hasNonNull("createdAt") ? Instant.ofEpochMilli(item.path("createdAt").asLong()) : null,
+                null, item.toString());
     }
 
     private String plainText(String html) {

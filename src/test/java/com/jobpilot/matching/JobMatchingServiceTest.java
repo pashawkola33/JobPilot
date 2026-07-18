@@ -2,6 +2,7 @@ package com.jobpilot.matching;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.jobpilot.common.UrlCanonicalizer;
 import com.jobpilot.extraction.DeterministicRequirementExtractor;
 import com.jobpilot.jobs.domain.Job;
 import com.jobpilot.jobs.domain.RawJob;
@@ -15,7 +16,7 @@ import org.junit.jupiter.api.Test;
 
 class JobMatchingServiceTest {
     private final Clock clock = Clock.fixed(Instant.parse("2026-07-17T12:00:00Z"), ZoneOffset.UTC);
-    private final JobNormalizer normalizer = new JobNormalizer(clock);
+    private final JobNormalizer normalizer = new JobNormalizer(clock, new UrlCanonicalizer());
     private final DeterministicRequirementExtractor extractor = new DeterministicRequirementExtractor();
     private final JobMatchingService matching = new JobMatchingService(clock, TestProperties.create());
 
