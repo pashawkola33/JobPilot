@@ -1,0 +1,2 @@
+Senior Java Developer. Requires at least 5 years of professional experience with Java,
+Spring Boot, PostgreSQL, REST, JPA and Kubernetes. The engineer works independently.
