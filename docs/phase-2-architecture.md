@@ -89,6 +89,8 @@ Spring Data repositories exist for each aggregate and normalized fact/reference 
 
 The internal endpoint accepts a JSON body shaped as `{"url":"https://…"}` and returns one typed domain outcome. `CREATED` maps to HTTP 201, `ALREADY_EXISTS` to 200, `INVALID_URL` to 400, `BLOCKED_OR_PROTECTED` to 403, `UNSUPPORTED_SOURCE` and `PARSE_FAILED` to 422, and `FETCH_FAILED` to 502. Successful results include the persisted job ID, canonical URL, score, strengths, and risks.
 
+The endpoint is not a public trust boundary: deployments must keep it behind a trusted network boundary or add authentication. The default Docker Compose mapping exposes it only on host loopback.
+
 The application service intentionally owns no database transaction while network work is performed. Only `JobProcessor` opens the established per-vacancy transaction after a complete `RawJob` exists. `ManualJobPersistenceService` delegates to that pipeline and recovers a concurrent unique-constraint loser by looking up the winning row, yielding `ALREADY_EXISTS` rather than an internal error.
 
 For non-ATS pages, the stored source key is namespaced by canonical hostname (with a bounded SHA-256 fallback for unusually long hostnames). This preserves a page-provided external ID without allowing common identifiers such as `123` to collide across unrelated sites.
@@ -98,7 +100,8 @@ For non-ATS pages, the stored source key is namespaced by canonical hostname (wi
 `ManualUrlPolicy` is applied to the submitted URL and every redirect before a request is sent. It:
 
 - accepts only `http` and `https`, rejects embedded credentials, fragments, malformed/oversized URLs, and local/internal hostnames;
-- resolves the hostname and rejects any loopback, private, link-local, multicast, unspecified, reserved/documentation, carrier-grade NAT, unique-local IPv6, or cloud-metadata address;
+- resolves the hostname and rejects any loopback, private, link-local, multicast, unspecified, reserved/documentation, carrier-grade NAT, unique-local IPv6, `2001:2::/48` benchmarking, or cloud-metadata address;
+- recognizes 6to4 (`2002::/16`), Teredo (`2001:0000::/32`), NAT64 well-known (`64:ff9b::/96`), IPv4-compatible, and IPv4-mapped IPv6 forms, decodes their embedded IPv4 destinations, and applies the same prohibited-IPv4 policy;
 - retains the approved resolved addresses with the validated URI and rejects a hostname when any returned address is prohibited;
 - canonicalizes scheme/host/default ports/path and removes known tracking parameters while preserving the order of remaining query parameters.
 
@@ -116,6 +119,10 @@ Recognized Greenhouse and Lever job links are converted to their documented publ
 4. reject generic pages as `UNSUPPORTED_SOURCE`, malformed or incomplete vacancy data as `PARSE_FAILED`, and authentication/CAPTCHA/protection signals as `BLOCKED_OR_PROTECTED`.
 
 Title, company, canonical URL, and a meaningful bounded description are mandatory. Extracted HTML is sanitized to text before persistence. No LLM, browser automation, authentication, CAPTCHA solving, or protected-site fallback exists in Stage 2. Logs contain only outcome/failure categories, never submitted URLs, fetched bodies, credentials, or request headers.
+
+For schema.org and metadata pages, a meaningful description is at least 40 characters. Trusted Greenhouse and Lever API results may have a shorter description, but it must remain non-empty. Provider timestamps with an offset retain their supplied instant; a bare `LocalDate` has no timezone evidence and is normalized deterministically to UTC midnight.
+
+Fetch failures are exhaustively categorized. Protected/authentication responses map to `BLOCKED_OR_PROTECTED`, unsupported media types map to `UNSUPPORTED_SOURCE`, and timeouts, connection failures, unsuccessful HTTP responses, empty or oversized responses, invalid redirects, and redirect limits map to `FETCH_FAILED`. Unexpected programming or persistence errors are not converted to fetch failures; they remain server errors handled by the application-wide sanitized HTTP 500 path, preserving their stack trace in server logs.
 
 ## Verification
 

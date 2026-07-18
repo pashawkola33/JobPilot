@@ -8,6 +8,7 @@ import com.jobpilot.manualurl.domain.ManualSourceClassification;
 import com.jobpilot.manualurl.fetch.ManualFetchedResource;
 import com.jobpilot.support.TestProperties;
 import java.net.URI;
+import java.time.Instant;
 import org.junit.jupiter.api.Test;
 
 class DeterministicManualJobParserTest {
@@ -35,6 +36,9 @@ class DeterministicManualJobParserTest {
         assertThat(result.vacancy().description()).doesNotContain("<p>").contains("Spring Boot");
         assertThat(result.vacancy().location()).contains("Bucharest", "Romania");
         assertThat(result.vacancy().externalId()).isEqualTo("job-42");
+        assertThat(result.vacancy().publishedAt())
+                .as("bare LocalDate values are normalized to UTC midnight")
+                .isEqualTo(Instant.parse("2026-07-18T00:00:00Z"));
     }
 
     @Test
@@ -108,6 +112,47 @@ class DeterministicManualJobParserTest {
 
         assertThat(parser.parse(html(challenge)).status())
                 .isEqualTo(ManualParseStatus.BLOCKED_OR_PROTECTED);
+    }
+
+    @Test
+    void validJobPostingWithRecaptchaBadgeParsesSuccessfully() {
+        String body = script(jobPosting(""))
+                + "<div class='g-recaptcha-badge'>protected by reCAPTCHA</div>";
+
+        assertThat(parser.parse(html(body)).status()).isEqualTo(ManualParseStatus.SUCCESS);
+    }
+
+    @Test
+    void detectsStrongChallengeMarkerAfterTwentyThousandCharacters() {
+        String challenge = "<html><body><p>" + "x".repeat(21_000)
+                + "</p><p>Verify you are human</p></body></html>";
+
+        assertThat(parser.parse(html(challenge)).status())
+                .isEqualTo(ManualParseStatus.BLOCKED_OR_PROTECTED);
+    }
+
+    @Test
+    void weakProtectedPhraseInsideLegitimateVacancyDoesNotBlockParsing() {
+        String legitimateDescription = "Build access-control services and investigate access denied "
+                + "errors while maintaining Java and Spring Boot applications.";
+        String json = jobPosting("").replace(DESCRIPTION, legitimateDescription);
+
+        assertThat(parser.parse(html(script(json))).status()).isEqualTo(ManualParseStatus.SUCCESS);
+    }
+
+    @Test
+    void genericMarketingPageCannotUseOgSiteNameAsJobCompany() {
+        String marketing = """
+                <html><head>
+                  <meta property="og:title" content="Explore technology jobs">
+                  <meta property="og:site_name" content="Example Company">
+                </head><body><main>
+                  <p>Explore job opportunities, responsibilities, qualifications, roles and positions.</p>
+                  <p>Apply your skills across our products and learn about life at our company.</p>
+                </main></body></html>
+                """;
+
+        assertThat(parser.parse(html(marketing)).status()).isNotEqualTo(ManualParseStatus.SUCCESS);
     }
 
     @Test

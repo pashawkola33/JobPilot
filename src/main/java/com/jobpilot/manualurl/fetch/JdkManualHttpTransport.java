@@ -56,10 +56,11 @@ public class JdkManualHttpTransport implements ManualHttpTransport {
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
             throw new ManualFetchException(
-                    ManualFetchException.Category.NETWORK_FAILURE, "Remote request was interrupted", exception);
+                    ManualFetchException.Category.CONNECTION_FAILED,
+                    "Remote request was interrupted", exception);
         } catch (IOException exception) {
             throw new ManualFetchException(
-                    ManualFetchException.Category.NETWORK_FAILURE, "Remote request failed", exception);
+                    ManualFetchException.Category.CONNECTION_FAILED, "Remote request failed", exception);
         }
     }
 

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.jobpilot.common.UrlCanonicalizer;
 import java.net.InetAddress;
+import java.net.Inet6Address;
 import java.net.UnknownHostException;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -53,6 +54,43 @@ class ManualUrlPolicyTest {
     @Test
     void rejectsPrivateIpv6() {
         assertInvalid(policyReturningUnchecked("fd00::1234"), "https://public.example/job");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+            "2002:7f00:1::",
+            "2002:a00:1::",
+            "2001:0:4136:e378:8000:63bf:80ff:fffe",
+            "64:ff9b::7f00:1",
+            "64:ff9b::a00:1",
+            "::7f00:1",
+            "2001:2::",
+            "2001:2:0:ffff::1"
+    })
+    void rejectsIpv6TransitionsEmbeddingProhibitedIpv4AndBenchmarkingRange(String address) {
+        assertInvalid(policyReturningUnchecked(address), "https://public.example/job");
+    }
+
+    @Test
+    void rejectsIpv4MappedIpv6EvenWhenRepresentedAsInet6Address() throws Exception {
+        byte[] mappedLoopback = new byte[16];
+        mappedLoopback[10] = (byte) 0xff;
+        mappedLoopback[11] = (byte) 0xff;
+        mappedLoopback[12] = 127;
+        mappedLoopback[15] = 1;
+        InetAddress resolved = Inet6Address.getByAddress(null, mappedLoopback, -1);
+        ManualUrlPolicy policy = new ManualUrlPolicy(
+                new UrlCanonicalizer(), host -> List.of(resolved));
+
+        assertInvalid(policy, "https://public.example/job");
+    }
+
+    @Test
+    void acceptsNormalPublicIpv6Address() {
+        ManualUrlPolicy policy = policyReturningUnchecked("2606:4700:4700::1111");
+
+        assertThat(policy.validate("https://public.example/job").resolvedAddresses())
+                .singleElement().isInstanceOf(Inet6Address.class);
     }
 
     @Test

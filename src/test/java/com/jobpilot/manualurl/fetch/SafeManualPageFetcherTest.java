@@ -65,6 +65,25 @@ class SafeManualPageFetcherTest {
     }
 
     @Test
+    void classifiesEmptySuccessfulResponseSemantically() throws Exception {
+        var fixture = new Fixture(response(200, "text/html", null, ""));
+
+        assertCategory(() -> fixture.fetcher.fetch(fixture.initial()),
+                ManualFetchException.Category.EMPTY_RESPONSE);
+    }
+
+    @Test
+    void responseBodyRemainsImmutableAtItsExternalBoundary() {
+        byte[] source = "job".getBytes(StandardCharsets.UTF_8);
+        ManualHttpResponse response = new ManualHttpResponse(200, "text/plain", null, source);
+        source[0] = 'x';
+        byte[] returned = response.body();
+        returned[0] = 'y';
+
+        assertThat(response.body()).containsExactly('j', 'o', 'b');
+    }
+
+    @Test
     void rejectsUnsupportedContentType() throws Exception {
         var fixture = new Fixture(response(200, "application/pdf", null, "%PDF"));
 

@@ -16,14 +16,10 @@ import com.jobpilot.manualurl.parse.ManualParseResult;
 import com.jobpilot.manualurl.parse.ManualParseStatus;
 import java.util.ArrayList;
 import java.util.Optional;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
 public class ManualJobUrlService {
-    private static final Logger log = LoggerFactory.getLogger(ManualJobUrlService.class);
-
     private final ManualUrlPolicy urlPolicy;
     private final ManualAtsResolver atsResolver;
     private final SafeManualPageFetcher pageFetcher;
@@ -51,8 +47,10 @@ public class ManualJobUrlService {
         }
 
         RawJob rawJob;
+        boolean trustedAtsResult;
         try {
             Optional<RawJob> atsJob = atsResolver.fetch(validated.uri());
+            trustedAtsResult = atsJob.isPresent();
             if (atsJob.isPresent()) {
                 rawJob = atsJob.get();
             } else {
@@ -65,23 +63,13 @@ public class ManualJobUrlService {
             }
         } catch (ManualFetchException exception) {
             return fetchFailure(exception);
-        } catch (RuntimeException exception) {
-            log.warn("Manual vacancy retrieval failed: category={}", exception.getClass().getSimpleName());
-            return ManualJobSubmissionResult.failure(
-                    ManualJobStatus.FETCH_FAILED, "The vacancy could not be retrieved safely.");
         }
 
-        if (!validRawJob(rawJob)) {
+        if (!validRawJob(rawJob, trustedAtsResult)) {
             return ManualJobSubmissionResult.failure(
                     ManualJobStatus.PARSE_FAILED, "The vacancy did not contain the required fields.");
         }
-        try {
-            return success(persistence.persist(rawJob));
-        } catch (RuntimeException exception) {
-            log.warn("Manual vacancy persistence failed: category={}", exception.getClass().getSimpleName());
-            return ManualJobSubmissionResult.failure(
-                    ManualJobStatus.FETCH_FAILED, "The vacancy could not be processed.");
-        }
+        return success(persistence.persist(rawJob));
     }
 
     private ManualJobSubmissionResult success(JobProcessingResult processed) {
@@ -108,17 +96,16 @@ public class ManualJobUrlService {
     }
 
     private ManualJobSubmissionResult fetchFailure(ManualFetchException exception) {
-        if (exception.getCategory() == ManualFetchException.Category.BLOCKED_OR_PROTECTED) {
-            return ManualJobSubmissionResult.failure(
+        return switch (exception.getCategory()) {
+            case BLOCKED_OR_PROTECTED -> ManualJobSubmissionResult.failure(
                     ManualJobStatus.BLOCKED_OR_PROTECTED,
                     "The vacancy page requires protected or interactive access.");
-        }
-        if (exception.getCategory() == ManualFetchException.Category.UNSUPPORTED_CONTENT_TYPE) {
-            return ManualJobSubmissionResult.failure(
+            case UNSUPPORTED_CONTENT_TYPE -> ManualJobSubmissionResult.failure(
                     ManualJobStatus.UNSUPPORTED_SOURCE, "The vacancy response type is unsupported.");
-        }
-        return ManualJobSubmissionResult.failure(
-                ManualJobStatus.FETCH_FAILED, "The vacancy could not be retrieved safely.");
+            case RESPONSE_TOO_LARGE, REDIRECT_LIMIT, INVALID_REDIRECT, TIMEOUT,
+                    CONNECTION_FAILED, EMPTY_RESPONSE, HTTP_FAILURE -> ManualJobSubmissionResult.failure(
+                    ManualJobStatus.FETCH_FAILED, "The vacancy could not be retrieved safely.");
+        };
     }
 
     private ManualJobSubmissionResult parseFailure(ManualParseStatus status) {
@@ -136,10 +123,11 @@ public class ManualJobUrlService {
                 ManualJobStatus.PARSE_FAILED, "The vacancy did not contain the required fields.");
     }
 
-    private boolean validRawJob(RawJob job) {
+    private boolean validRawJob(RawJob job, boolean trustedAtsResult) {
         return job != null && !blank(job.url()) && !blank(job.title()) && !blank(job.company())
                 && !blank(job.description()) && job.title().length() <= settings.maxTitleLength()
-                && job.company().length() <= 300 && job.description().length() >= 40
+                && job.company().length() <= 300
+                && (trustedAtsResult || job.description().length() >= 40)
                 && job.description().length() <= settings.maxDescriptionLength();
     }
 

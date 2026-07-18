@@ -11,6 +11,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientResponseException;
 
 @Component
 public class ManualAtsResolver {
@@ -53,7 +55,7 @@ public class ManualAtsResolver {
         }
         String apiHost = host.equals("boards.eu.greenhouse.io")
                 ? "boards-api.eu.greenhouse.io" : "boards-api.greenhouse.io";
-        JsonNode item = http.getJson("https://" + apiHost + "/v1/boards/" + board
+        JsonNode item = fetchJson("https://" + apiHost + "/v1/boards/" + board
                 + "/jobs/" + id + "?content=true");
         return Optional.of(useSubmittedUrlWhenMissing(greenhouse.parseOne(board, item), submittedUrl));
     }
@@ -66,8 +68,27 @@ public class ManualAtsResolver {
         String company = segments.get(0);
         String id = segments.get(1);
         String apiHost = host.equals("jobs.eu.lever.co") ? "api.eu.lever.co" : "api.lever.co";
-        JsonNode item = http.getJson("https://" + apiHost + "/v0/postings/" + company + "/" + id);
+        JsonNode item = fetchJson("https://" + apiHost + "/v0/postings/" + company + "/" + id);
         return Optional.of(useSubmittedUrlWhenMissing(lever.parseOne(company, item), submittedUrl));
+    }
+
+    private JsonNode fetchJson(String apiUrl) {
+        try {
+            return http.getJson(apiUrl);
+        } catch (ResourceAccessException exception) {
+            throw new ManualFetchException(ManualFetchException.Category.CONNECTION_FAILED,
+                    "ATS API connection failed", exception);
+        } catch (RestClientResponseException exception) {
+            ManualFetchException.Category category = exception.getStatusCode().value() == 401
+                    || exception.getStatusCode().value() == 403
+                    || exception.getStatusCode().value() == 407
+                    ? ManualFetchException.Category.BLOCKED_OR_PROTECTED
+                    : ManualFetchException.Category.HTTP_FAILURE;
+            throw new ManualFetchException(category, "ATS API returned an unsuccessful status", exception);
+        } catch (IllegalArgumentException exception) {
+            throw new ManualFetchException(ManualFetchException.Category.HTTP_FAILURE,
+                    "ATS API returned an invalid response", exception);
+        }
     }
 
     private RawJob useSubmittedUrlWhenMissing(RawJob job, URI submittedUrl) {

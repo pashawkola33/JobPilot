@@ -1,6 +1,7 @@
 package com.jobpilot.manualurl.application;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -14,6 +15,7 @@ import com.jobpilot.jobs.service.JobProcessingResult;
 import com.jobpilot.manualurl.domain.ManualJobStatus;
 import com.jobpilot.manualurl.fetch.ManualAtsResolver;
 import com.jobpilot.manualurl.fetch.ManualFetchedResource;
+import com.jobpilot.manualurl.fetch.ManualFetchException;
 import com.jobpilot.manualurl.fetch.ManualUrlPolicy;
 import com.jobpilot.manualurl.fetch.ManualUrlValidationException;
 import com.jobpilot.manualurl.fetch.SafeManualPageFetcher;
@@ -30,6 +32,8 @@ import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 
 class ManualJobUrlServiceTest {
     private final ManualUrlPolicy policy = mock(ManualUrlPolicy.class);
@@ -59,6 +63,30 @@ class ManualJobUrlServiceTest {
 
         assertThat(result.status()).isEqualTo(ManualJobStatus.ALREADY_EXISTS);
         verify(fetcher, never()).fetch(any());
+    }
+
+    @Test
+    void recognizedAtsJobAllowsShortNonEmptyDescription() {
+        RawJob raw = new RawJob("greenhouse", "42", validated.uri().toString(),
+                "Java Intern", "Example", "Bucharest", "Short but valid.",
+                "Internship", null, null, "fixture");
+        when(ats.fetch(validated.uri())).thenReturn(Optional.of(raw));
+        when(persistence.persist(raw)).thenReturn(processed(false));
+
+        assertThat(service.submit(validated.uri().toString()).status())
+                .isEqualTo(ManualJobStatus.ALREADY_EXISTS);
+    }
+
+    @Test
+    void recognizedAtsJobStillRejectsEmptyDescription() {
+        RawJob raw = new RawJob("lever", "42", validated.uri().toString(),
+                "Java Intern", "Example", "Bucharest", " ",
+                "Internship", null, null, "fixture");
+        when(ats.fetch(validated.uri())).thenReturn(Optional.of(raw));
+
+        assertThat(service.submit(validated.uri().toString()).status())
+                .isEqualTo(ManualJobStatus.PARSE_FAILED);
+        verify(persistence, never()).persist(any());
     }
 
     @Test
@@ -92,6 +120,33 @@ class ManualJobUrlServiceTest {
         assertThat(result.status()).isEqualTo(ManualJobStatus.INVALID_URL);
         assertThat(result.message()).doesNotContain("localhost");
         verify(ats, never()).fetch(any());
+    }
+
+    @ParameterizedTest
+    @EnumSource(ManualFetchException.Category.class)
+    void mapsEveryFetchCategoryExplicitly(ManualFetchException.Category category) {
+        when(ats.fetch(validated.uri())).thenThrow(new ManualFetchException(category, "fixture"));
+
+        var result = service.submit(validated.uri().toString());
+
+        ManualJobStatus expected = switch (category) {
+            case BLOCKED_OR_PROTECTED -> ManualJobStatus.BLOCKED_OR_PROTECTED;
+            case UNSUPPORTED_CONTENT_TYPE -> ManualJobStatus.UNSUPPORTED_SOURCE;
+            case RESPONSE_TOO_LARGE, REDIRECT_LIMIT, INVALID_REDIRECT, TIMEOUT,
+                    CONNECTION_FAILED, EMPTY_RESPONSE, HTTP_FAILURE -> ManualJobStatus.FETCH_FAILED;
+        };
+        assertThat(result.status()).isEqualTo(expected);
+    }
+
+    @Test
+    void unexpectedPersistenceFailureIsNotCollapsedIntoFetchFailure() {
+        RawJob raw = rawJob();
+        when(ats.fetch(validated.uri())).thenReturn(Optional.of(raw));
+        when(persistence.persist(raw)).thenThrow(new IllegalStateException("programming failure"));
+
+        assertThatThrownBy(() -> service.submit(validated.uri().toString()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("programming failure");
     }
 
     private RawJob rawJob() {

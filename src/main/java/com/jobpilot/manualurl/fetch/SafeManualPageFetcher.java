@@ -59,10 +59,14 @@ public class SafeManualPageFetcher {
                 throw new ManualFetchException(ManualFetchException.Category.UNSUPPORTED_CONTENT_TYPE,
                         "Remote response content type is unsupported");
             }
-            byte[] bytes = response.body();
-            if (bytes.length == 0 || bytes.length > settings.maxResponseBytes()) {
+            byte[] bytes = response.bodyForProcessing();
+            if (bytes.length == 0) {
+                throw new ManualFetchException(ManualFetchException.Category.EMPTY_RESPONSE,
+                        "Remote response body is empty");
+            }
+            if (bytes.length > settings.maxResponseBytes()) {
                 throw new ManualFetchException(ManualFetchException.Category.RESPONSE_TOO_LARGE,
-                        "Remote response is empty or exceeded the configured size limit");
+                        "Remote response exceeded the configured size limit");
             }
             return new ManualFetchedResource(requested, current.uri(), contentType,
                     new String(bytes, charset(response.contentType())));

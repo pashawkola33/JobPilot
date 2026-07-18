@@ -14,4 +14,8 @@ public record ManualHttpResponse(
     public byte[] body() {
         return body.clone();
     }
+
+    byte[] bodyForProcessing() {
+        return body;
+    }
 }

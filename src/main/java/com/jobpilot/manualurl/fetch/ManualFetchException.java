@@ -9,7 +9,8 @@ public class ManualFetchException extends RuntimeException {
         INVALID_REDIRECT,
         BLOCKED_OR_PROTECTED,
         HTTP_FAILURE,
-        NETWORK_FAILURE
+        CONNECTION_FAILED,
+        EMPTY_RESPONSE
     }
 
     private final Category category;

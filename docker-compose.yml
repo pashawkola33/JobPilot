@@ -36,7 +36,7 @@ services:
       MANUAL_URL_MAX_TITLE_LENGTH: ${MANUAL_URL_MAX_TITLE_LENGTH:-500}
       MANUAL_URL_MAX_DESCRIPTION_LENGTH: ${MANUAL_URL_MAX_DESCRIPTION_LENGTH:-100000}
     ports:
-      - "${PORT:-8080}:8080"
+      - "127.0.0.1:${PORT:-8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy

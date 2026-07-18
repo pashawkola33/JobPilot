@@ -132,12 +132,14 @@ public class DeterministicManualJobParser {
                 meta(document, "meta[name=twitter:title]"),
                 meta(document, "meta[name=job:title]"),
                 text(document.selectFirst("h1")), document.title());
-        String company = firstNonBlank(
+        String jobSpecificCompany = firstNonBlank(
                 meta(document, "meta[name=job:company]"),
                 meta(document, "meta[property=job:company]"),
                 contentOrText(document.selectFirst("[itemprop=hiringOrganization] [itemprop=name]")),
-                attribute(document.selectFirst("[data-company]"), "data-company"),
-                meta(document, "meta[property=og:site_name]"));
+                attribute(document.selectFirst("[data-company]"), "data-company"));
+        String company = firstNonBlank(jobSpecificCompany,
+                hasExplicitVacancyMarkup(document)
+                        ? meta(document, "meta[property=og:site_name]") : null);
         String description = readableText(firstNonBlank(
                 html(document.selectFirst("[itemprop=description]")),
                 html(document.selectFirst("[data-job-description]")),
@@ -291,23 +293,36 @@ public class DeterministicManualJobParser {
 
     private boolean isProtected(Document document) {
         String title = document.title().toLowerCase(Locale.ROOT);
-        String text = document.text();
-        String beginning = text.substring(0, Math.min(text.length(), 20_000)).toLowerCase(Locale.ROOT);
-        return document.selectFirst("input[type=password], form[action*=login], [id*=captcha], [class*=captcha]") != null
-                || containsAny(title + " " + beginning, "verify you are human", "browser verification",
-                "checking your browser", "access denied", "captcha", "sign in to continue",
-                "login required", "cf-chl-", "challenge-platform");
+        String text = document.text().toLowerCase(Locale.ROOT);
+        boolean providerChallenge = document.selectFirst(
+                "form#challenge-form, #cf-challenge-running, .cf-challenge, "
+                        + "script[src*=/cdn-cgi/challenge-platform/], "
+                        + "iframe[src*=challenges.cloudflare.com], "
+                        + "form[action*=challenge] input[name*=captcha]") != null;
+        boolean authenticationWall = document.selectFirst(
+                "form[action*=login] input[type=password], "
+                        + "form[action*=signin] input[type=password]") != null;
+        boolean challengeTitle = containsAny(title, "verify you are human", "browser verification",
+                "checking your browser", "attention required", "just a moment", "access denied");
+        boolean strongChallengeText = containsAny(text, "verify you are human",
+                "checking your browser before accessing", "confirm you are human to continue",
+                "enable javascript and cookies to continue");
+        return providerChallenge || authenticationWall || challengeTitle || strongChallengeText;
     }
 
     private boolean vacancySignal(Document document) {
-        if (document.selectFirst("[itemtype*=JobPosting], [data-job-description], .job-description, "
-                + "meta[name^=job\\:]") != null) {
+        if (hasExplicitVacancyMarkup(document)) {
             return true;
         }
         String text = document.text().toLowerCase(Locale.ROOT);
         return containsAny(text, "job description", "employment type", "apply for this job",
                 "apply for this position", "responsibilities", "qualifications")
                 && containsAny(text, "apply", "vacancy", "position", "role", "job");
+    }
+
+    private boolean hasExplicitVacancyMarkup(Document document) {
+        return document.selectFirst("[itemtype*=JobPosting], [data-job-description], .job-description, "
+                + "meta[name^=job\\:]") != null;
     }
 
     private boolean containsJobPostingMarker(String body) {
@@ -340,6 +355,7 @@ public class DeterministicManualJobParser {
                 return OffsetDateTime.parse(value).toInstant();
             } catch (DateTimeParseException ignoredOffset) {
                 try {
+                    // A bare provider date carries no zone; normalize it deterministically at UTC midnight.
                     return LocalDate.parse(value).atStartOfDay().toInstant(ZoneOffset.UTC);
                 } catch (DateTimeParseException ignoredDate) {
                     return null;

@@ -72,6 +72,8 @@ curl --request POST http://localhost:8080/internal/v1/jobs/manual-url \
 
 The endpoint returns the canonical URL, persisted job ID, score, strengths, and risks when processing succeeds. It does not log submitted URLs or response content.
 
+This is an internal administrative endpoint. Keep it behind a trusted network boundary or an authentication layer; Docker Compose binds the application port to loopback by default.
+
 ## Requirements
 
 - Java 21 or newer (the Maven compiler always targets release 21)
@@ -187,7 +189,7 @@ The suite covers normalization, canonical URLs, migration/repository behavior, d
 - Tokens are read only from environment variables and are not logged.
 - Remote calls have connection/read timeouts, bounded responses, and transient retries.
 - Only documented public Greenhouse and Lever APIs are queried.
-- Manual URL fetches allow only `http`/`https`, reject credentials, validate every original and redirected hostname through DNS, and block loopback, private, link-local, multicast, unspecified, reserved, and cloud-metadata destinations.
+- Manual URL fetches allow only `http`/`https`, reject credentials, validate every original and redirected hostname through DNS, and block loopback, private, link-local, multicast, unspecified, reserved, benchmarking, and cloud-metadata destinations. IPv4 destinations embedded in 6to4, Teredo, NAT64, IPv4-compatible, or IPv4-mapped IPv6 addresses are decoded and checked by the same IPv4 policy.
 - Manual fetches send only fixed `Accept` and `User-Agent` headers—never cookies, authorization, provider tokens, or user-supplied headers—and accept only bounded HTML, XHTML, text, or JSON responses.
 - LinkedIn and protected portals are not scraped; CAPTCHAs, authentication, robots controls, and rate limits are never bypassed.
 - JobPilot discovers and ranks vacancies only. Every application remains a deliberate manual action.
