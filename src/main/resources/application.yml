@@ -1,4 +1,6 @@
 spring:
+  config:
+    import: classpath:candidate-profile.yml
   application:
     name: jobpilot
   datasource:

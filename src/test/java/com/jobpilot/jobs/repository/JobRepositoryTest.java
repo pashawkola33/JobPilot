@@ -36,12 +36,16 @@ class JobRepositoryTest {
     private JobDeduplicationService deduplication;
 
     @Test
-    void flywayCreatesOnlyPhaseOneTablesAndRepositoryRoundTripsAJob() {
+    void flywayCreatesPhaseOneAndPhaseTwoStageOneTablesAndRepositoryRoundTripsAJob() {
         List<String> tables = jdbcTemplate.queryForList(
                 "select table_name from information_schema.tables where table_schema = 'public'",
                 String.class);
-        assertThat(tables).contains("jobs", "job_requirements", "job_scores", "source_fetch_logs");
-        assertThat(tables).doesNotContain("applications", "resume_versions", "cover_notes", "candidate_profiles");
+        assertThat(tables).contains("jobs", "job_requirements", "job_scores", "source_fetch_logs",
+                "candidate_profiles", "candidate_skills", "candidate_languages", "candidate_projects",
+                "candidate_project_bullets", "applications", "resume_versions",
+                "resume_version_skills", "resume_version_projects",
+                "resume_version_project_bullets", "cover_notes", "llm_usage_events",
+                "telegram_bot_state");
 
         Instant now = Instant.parse("2026-07-17T12:00:00Z");
         Job saved = repository.saveAndFlush(new Job("greenhouse", "123", "https://example.com/jobs/123",

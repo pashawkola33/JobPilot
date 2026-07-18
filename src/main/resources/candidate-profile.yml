@@ -1,0 +1,161 @@
+jobpilot:
+  candidate-profile:
+    profile-version: 1
+    full-name: Pavlo Sushkov
+    location: Bucharest, Romania
+    education-institution: Bucharest Academy of Economic Studies, ASE
+    degree: BSc in Economic Informatics
+    study-start-year: 2025
+    study-end-year:
+    current-student: true
+    final-year-student: false
+    commercial-java-experience-years: 0
+    skills:
+      - { stable-key: java-17, normalized-name: java 17, display-name: Java 17, category: JAVA, evidence-text: Verified technical skill, active: true, display-order: 0 }
+      - { stable-key: java-21, normalized-name: java 21, display-name: Java 21, category: JAVA, evidence-text: Verified technical skill, active: true, display-order: 1 }
+      - { stable-key: object-oriented-programming, normalized-name: object-oriented programming, display-name: Object-Oriented Programming, category: JAVA, evidence-text: Verified technical skill, active: true, display-order: 2 }
+      - { stable-key: collections, normalized-name: collections, display-name: Collections, category: JAVA, evidence-text: Verified technical skill, active: true, display-order: 3 }
+      - { stable-key: stream-api, normalized-name: stream api, display-name: Stream API, category: JAVA, evidence-text: Verified technical skill, active: true, display-order: 4 }
+      - { stable-key: lambdas, normalized-name: lambdas, display-name: Lambdas, category: JAVA, evidence-text: Verified technical skill, active: true, display-order: 5 }
+      - { stable-key: exception-handling, normalized-name: exception handling, display-name: Exception handling, category: JAVA, evidence-text: Verified technical skill, active: true, display-order: 6 }
+      - { stable-key: file-io, normalized-name: file io, display-name: File I/O, category: JAVA, evidence-text: Verified technical skill, active: true, display-order: 7 }
+      - { stable-key: regex, normalized-name: regex, display-name: Regex, category: JAVA, evidence-text: Verified technical skill, active: true, display-order: 8 }
+      - { stable-key: concurrency-basics, normalized-name: concurrency basics, display-name: Concurrency basics, category: JAVA, evidence-text: Verified technical skill, active: true, display-order: 9 }
+      - { stable-key: completable-future, normalized-name: completablefuture, display-name: CompletableFuture, category: JAVA, evidence-text: Verified technical skill, active: true, display-order: 10 }
+      - { stable-key: executor-service, normalized-name: executorservice, display-name: ExecutorService, category: JAVA, evidence-text: Verified technical skill, active: true, display-order: 11 }
+      - { stable-key: spring-boot, normalized-name: spring boot, display-name: Spring Boot, category: BACKEND, evidence-text: Verified technical skill, active: true, display-order: 12 }
+      - { stable-key: spring-mvc, normalized-name: spring mvc, display-name: Spring MVC, category: BACKEND, evidence-text: Verified technical skill, active: true, display-order: 13 }
+      - { stable-key: spring-security, normalized-name: spring security, display-name: Spring Security, category: BACKEND, evidence-text: Verified technical skill, active: true, display-order: 14 }
+      - { stable-key: jwt-authentication, normalized-name: jwt authentication, display-name: JWT authentication, category: BACKEND, evidence-text: Verified technical skill, active: true, display-order: 15 }
+      - { stable-key: spring-data-jpa, normalized-name: spring data jpa, display-name: Spring Data JPA, category: BACKEND, evidence-text: Verified technical skill, active: true, display-order: 16 }
+      - { stable-key: hibernate, normalized-name: hibernate, display-name: Hibernate, category: BACKEND, evidence-text: Verified technical skill, active: true, display-order: 17 }
+      - { stable-key: rest-apis, normalized-name: rest apis, display-name: REST APIs, category: BACKEND, evidence-text: Verified technical skill, active: true, display-order: 18 }
+      - { stable-key: bean-validation, normalized-name: bean validation, display-name: Bean Validation, category: BACKEND, evidence-text: Verified technical skill, active: true, display-order: 19 }
+      - { stable-key: global-exception-handling, normalized-name: global exception handling, display-name: Global exception handling, category: BACKEND, evidence-text: Verified technical skill, active: true, display-order: 20 }
+      - { stable-key: openapi, normalized-name: openapi, display-name: OpenAPI, category: BACKEND, evidence-text: Verified technical skill, active: true, display-order: 21 }
+      - { stable-key: swagger, normalized-name: swagger, display-name: Swagger, category: BACKEND, evidence-text: Verified technical skill, active: true, display-order: 22 }
+      - { stable-key: jdbc, normalized-name: jdbc, display-name: JDBC, category: BACKEND, evidence-text: Verified technical skill, active: true, display-order: 23 }
+      - { stable-key: postgresql, normalized-name: postgresql, display-name: PostgreSQL, category: DATABASE, evidence-text: Verified technical skill, active: true, display-order: 24 }
+      - { stable-key: sqlite, normalized-name: sqlite, display-name: SQLite, category: DATABASE, evidence-text: Verified technical skill, active: true, display-order: 25 }
+      - { stable-key: h2, normalized-name: h2, display-name: H2, category: DATABASE, evidence-text: Verified technical skill, active: true, display-order: 26 }
+      - { stable-key: sql, normalized-name: sql, display-name: SQL, category: DATABASE, evidence-text: Verified technical skill, active: true, display-order: 27 }
+      - { stable-key: relational-data-modelling, normalized-name: relational data modelling, display-name: Relational data modelling, category: DATABASE, evidence-text: Verified technical skill, active: true, display-order: 28 }
+      - { stable-key: flyway, normalized-name: flyway, display-name: Flyway, category: DATABASE, evidence-text: Verified technical skill, active: true, display-order: 29 }
+      - { stable-key: react, normalized-name: react, display-name: React, category: FRONTEND, evidence-text: Verified technical skill, active: true, display-order: 30 }
+      - { stable-key: react-native, normalized-name: react native, display-name: React Native, category: FRONTEND, evidence-text: Verified technical skill, active: true, display-order: 31 }
+      - { stable-key: typescript, normalized-name: typescript, display-name: TypeScript, category: FRONTEND, evidence-text: Verified technical skill, active: true, display-order: 32 }
+      - { stable-key: javascript-fundamentals, normalized-name: javascript fundamentals, display-name: JavaScript fundamentals, category: FRONTEND, evidence-text: Verified technical skill, active: true, display-order: 33 }
+      - { stable-key: html, normalized-name: html, display-name: HTML, category: FRONTEND, evidence-text: Verified technical skill, active: true, display-order: 34 }
+      - { stable-key: css, normalized-name: css, display-name: CSS, category: FRONTEND, evidence-text: Verified technical skill, active: true, display-order: 35 }
+      - { stable-key: tailwind-css, normalized-name: tailwind css, display-name: Tailwind CSS, category: FRONTEND, evidence-text: Verified technical skill, active: true, display-order: 36 }
+      - { stable-key: react-router, normalized-name: react router, display-name: React Router, category: FRONTEND, evidence-text: Verified technical skill, active: true, display-order: 37 }
+      - { stable-key: axios, normalized-name: axios, display-name: Axios, category: FRONTEND, evidence-text: Verified technical skill, active: true, display-order: 38 }
+      - { stable-key: vite, normalized-name: vite, display-name: Vite, category: FRONTEND, evidence-text: Verified technical skill, active: true, display-order: 39 }
+      - { stable-key: expo, normalized-name: expo, display-name: Expo, category: FRONTEND, evidence-text: Verified technical skill, active: true, display-order: 40 }
+      - { stable-key: junit-5, normalized-name: junit 5, display-name: JUnit 5, category: TESTING_AND_TOOLS, evidence-text: Verified technical skill, active: true, display-order: 41 }
+      - { stable-key: spring-boot-test, normalized-name: spring boot test, display-name: Spring Boot Test, category: TESTING_AND_TOOLS, evidence-text: Verified technical skill, active: true, display-order: 42 }
+      - { stable-key: mockmvc, normalized-name: mockmvc, display-name: MockMvc, category: TESTING_AND_TOOLS, evidence-text: Verified technical skill, active: true, display-order: 43 }
+      - { stable-key: mockito, normalized-name: mockito, display-name: Mockito, category: TESTING_AND_TOOLS, evidence-text: Verified technical skill, active: true, display-order: 44 }
+      - { stable-key: spring-security-test, normalized-name: spring security test, display-name: Spring Security Test, category: TESTING_AND_TOOLS, evidence-text: Verified technical skill, active: true, display-order: 45 }
+      - { stable-key: integration-testing, normalized-name: integration testing, display-name: Integration testing, category: TESTING_AND_TOOLS, evidence-text: Verified technical skill, active: true, display-order: 46 }
+      - { stable-key: maven, normalized-name: maven, display-name: Maven, category: TESTING_AND_TOOLS, evidence-text: Verified technical skill, active: true, display-order: 47 }
+      - { stable-key: npm, normalized-name: npm, display-name: npm, category: TESTING_AND_TOOLS, evidence-text: Verified technical skill, active: true, display-order: 48 }
+      - { stable-key: git, normalized-name: git, display-name: Git, category: TESTING_AND_TOOLS, evidence-text: Verified technical skill, active: true, display-order: 49 }
+      - { stable-key: github, normalized-name: github, display-name: GitHub, category: TESTING_AND_TOOLS, evidence-text: Verified technical skill, active: true, display-order: 50 }
+      - { stable-key: github-actions, normalized-name: github actions, display-name: GitHub Actions, category: TESTING_AND_TOOLS, evidence-text: Verified technical skill, active: true, display-order: 51 }
+      - { stable-key: intellij-idea, normalized-name: intellij idea, display-name: IntelliJ IDEA, category: TESTING_AND_TOOLS, evidence-text: Verified technical skill, active: true, display-order: 52 }
+      - { stable-key: debugging, normalized-name: debugging, display-name: Debugging, category: TESTING_AND_TOOLS, evidence-text: Verified technical skill, active: true, display-order: 53 }
+      - { stable-key: langchain4j, normalized-name: langchain4j, display-name: LangChain4j, category: AI_AND_INTEGRATIONS, evidence-text: Verified technical skill, active: true, display-order: 54 }
+      - { stable-key: gemini-api, normalized-name: gemini api, display-name: Gemini API, category: AI_AND_INTEGRATIONS, evidence-text: Verified technical skill, active: true, display-order: 55 }
+      - { stable-key: anthropic-api, normalized-name: anthropic api, display-name: Anthropic API, category: AI_AND_INTEGRATIONS, evidence-text: Verified technical skill, active: true, display-order: 56 }
+      - { stable-key: telegram-bot-api, normalized-name: telegram bot api, display-name: Telegram Bot API, category: AI_AND_INTEGRATIONS, evidence-text: Verified technical skill, active: true, display-order: 57 }
+      - { stable-key: rss-integrations, normalized-name: rss integrations, display-name: RSS integrations, category: AI_AND_INTEGRATIONS, evidence-text: Verified technical skill, active: true, display-order: 58 }
+      - { stable-key: ai-assisted-development-tools, normalized-name: ai-assisted development tools, display-name: AI-assisted development tools, category: AI_AND_INTEGRATIONS, evidence-text: Verified technical skill, active: true, display-order: 59 }
+      - { stable-key: python, normalized-name: python, display-name: Python, category: ADDITIONAL, evidence-text: Verified technical skill, active: true, display-order: 60 }
+      - { stable-key: aiogram, normalized-name: aiogram, display-name: aiogram, category: ADDITIONAL, evidence-text: Verified technical skill, active: true, display-order: 61 }
+      - { stable-key: pydantic, normalized-name: pydantic, display-name: Pydantic, category: ADDITIONAL, evidence-text: Verified technical skill, active: true, display-order: 62 }
+      - { stable-key: httpx, normalized-name: httpx, display-name: httpx, category: ADDITIONAL, evidence-text: Verified technical skill, active: true, display-order: 63 }
+      - { stable-key: agile-sdlc-theory, normalized-name: agile and sdlc principles, display-name: Theoretical understanding of Agile and SDLC principles, category: ADDITIONAL, evidence-text: Verified theoretical understanding only, active: true, display-order: 64 }
+    languages:
+      - { stable-key: english, language: English, verified-level: FLUENT, allowed-in-cv: true, active: true, display-order: 0 }
+      - { stable-key: ukrainian, language: Ukrainian, verified-level: NATIVE, allowed-in-cv: true, active: true, display-order: 1 }
+      - { stable-key: russian, language: Russian, verified-level: NATIVE, allowed-in-cv: true, active: true, display-order: 2 }
+      - { stable-key: german, language: German, verified-level: INTERMEDIATE, allowed-in-cv: true, active: true, display-order: 3 }
+    projects:
+      - stable-key: nexus-invest
+        name: NexusInvest — Full-Stack Finance Platform
+        description: Personal full-stack finance and investment platform
+        project-type: PERSONAL_PROJECT
+        technologies: [Java 21, Spring Boot, Spring Security, Spring Data JPA, PostgreSQL, Flyway, React, TypeScript, Axios, Tailwind CSS, JUnit 5, MockMvc]
+        active: true
+        display-order: 0
+        bullets:
+          - { stable-key: personal-platform, verified-text: Personal full-stack finance and investment platform., keywords: [full-stack, finance, investment], active: true, display-order: 0 }
+          - { stable-key: spring-rest-backend, verified-text: Uses a Spring Boot REST backend., keywords: [Spring Boot, REST], active: true, display-order: 1 }
+          - { stable-key: react-typescript-frontend, verified-text: Uses a React and TypeScript frontend., keywords: [React, TypeScript], active: true, display-order: 2 }
+          - { stable-key: jwt-authentication, verified-text: Implements JWT authentication., keywords: [JWT, authentication], active: true, display-order: 3 }
+          - { stable-key: registration-login, verified-text: Supports registration and login., keywords: [registration, login], active: true, display-order: 4 }
+          - { stable-key: protected-routes, verified-text: Includes protected frontend routes., keywords: [protected routes], active: true, display-order: 5 }
+          - { stable-key: authenticated-api, verified-text: Uses authenticated API requests., keywords: [authenticated API], active: true, display-order: 6 }
+          - { stable-key: account-management, verified-text: Supports account management., keywords: [account management], active: true, display-order: 7 }
+          - { stable-key: transfers, verified-text: Supports transfers., keywords: [transfers], active: true, display-order: 8 }
+          - { stable-key: transaction-history, verified-text: Provides transaction history., keywords: [transaction history], active: true, display-order: 9 }
+          - { stable-key: investment-trading, verified-text: Supports investment purchases and sales., keywords: [investment purchases, investment sales], active: true, display-order: 10 }
+          - { stable-key: portfolio-tracking, verified-text: Provides portfolio tracking., keywords: [portfolio tracking], active: true, display-order: 11 }
+          - { stable-key: market-data, verified-text: Provides market data., keywords: [market data], active: true, display-order: 12 }
+          - { stable-key: exchange-rates, verified-text: Provides exchange rates., keywords: [exchange rates], active: true, display-order: 13 }
+          - { stable-key: postgres-persistence, verified-text: Uses PostgreSQL entities and repositories., keywords: [PostgreSQL, repositories], active: true, display-order: 14 }
+          - { stable-key: jpa-hibernate, verified-text: Uses Spring Data JPA and Hibernate., keywords: [Spring Data JPA, Hibernate], active: true, display-order: 15 }
+          - { stable-key: flyway-migrations, verified-text: Uses Flyway migrations., keywords: [Flyway], active: true, display-order: 16 }
+          - { stable-key: bean-validation, verified-text: Uses Bean Validation., keywords: [Bean Validation], active: true, display-order: 17 }
+          - { stable-key: exception-handling, verified-text: Uses centralized exception handling., keywords: [exception handling], active: true, display-order: 18 }
+          - { stable-key: api-documentation, verified-text: Provides OpenAPI and Swagger documentation., keywords: [OpenAPI, Swagger], active: true, display-order: 19 }
+          - { stable-key: testing-stack, verified-text: Includes tests using JUnit, MockMvc, Mockito, H2 and Spring Security Test., keywords: [JUnit, MockMvc, Mockito, H2, Spring Security Test], active: true, display-order: 20 }
+      - stable-key: ai-tech-digest
+        name: AI Tech Digest Bot
+        description: Telegram bot for daily technology-news digests
+        project-type: PERSONAL_PROJECT
+        technologies: [Java 17, Maven, Telegram Bot API, LangChain4j, Gemini, SQLite, JDBC, RSS]
+        active: true
+        display-order: 1
+        bullets:
+          - { stable-key: daily-digests, verified-text: Telegram bot for daily technology-news digests., keywords: [Telegram bot, technology news], active: true, display-order: 0 }
+          - { stable-key: commands, verified-text: Supports /start, /digest, /best, /language and /reset commands., keywords: [Telegram commands], active: true, display-order: 1 }
+          - { stable-key: rss-sources, verified-text: Retrieves TechCrunch, Hacker News and The Verge RSS feeds., keywords: [RSS, TechCrunch, Hacker News, The Verge], active: true, display-order: 2 }
+          - { stable-key: concurrency, verified-text: Uses CompletableFuture and ExecutorService., keywords: [CompletableFuture, ExecutorService], active: true, display-order: 3 }
+          - { stable-key: summaries, verified-text: Generates English and Russian summaries using Gemini and LangChain4j., keywords: [Gemini, LangChain4j, summaries], active: true, display-order: 4 }
+          - { stable-key: sqlite-storage, verified-text: Stores users, articles, processed URLs and language preferences in SQLite., keywords: [SQLite], active: true, display-order: 5 }
+          - { stable-key: jdbc, verified-text: Uses JDBC., keywords: [JDBC], active: true, display-order: 6 }
+          - { stable-key: maven-build, verified-text: Uses a Maven build., keywords: [Maven], active: true, display-order: 7 }
+          - { stable-key: shaded-jar, verified-text: Uses shaded JAR packaging., keywords: [shaded JAR], active: true, display-order: 8 }
+      - stable-key: mebuc
+        name: MeBuc — Bucharest Metro Trip Planner
+        description: Offline-capable metro route planner
+        project-type: PERSONAL_PROJECT
+        technologies: [React Native, Expo, React, TypeScript, GitHub Actions, SVG]
+        active: true
+        display-order: 2
+        bullets:
+          - { stable-key: offline-planner, verified-text: Offline-capable metro route planner., keywords: [offline, route planner], active: true, display-order: 0 }
+          - { stable-key: platforms, verified-text: Supports iOS, Android and web., keywords: [iOS, Android, web], active: true, display-order: 1 }
+          - { stable-key: transfer-aware, verified-text: Provides transfer-aware route planning., keywords: [route planning, transfers], active: true, display-order: 2 }
+          - { stable-key: station-search, verified-text: Provides multilingual station search., keywords: [multilingual search], active: true, display-order: 3 }
+          - { stable-key: svg-maps, verified-text: Includes interactive SVG metro maps., keywords: [SVG, interactive maps], active: true, display-order: 4 }
+          - { stable-key: journey-timelines, verified-text: Provides journey timelines., keywords: [journey timelines], active: true, display-order: 5 }
+          - { stable-key: interfaces, verified-text: Provides Romanian, English and Russian interfaces., keywords: [Romanian, English, Russian], active: true, display-order: 6 }
+          - { stable-key: feature-architecture, verified-text: Uses feature-based architecture., keywords: [feature-based architecture], active: true, display-order: 7 }
+          - { stable-key: reusable-components, verified-text: Uses reusable UI components., keywords: [reusable UI components], active: true, display-order: 8 }
+          - { stable-key: github-verification, verified-text: Uses GitHub Actions project verification., keywords: [GitHub Actions], active: true, display-order: 9 }
+          - { stable-key: data-validation, verified-text: Includes data validation., keywords: [data validation], active: true, display-order: 10 }
+          - { stable-key: health-checks, verified-text: Includes health checks., keywords: [health checks], active: true, display-order: 11 }
+          - { stable-key: secret-scanning, verified-text: Includes secret scanning., keywords: [secret scanning], active: true, display-order: 12 }
+      - stable-key: b2b-strategic-insight-engine
+        name: B2B Strategic Insight Engine
+        description: Telegram bot for analysing B2B customer messages
+        project-type: PERSONAL_PROJECT
+        technologies: [Python, aiogram, Anthropic Claude, Pydantic, httpx]
+        active: true
+        display-order: 3
+        bullets:
+          - { stable-key: customer-analysis, verified-text: Telegram bot for analysing B2B customer messages., keywords: [Telegram bot, B2B, customer messages], active: true, display-order: 0 }
+          - { stable-key: layered-architecture, verified-text: Separates handlers, services, schemas, formatting utilities and API client layers., keywords: [handlers, services, schemas, API client], active: true, display-order: 1 }
