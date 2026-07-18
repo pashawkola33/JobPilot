@@ -41,6 +41,40 @@ class DeterministicRequirementExtractorTest {
         assertThat(french.spokenLanguages()).anyMatch(value -> value.startsWith("French"));
     }
 
+    @Test
+    void doesNotTreatInternalOrInternationalWordsAsInternship() {
+        var requirements = extractor.extract(jobWithDescription("Java Developer",
+                "Work on internal tools for our international clients. "
+                        + "You will collaborate internally with product teams."));
+
+        assertThat(requirements.internshipOrTrainee()).isFalse();
+        assertThat(requirements.seniority()).isNotEqualTo("INTERNSHIP");
+    }
+
+    @Test
+    void keepsRealInternshipAndTraineeSignals() {
+        assertThat(extractor.extract(jobWithDescription("Java Role",
+                "We welcome interns to our team.")).internshipOrTrainee()).isTrue();
+        assertThat(extractor.extract(jobWithDescription("Java Role",
+                "This internship lasts six months.")).internshipOrTrainee()).isTrue();
+        assertThat(extractor.extract(jobWithDescription("Java Role",
+                "Join as a trainee developer.")).internshipOrTrainee()).isTrue();
+        assertThat(extractor.extract(jobWithDescription("Java Role",
+                "A twelve-month apprenticeship with mentoring.")).internshipOrTrainee()).isTrue();
+        assertThat(extractor.extract(jobWithDescription("Java Role",
+                "Our Java academy starts in October.")).internshipOrTrainee()).isTrue();
+        assertThat(extractor.extract(jobWithDescription("Java Role",
+                "Apply to our graduate program in Bucharest.")).internshipOrTrainee()).isTrue();
+        assertThat(extractor.extract(jobWithDescription("Java Role",
+                "Apply to our graduate programme in Bucharest.")).internshipOrTrainee()).isTrue();
+    }
+
+    private Job jobWithDescription(String title, String description) {
+        return normalizer.normalize(new RawJob("fixture", "text-1", "https://example.com/jobs/text-1",
+                title, "Example", "Bucharest, Romania", description, null,
+                clock.instant(), null, description));
+    }
+
     private Job job(String title, String fixture) throws Exception {
         String text;
         try (var stream = getClass().getResourceAsStream("/fixtures/" + fixture)) {

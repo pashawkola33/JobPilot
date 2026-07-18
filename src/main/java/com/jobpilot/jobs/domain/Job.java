@@ -96,6 +96,23 @@ public class Job {
         lastSeenAt = now;
     }
 
+    /** Copies the changed content of a freshly fetched duplicate onto this stored job. */
+    public void refreshContent(Job updated, Instant now) {
+        this.title = updated.title;
+        this.location = updated.location;
+        this.remoteType = updated.remoteType;
+        this.employmentType = updated.employmentType;
+        this.description = updated.description;
+        this.deadline = updated.deadline;
+        if (updated.publishedAt != null) {
+            this.publishedAt = updated.publishedAt;
+        }
+        this.rawPayloadHash = updated.rawPayloadHash;
+        this.descriptionHash = updated.descriptionHash;
+        this.normalizedFingerprint = updated.normalizedFingerprint;
+        seenAgain(now);
+    }
+
     public void changeStatus(JobStatus next) {
         status = next;
     }

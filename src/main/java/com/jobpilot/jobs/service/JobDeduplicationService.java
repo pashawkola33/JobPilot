@@ -23,11 +23,13 @@ public class JobDeduplicationService {
             Optional<Job> byExternalId = repository.findBySourceAndExternalId(job.getSource(), job.getExternalId());
             if (byExternalId.isPresent()) return byExternalId;
         }
-        if (job.getDescription().isBlank()) {
-            return repository.findFirstByNormalizedFingerprint(job.getNormalizedFingerprint());
+        Optional<Job> byFingerprint = repository.findFirstByNormalizedFingerprint(job.getNormalizedFingerprint());
+        if (byFingerprint.isPresent() || job.getDescription().isBlank()) {
+            return byFingerprint;
         }
-        return repository.findFirstByNormalizedFingerprintOrDescriptionHash(
-                job.getNormalizedFingerprint(), job.getDescriptionHash());
+        // Identical descriptions only count as duplicates within the same company;
+        // unrelated companies often share boilerplate vacancy text.
+        return repository.findFirstByCompanyAndDescriptionHash(job.getCompany(), job.getDescriptionHash());
     }
 
     public Job recordSeen(Job duplicate) {

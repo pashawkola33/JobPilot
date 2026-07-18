@@ -58,6 +58,9 @@ public class GreenhouseJobSource implements JobSource {
     }
 
     private String plainText(String html) {
-        return HtmlUtils.htmlUnescape(html.replaceAll("<[^>]+>", " ")).replaceAll("\\s+", " ").trim();
+        // Greenhouse escapes the HTML itself (&lt;p&gt;), so unescape before stripping tags;
+        // the second unescape resolves entities that were inside the HTML text (&amp;amp;).
+        String withoutTags = HtmlUtils.htmlUnescape(html).replaceAll("<[^>]+>", " ");
+        return HtmlUtils.htmlUnescape(withoutTags).replaceAll("\\s+", " ").trim();
     }
 }

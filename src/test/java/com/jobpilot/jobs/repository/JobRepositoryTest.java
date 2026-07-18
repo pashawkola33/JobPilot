@@ -3,6 +3,7 @@ package com.jobpilot.jobs.repository;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.jobpilot.jobs.domain.Job;
+import com.jobpilot.jobs.domain.JobStatus;
 import com.jobpilot.jobs.domain.RemoteType;
 import com.jobpilot.jobs.domain.RawJob;
 import com.jobpilot.jobs.service.JobDeduplicationService;
@@ -63,6 +64,63 @@ class JobRepositoryTest {
         Job second = normalizer.normalize(new RawJob("lever", "two", "https://b.example/postings/two",
                 "Junior Java Developer", "Acme S.A.", "Bucharest", "Different description", null,
                 null, null, "payload-two"));
+
+        assertThat(deduplication.findDuplicate(second)).contains(first);
+    }
+
+    @Test
+    void expiresOnlyStaleNewAndReviewedJobs() {
+        Instant stale = Instant.parse("2026-05-01T12:00:00Z");
+        Instant fresh = Instant.parse("2026-07-16T12:00:00Z");
+        repository.saveAndFlush(job("e1", stale, JobStatus.NEW));
+        repository.saveAndFlush(job("e2", stale, JobStatus.SAVED));
+        repository.saveAndFlush(job("e3", fresh, JobStatus.NEW));
+
+        int expired = repository.expireStale(Instant.parse("2026-06-17T12:00:00Z"));
+
+        assertThat(expired).isEqualTo(1);
+        // The bulk update bypasses the persistence context, so read the rows directly.
+        assertThat(status("e1")).isEqualTo("EXPIRED");
+        assertThat(status("e2")).isEqualTo("SAVED");
+        assertThat(status("e3")).isEqualTo("NEW");
+    }
+
+    private Job job(String externalId, Instant seenAt, JobStatus status) {
+        Job job = new Job("greenhouse", externalId, "https://example.com/jobs/" + externalId,
+                "Java Intern " + externalId, "Example", "Bucharest", RemoteType.ONSITE, null,
+                "Java internship description", null, null, "a".repeat(64), "b".repeat(64),
+                externalId + "-fingerprint", seenAt);
+        job.changeStatus(status);
+        return job;
+    }
+
+    private String status(String externalId) {
+        return jdbcTemplate.queryForObject(
+                "select status from jobs where external_id = ?", String.class, externalId);
+    }
+
+    @Test
+    void doesNotDeduplicateDifferentCompaniesSharingBoilerplateDescriptions() {
+        Job first = normalizer.normalize(new RawJob("greenhouse", "b1", "https://a.example/jobs/b1",
+                "Java Intern", "Acme", "Bucharest", "We hire motivated students.", null,
+                null, null, "payload-b1"));
+        repository.saveAndFlush(first);
+        Job second = normalizer.normalize(new RawJob("lever", "b2", "https://b.example/postings/b2",
+                "QA Intern", "Globex", "Cluj", "We hire motivated students.", null,
+                null, null, "payload-b2"));
+
+        assertThat(deduplication.findDuplicate(second)).isEmpty();
+    }
+
+    @Test
+    void deduplicatesSameCompanyPostingsWithIdenticalDescriptions() {
+        Job first = normalizer.normalize(new RawJob("greenhouse", "c1", "https://a.example/jobs/c1",
+                "Java Intern", "Acme", "Bucharest", "Identical role description.", null,
+                null, null, "payload-c1"));
+        repository.saveAndFlush(first);
+        Job second = normalizer.normalize(new RawJob("lever", "c2", "https://b.example/postings/c2",
+                "Java Internship", "Acme", "Bucharest", "Identical role description.", null,
+                null, null, "payload-c2"));
 
         assertThat(deduplication.findDuplicate(second)).contains(first);
     }

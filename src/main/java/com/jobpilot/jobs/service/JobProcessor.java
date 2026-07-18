@@ -49,21 +49,38 @@ public class JobProcessor {
     public JobProcessingResult process(RawJob raw) {
         Job normalized = normalizer.normalize(raw);
         Optional<Job> duplicate = deduplication.findDuplicate(normalized);
-        if (duplicate.isPresent()) {
-            Job existing = deduplication.recordSeen(duplicate.get());
+        if (duplicate.isEmpty()) {
+            return new JobProcessingResult(normalized, extractScoreAndSave(normalized), true);
+        }
+        Job existing = duplicate.get();
+        if (existing.getDescriptionHash().equals(normalized.getDescriptionHash())) {
+            deduplication.recordSeen(existing);
             ScoreCard existingScore = scores.findByJobId(existing.getId())
                     .map(JobScore::toValue).orElse(null);
             return new JobProcessingResult(existing, existingScore, false);
         }
-        ExtractedRequirements extracted = extractor.extract(normalized);
-        normalized.applyRequirements(extracted, join(extracted.technologies()), join(extracted.spokenLanguages()));
-        Job saved = jobs.save(normalized);
+        existing.refreshContent(normalized, clock.instant());
+        return new JobProcessingResult(existing, extractScoreAndSave(existing), false);
+    }
+
+    private ScoreCard extractScoreAndSave(Job job) {
+        ExtractedRequirements extracted = extractor.extract(job);
+        job.applyRequirements(extracted, join(extracted.technologies()), join(extracted.spokenLanguages()));
+        Job saved = jobs.save(job);
+        requirements.findByJobId(saved.getId()).ifPresent(outdated -> {
+            requirements.delete(outdated);
+            requirements.flush();
+        });
         requirements.save(new JobRequirement(saved, extracted, join(extracted.technologies()),
                 join(extracted.programmingLanguages()), join(extracted.spokenLanguages()),
                 join(extracted.mentorshipSignals()), json(extracted)));
         ScoreCard card = matching.score(saved, extracted);
+        scores.findByJobId(saved.getId()).ifPresent(outdated -> {
+            scores.delete(outdated);
+            scores.flush();
+        });
         scores.save(new JobScore(saved, card, clock.instant()));
-        return new JobProcessingResult(saved, card, true);
+        return card;
     }
 
     private String join(java.util.List<String> values) {

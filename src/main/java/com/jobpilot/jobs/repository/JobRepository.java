@@ -15,10 +15,9 @@ public interface JobRepository extends JpaRepository<Job, Long> {
 
     Optional<Job> findBySourceAndExternalId(String source, String externalId);
 
-    Optional<Job> findFirstByNormalizedFingerprintOrDescriptionHash(
-            String normalizedFingerprint, String descriptionHash);
-
     Optional<Job> findFirstByNormalizedFingerprint(String normalizedFingerprint);
+
+    Optional<Job> findFirstByCompanyAndDescriptionHash(String company, String descriptionHash);
 
     List<Job> findByStatusOrderByFirstSeenAtDesc(JobStatus status, Pageable pageable);
 

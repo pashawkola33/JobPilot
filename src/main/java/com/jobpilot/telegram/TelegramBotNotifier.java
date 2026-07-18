@@ -8,10 +8,13 @@ import com.jobpilot.matching.ScoreCard;
 import java.util.List;
 import java.util.Map;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.util.HtmlUtils;
 
 @Component
 public class TelegramBotNotifier implements TelegramNotifier {
+    static final int TELEGRAM_MESSAGE_LIMIT = 4096;
+    private static final String DIGEST_HEADER = "🟡 <b>Daily good matches</b>\n\n";
     private final ExternalHttpClient http;
     private final JobPilotProperties.Telegram telegram;
 
@@ -34,16 +37,23 @@ public class TelegramBotNotifier implements TelegramNotifier {
     @Override
     public void sendGoodMatchDigest(List<JobScore> jobScores) {
         if (!enabled() || jobScores.isEmpty()) return;
-        StringBuilder message = new StringBuilder("🟡 <b>Daily good matches</b>\n\n");
+        StringBuilder message = new StringBuilder(DIGEST_HEADER);
         for (JobScore score : jobScores) {
-            Job job = score.getJob();
-            message.append("<b>").append(score.getScore()).append("/100 — ")
-                    .append(escape(job.getTitle())).append("</b>\n")
-                    .append(escape(job.getCompany())).append(" · ")
-                    .append(escape(String.valueOf(job.getLocation()))).append("\n")
-                    .append("<a href=\"").append(escape(job.getCanonicalUrl())).append("\">Open vacancy</a>\n\n");
+            String entry = digestEntry(score);
+            if (message.length() + entry.length() > TELEGRAM_MESSAGE_LIMIT) {
+                send(message.toString(), List.of());
+                message = new StringBuilder(DIGEST_HEADER);
+            }
+            message.append(entry);
         }
         send(message.toString(), List.of());
+    }
+
+    private String digestEntry(JobScore score) {
+        Job job = score.getJob();
+        return "<b>" + score.getScore() + "/100 — " + escape(job.getTitle()) + "</b>\n"
+                + escape(job.getCompany()) + " · " + escape(String.valueOf(job.getLocation())) + "\n"
+                + "<a href=\"" + escape(job.getCanonicalUrl()) + "\">Open vacancy</a>\n\n";
     }
 
     private void send(String text, List<List<Map<String, String>>> buttons) {
@@ -53,7 +63,14 @@ public class TelegramBotNotifier implements TelegramNotifier {
                 : Map.of("chat_id", telegram.channelId(), "text", text, "parse_mode", "HTML",
                         "disable_web_page_preview", true,
                         "reply_markup", Map.of("inline_keyboard", buttons));
-        http.postJson("https://api.telegram.org/bot" + telegram.botToken() + "/sendMessage", body);
+        try {
+            http.postJson("https://api.telegram.org/bot" + telegram.botToken() + "/sendMessage", body);
+        } catch (RestClientException exception) {
+            // Network exceptions embed the request URL, which contains the bot token.
+            // Rethrow without the original message or cause so the token can never reach a log.
+            throw new IllegalStateException(
+                    "Telegram sendMessage failed: " + exception.getClass().getSimpleName());
+        }
     }
 
     private boolean enabled() {
