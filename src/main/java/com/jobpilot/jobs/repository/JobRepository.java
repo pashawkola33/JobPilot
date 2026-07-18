@@ -15,8 +15,9 @@ public interface JobRepository extends JpaRepository<Job, Long> {
 
     Optional<Job> findBySourceAndExternalId(String source, String externalId);
 
-    Optional<Job> findFirstByNormalizedFingerprintOrDescriptionHash(
-            String normalizedFingerprint, String descriptionHash);
+    Optional<Job> findFirstByNormalizedFingerprint(String normalizedFingerprint);
+
+    Optional<Job> findFirstByCompanyAndDescriptionHash(String company, String descriptionHash);
 
     List<Job> findByStatusOrderByFirstSeenAtDesc(JobStatus status, Pageable pageable);
 
@@ -25,6 +26,7 @@ public interface JobRepository extends JpaRepository<Job, Long> {
     long countByStatus(JobStatus status);
 
     @Modifying
+    @org.springframework.transaction.annotation.Transactional
     @Query("update Job j set j.status = com.jobpilot.jobs.domain.JobStatus.EXPIRED "
             + "where j.lastSeenAt < :cutoff and j.status in "
             + "(com.jobpilot.jobs.domain.JobStatus.NEW, com.jobpilot.jobs.domain.JobStatus.REVIEWED)")

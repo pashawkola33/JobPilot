@@ -3,6 +3,7 @@ package com.jobpilot.matching;
 import com.jobpilot.jobs.domain.ExtractedRequirements;
 import com.jobpilot.jobs.domain.Job;
 import com.jobpilot.jobs.domain.JobStatus;
+import com.jobpilot.config.JobPilotProperties;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -14,12 +15,16 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class JobMatchingService {
-    private static final Set<String> BACKEND = Set.of("java", "spring boot", "rest", "sql", "postgresql", "jpa", "maven", "junit");
-    private static final Set<String> SUPPORTING = Set.of("react", "typescript", "javascript", "html", "css", "git", "ci/cd", "github actions");
     private final Clock clock;
+    private final JobPilotProperties.Candidate candidate;
+    private final Set<String> backendSkills;
+    private final Set<String> supportingSkills;
 
-    public JobMatchingService(Clock clock) {
+    public JobMatchingService(Clock clock, JobPilotProperties properties) {
         this.clock = clock;
+        this.candidate = properties.candidate();
+        this.backendSkills = lowerSet(candidate.backendSkills());
+        this.supportingSkills = lowerSet(candidate.supportingSkills());
     }
 
     public ScoreCard score(Job job, ExtractedRequirements r) {
@@ -29,15 +34,16 @@ public class JobMatchingService {
         List<String> blockers = new ArrayList<>();
 
         int formal = 0;
-        if (r.internshipOrTrainee() || has(text, "student", "graduate", "entry-level", "junior")) formal += 8;
+        if (candidate.currentStudent()
+                && (r.internshipOrTrainee() || has(text, "student", "graduate", "entry-level", "junior"))) formal += 8;
         if (has(text, "computer science", "informatics", "software", "technical degree", "related field")) formal += 5;
         else if (r.requiredEducation() == null) formal += 4;
-        if (!r.finalYearMandatory()) formal += 6;
+        if (!r.finalYearMandatory() || candidate.finalYearStudent()) formal += 6;
         if (romaniaEligible(job, r)) formal += 6;
         if (formal >= 19) strengths.add("Formal eligibility is compatible with a current student in Romania");
 
-        int backendMatches = (int) r.technologies().stream().map(String::toLowerCase).filter(BACKEND::contains).distinct().count();
-        int backend = Math.min(25, Math.round(25f * backendMatches / BACKEND.size()));
+        int backendMatches = (int) r.technologies().stream().map(String::toLowerCase).filter(backendSkills::contains).distinct().count();
+        int backend = backendSkills.isEmpty() ? 0 : Math.min(25, Math.round(25f * backendMatches / backendSkills.size()));
         if (backendMatches > 0) strengths.add("Matches " + backendMatches + " confirmed Java/backend technologies");
 
         int trainee = 0;
@@ -48,7 +54,7 @@ public class JobMatchingService {
         if (trainee >= 9) strengths.add("Role has internship, trainee, or structured-learning signals");
 
         int supportingMatches = (int) r.technologies().stream().map(String::toLowerCase)
-                .filter(SUPPORTING::contains).distinct().count();
+                .filter(supportingSkills::contains).distinct().count();
         int supporting = Math.min(10, Math.round(10f * supportingMatches / 5f));
         if (supportingMatches > 0) strengths.add("Supporting frontend/tooling skills are relevant");
 
@@ -105,7 +111,7 @@ public class JobMatchingService {
     }
 
     private int experienceScore(Double years, boolean trainee) {
-        if (years == null) return trainee ? 10 : 7;
+        if (years == null) return trainee || candidate.commercialJavaYears() == 0 ? 10 : 7;
         if (years <= 0) return 10;
         if (years <= 1) return 8;
         if (years < 2) return 4;
@@ -131,7 +137,8 @@ public class JobMatchingService {
     private boolean romaniaEligible(Job job, ExtractedRequirements r) {
         String remote = String.valueOf(r.remoteEligibility()).toLowerCase(Locale.ROOT);
         String location = String.valueOf(job.getLocation()).toLowerCase(Locale.ROOT);
-        return !remote.contains("not eligible") && (remote.contains("romania") || location.contains("romania")
+        String home = candidate.homeCountry().toLowerCase(Locale.ROOT);
+        return !remote.contains("not eligible") && (remote.contains(home) || location.contains(home)
                 || location.contains("bucharest") || location.contains("bucurești"));
     }
 
@@ -144,5 +151,9 @@ public class JobMatchingService {
     private boolean has(String text, String... values) {
         for (String value : values) if (text.contains(value)) return true;
         return false;
+    }
+
+    private Set<String> lowerSet(List<String> values) {
+        return values.stream().map(value -> value.toLowerCase(Locale.ROOT)).collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 }

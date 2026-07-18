@@ -14,6 +14,8 @@ import org.springframework.web.client.RestClientResponseException;
 
 @Component
 public class ExternalHttpClient {
+    private static final int MAX_ATTEMPTS = 3;
+    private static final long MAX_RETRY_AFTER_MILLIS = 30_000L;
     private final RestClient client;
     private final ObjectMapper objectMapper;
     private final int maxResponseBytes;
@@ -59,22 +61,44 @@ public class ExternalHttpClient {
 
     private <T> T withRetry(Supplier<T> request) {
         RuntimeException last = null;
-        for (int attempt = 0; attempt < 3; attempt++) {
+        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             try {
                 return request.get();
             } catch (ResourceAccessException exception) {
                 last = exception;
             } catch (RestClientResponseException exception) {
-                if (!exception.getStatusCode().is5xxServerError()) throw exception;
+                if (!isRetryable(exception)) throw exception;
                 last = exception;
             }
-            try {
-                Thread.sleep(400L << attempt);
-            } catch (InterruptedException interrupted) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException("HTTP retry interrupted", interrupted);
+            if (attempt < MAX_ATTEMPTS) {
+                pause(retryDelayMillis(attempt, last));
             }
         }
         throw last;
+    }
+
+    private boolean isRetryable(RestClientResponseException exception) {
+        return exception.getStatusCode().is5xxServerError()
+                || exception.getStatusCode().value() == 429;
+    }
+
+    private long retryDelayMillis(int attempt, RuntimeException failure) {
+        if (failure instanceof RestClientResponseException response && response.getResponseHeaders() != null) {
+            String retryAfter = response.getResponseHeaders().getFirst("Retry-After");
+            if (retryAfter != null && retryAfter.matches("\\d+")) {
+                return Math.min(Long.parseLong(retryAfter) * 1000L, MAX_RETRY_AFTER_MILLIS);
+            }
+        }
+        return 400L << (attempt - 1);
+    }
+
+    // Overridable so tests can record delays instead of really sleeping.
+    protected void pause(long millis) {
+        try {
+            Thread.sleep(millis);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("HTTP retry interrupted", interrupted);
+        }
     }
 }

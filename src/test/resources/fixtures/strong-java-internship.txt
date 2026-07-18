@@ -1,0 +1,4 @@
+Java Developer Intern in Bucharest, Romania. Current university students in Computer Science,
+Economic Informatics, or a related field are welcome. Join a structured mentorship program and
+work with Java, Spring Boot, REST, SQL, PostgreSQL, JPA, Maven, JUnit, React, TypeScript, HTML,
+CSS, Git and CI/CD. No professional experience is required.

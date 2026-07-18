@@ -1,0 +1,12 @@
+.git
+.github
+.idea
+.vscode
+.env
+.mvn/repository
+.mvn/wrapper/dists
+target
+data
+*.log
+*.pdf
+*.docx

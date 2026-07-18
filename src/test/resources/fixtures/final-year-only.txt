@@ -1,0 +1,2 @@
+Java Software Engineer Internship in Bucharest. Applicants must be final-year students in a
+computer-related degree. Java, Spring Boot, REST and SQL are required. Mentoring is provided.

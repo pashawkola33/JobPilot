@@ -6,7 +6,7 @@ MVNW_PROJECT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 MVNW_CACHE_ROOT="${MAVEN_USER_HOME:-$MVNW_PROJECT_DIR/.mvn}"
 MVNW_BASE="$MVNW_CACHE_ROOT/wrapper/dists/apache-maven-$MVNW_VERSION-bin"
 MVNW_HOME="$MVNW_BASE/apache-maven-$MVNW_VERSION"
-MVNW_LOCAL_REPO="${MAVEN_REPO_LOCAL:-$MVNW_CACHE_ROOT/repository}"
+MVNW_LOCAL_REPO="${MAVEN_REPO_LOCAL:-${MAVEN_USER_HOME:-$MVNW_PROJECT_DIR/.mvn}/repository}"
 if [ ! -x "$MVNW_HOME/bin/mvn" ]; then
   mkdir -p "$MVNW_BASE"
   MVNW_ARCHIVE="$MVNW_BASE/apache-maven-$MVNW_VERSION-bin.tar.gz"

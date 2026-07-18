@@ -17,11 +17,16 @@ public class DeterministicRequirementExtractor {
             "(?i)(?:minimum|min\\.?|at least|requires?|with)?\\s*(\\d+(?:\\.\\d+)?)\\s*\\+?\\s*(?:years?|yrs?)(?:\\s+of)?(?:\\s+(?:commercial|professional|industry))?\\s+experience");
     private static final Map<String, Pattern> TECHNOLOGIES = technologies();
     private static final List<String> PROGRAMMING = List.of("Java", "TypeScript", "JavaScript", "Python", "Kotlin", "C#", "C++", "Go");
+    // Whole words only: "internal" or "international" must not count as an internship.
+    private static final Pattern TRAINEE_SIGNALS = Pattern.compile(
+            "(?i)\\b(?:interns?|internships?|trainees?|traineeships?|apprentices?|apprenticeships?|academy|graduate program(?:me)?s?)\\b");
+    private static final Pattern INTERNSHIP_SENIORITY = Pattern.compile(
+            "(?i)\\b(?:interns?|internships?|trainees?|traineeships?|apprentices?|apprenticeships?|academy)\\b");
 
     public ExtractedRequirements extract(Job job) {
         String text = (job.getTitle() + "\n" + job.getDescription()).replace('\u00a0', ' ');
         String lower = text.toLowerCase(Locale.ROOT);
-        boolean trainee = containsAny(lower, "intern", "trainee", "apprentice", "academy", "graduate program");
+        boolean trainee = TRAINEE_SIGNALS.matcher(text).find();
         boolean finalYear = Pattern.compile("(?i)(must|only|required|currently)\\s+(?:be\\s+)?(?:a\\s+)?final[- ]year|final[- ]year\\s+(student\\s+)?required")
                 .matcher(text).find();
         List<String> technologies = extractTechnologies(text);
@@ -29,7 +34,8 @@ public class DeterministicRequirementExtractor {
         List<String> spoken = spokenLanguages(text);
         List<String> mentoring = signals(lower, Map.of(
                 "mentorship", "mentorship", "mentor", "mentor", "structured learning", "structured learning",
-                "training program", "training program", "academy", "academy", "pair programming", "pair programming"));
+                "structured mentorship", "structured mentorship", "training program", "training program",
+                "academy", "academy", "pair programming", "pair programming"));
         return new ExtractedRequirements(seniority(lower), trainee, experience(text),
                 education(text), finalYear, technologies, programming, spoken,
                 job.getLocation(), remoteEligibility(lower), mentoring, workAuthorization(text),
@@ -42,8 +48,8 @@ public class DeterministicRequirementExtractor {
                 "PostgreSQL", "JPA", "Hibernate", "Maven", "JUnit", "Mockito", "React", "React Native",
                 "TypeScript", "JavaScript", "HTML", "CSS", "Git", "GitHub Actions", "CI/CD", "Docker",
                 "Kubernetes", "Python", "Kotlin", "C#", "C++", "Go", "AWS", "Azure", "GCP")) {
-            String expression = "(?i)(?<![\\p{L}\\p{N}])" + Pattern.quote(tech)
-                    .replace("CI/CD", "CI(?:/|\\s*)CD") + "(?![\\p{L}\\p{N}])";
+            String token = "CI/CD".equals(tech) ? "CI(?:/|\\s*)CD" : Pattern.quote(tech);
+            String expression = "(?i)(?<![\\p{L}\\p{N}])" + token + "(?![\\p{L}\\p{N}])";
             map.put(tech, Pattern.compile(expression));
         }
         return Map.copyOf(map);
@@ -64,7 +70,7 @@ public class DeterministicRequirementExtractor {
     private String seniority(String lower) {
         if (containsAny(lower, "senior", "staff engineer", "lead developer", "principal")) return "SENIOR";
         if (containsAny(lower, "mid-level", "middle developer", "medior")) return "MIDDLE";
-        if (containsAny(lower, "intern", "trainee", "apprentice", "academy")) return "INTERNSHIP";
+        if (INTERNSHIP_SENIORITY.matcher(lower).find()) return "INTERNSHIP";
         if (containsAny(lower, "junior", "entry-level", "entry level", "graduate")) return "JUNIOR";
         return "UNKNOWN";
     }
