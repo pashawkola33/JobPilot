@@ -50,6 +50,8 @@ public class LeverJobSource implements JobSource {
     }
 
     private String plainText(String html) {
-        return HtmlUtils.htmlUnescape(html.replaceAll("<[^>]+>", " ")).replaceAll("\\s+", " ").trim();
+        // Unescape before stripping tags so escaped markup (&lt;p&gt;) is removed as well.
+        String withoutTags = HtmlUtils.htmlUnescape(html).replaceAll("<[^>]+>", " ");
+        return HtmlUtils.htmlUnescape(withoutTags).replaceAll("\\s+", " ").trim();
     }
 }

@@ -12,9 +12,11 @@ class GreenhouseJobSourceTest {
     @Test
     void parsesPublicBoardPayload() throws Exception {
         var source = new GreenhouseJobSource(mock(ExternalHttpClient.class), TestProperties.create());
+        // The Greenhouse Job Board API returns "content" HTML-escaped, e.g. &lt;p&gt; instead of <p>.
         var json = new ObjectMapper().readTree("""
                 {"jobs":[{"id":123,"title":"Java Intern","absolute_url":"https://boards.example/jobs/123",
-                "location":{"name":"Bucharest"},"content":"<p>Java &amp; Spring Boot</p>",
+                "location":{"name":"Bucharest"},
+                "content":"&lt;p&gt;Java &amp;amp; Spring Boot&lt;/p&gt;&lt;ul&gt;&lt;li&gt;Mentorship&lt;/li&gt;&lt;/ul&gt;",
                 "updated_at":"2026-07-16T10:00:00Z"}]}
                 """);
 
@@ -23,7 +25,8 @@ class GreenhouseJobSourceTest {
         assertThat(jobs).singleElement().satisfies(job -> {
             assertThat(job.externalId()).isEqualTo("123");
             assertThat(job.company()).isEqualTo("acme");
-            assertThat(job.description()).isEqualTo("Java & Spring Boot");
+            assertThat(job.description()).isEqualTo("Java & Spring Boot Mentorship");
+            assertThat(job.description()).doesNotContain("<", ">", "&lt;", "&amp;");
             assertThat(job.publishedAt()).isNotNull();
         });
     }
