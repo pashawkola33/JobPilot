@@ -54,8 +54,12 @@ public class JobSchedulingService {
 
     @Scheduled(cron = "${jobpilot.scheduling.digest-cron}", zone = "Europe/Bucharest")
     public void dailyDigest() {
-        telegram.sendGoodMatchDigest(scores.findDigest(ScoreBand.GOOD_MATCH,
-                clock.instant().minus(Duration.ofDays(1)), PageRequest.of(0, 20)));
+        try {
+            telegram.sendGoodMatchDigest(scores.findDigest(ScoreBand.GOOD_MATCH,
+                    clock.instant().minus(Duration.ofDays(1)), PageRequest.of(0, 20)));
+        } catch (RuntimeException exception) {
+            LOGGER.warn("Daily digest delivery failed: {}", exception.getMessage());
+        }
     }
 
     @Transactional
