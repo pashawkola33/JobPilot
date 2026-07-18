@@ -66,4 +66,30 @@ class JobRepositoryTest {
 
         assertThat(deduplication.findDuplicate(second)).contains(first);
     }
+
+    @Test
+    void doesNotDeduplicateDifferentCompaniesSharingBoilerplateDescriptions() {
+        Job first = normalizer.normalize(new RawJob("greenhouse", "b1", "https://a.example/jobs/b1",
+                "Java Intern", "Acme", "Bucharest", "We hire motivated students.", null,
+                null, null, "payload-b1"));
+        repository.saveAndFlush(first);
+        Job second = normalizer.normalize(new RawJob("lever", "b2", "https://b.example/postings/b2",
+                "QA Intern", "Globex", "Cluj", "We hire motivated students.", null,
+                null, null, "payload-b2"));
+
+        assertThat(deduplication.findDuplicate(second)).isEmpty();
+    }
+
+    @Test
+    void deduplicatesSameCompanyPostingsWithIdenticalDescriptions() {
+        Job first = normalizer.normalize(new RawJob("greenhouse", "c1", "https://a.example/jobs/c1",
+                "Java Intern", "Acme", "Bucharest", "Identical role description.", null,
+                null, null, "payload-c1"));
+        repository.saveAndFlush(first);
+        Job second = normalizer.normalize(new RawJob("lever", "c2", "https://b.example/postings/c2",
+                "Java Internship", "Acme", "Bucharest", "Identical role description.", null,
+                null, null, "payload-c2"));
+
+        assertThat(deduplication.findDuplicate(second)).contains(first);
+    }
 }
