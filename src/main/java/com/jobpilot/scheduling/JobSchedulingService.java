@@ -14,7 +14,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 @Component
 public class JobSchedulingService {
@@ -62,7 +61,8 @@ public class JobSchedulingService {
         }
     }
 
-    @Transactional
+    // The transaction lives on JobRepository.expireStale; an annotation here would be
+    // ignored anyway because fetchJobs() calls this method without going through the proxy.
     public int expireStale() {
         return jobs.expireStale(clock.instant().minus(Duration.ofDays(properties.scheduling().staleDays())));
     }
