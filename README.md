@@ -1,5 +1,7 @@
 # JobPilot
 
+![Java](https://img.shields.io/badge/Java-21-orange) ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3-brightgreen) ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg) ![Docker](https://img.shields.io/badge/Docker-ready-2496ED)
+
 JobPilot is a human-in-the-loop internship discovery service for entry-level software roles. Phase 1 fetches public Greenhouse and Lever job boards, normalizes and deduplicates vacancies, deterministically extracts requirements, scores them against a configurable candidate profile, and sends strong matches to a Telegram channel.
 
 JobPilot never submits applications, answers screening questions, accepts agreements, or contacts recruiters. Phase 1 has no application commands, manual URL intake, LLM integration, or resume generation.
@@ -151,3 +153,8 @@ The suite covers normalization, canonical URLs, migration/repository behavior, d
 - No LLM enrichment, resume tailoring, DOCX/PDF, or cover notes.
 - No PostgreSQL Testcontainers execution in an environment without Docker.
 - Board-wide APIs are filtered after retrieval; configure only permitted boards and respect provider policies.
+
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
