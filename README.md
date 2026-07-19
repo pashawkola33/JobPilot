@@ -1,5 +1,7 @@
 # JobPilot
 
+![Java](https://img.shields.io/badge/Java-21-orange) ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3-brightgreen) ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg) ![Docker](https://img.shields.io/badge/Docker-ready-2496ED)
+
 JobPilot is a human-in-the-loop internship discovery service for entry-level software roles. Phase 1 fetches public Greenhouse and Lever job boards, normalizes and deduplicates vacancies, deterministically extracts requirements, scores them against a configurable candidate profile, and sends strong matches to a Telegram channel. Phase 2 Stage 1 adds the versioned candidate truth model, Stage 2 safely processes manually submitted public vacancy URLs, Stage 3 adds human-maintained application tracking, Stage 4 adds optional structured job analysis, Stage 5 creates truthful application documents for private human review, and Stage 6 integrates the complete workflow with maintenance, readiness, safe operational counters, PostgreSQL end-to-end verification, and production-like Docker defaults.
 
 JobPilot never submits applications, uploads documents to employers, answers screening questions, accepts agreements, or contacts recruiters. Stage 5 generates ATS-oriented DOCX/PDF résumés and optional cover notes, but attaching a completed version to an existing application remains a separate human-triggered internal operation. Protected-site browser automation remains out of scope.
@@ -363,3 +365,7 @@ If startup fails, check PostgreSQL health, Flyway validation, and fail-closed co
 - The standard Java HTTP client performs its own connection-time DNS lookup after policy validation, leaving a narrow DNS-rebinding race; production deployments should also block private and metadata ranges at the network layer.
 - PostgreSQL Testcontainers integration tests require a working Docker environment.
 - Board-wide APIs are filtered after retrieval; configure only permitted boards and respect provider policies.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
