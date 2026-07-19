@@ -15,9 +15,80 @@ public record JobPilotProperties(
         List<String> searchTerms,
         List<String> locations) {
 
-    public record Telegram(String botToken, String channelId) {
+    public JobPilotProperties {
+        telegram = telegram == null ? new Telegram("", "") : telegram;
+    }
+
+    public record Telegram(
+            String botToken,
+            String channelId,
+            String botUsername,
+            boolean commandsEnabled,
+            String allowedChatId,
+            String allowedUserId,
+            Duration pollTimeout,
+            Duration pollDelay,
+            int pollLimit,
+            int maxUpdateFailures,
+            boolean discardPendingOnFirstStart) {
+        public Telegram {
+            botUsername = normalizeBotUsername(botUsername);
+            pollTimeout = pollTimeout == null ? Duration.ofSeconds(25) : pollTimeout;
+            pollDelay = pollDelay == null ? Duration.ofSeconds(2) : pollDelay;
+            if (pollTimeout.isNegative() || pollTimeout.compareTo(Duration.ofSeconds(50)) > 0
+                    || pollDelay.isNegative() || pollDelay.compareTo(Duration.ofMinutes(1)) > 0
+                    || pollLimit < 1 || pollLimit > 100
+                    || maxUpdateFailures < 1 || maxUpdateFailures > 20) {
+                throw new IllegalArgumentException("Telegram polling limits are outside their safe bounds");
+            }
+            if (commandsEnabled && (blank(botToken) || !validBotUsername(botUsername)
+                    || !validChatId(allowedChatId)
+                    || !validUserId(allowedUserId))) {
+                throw new IllegalArgumentException(
+                        "Telegram commands require a bot token, bot username, and explicit chat and user authorization");
+            }
+        }
+
+        public Telegram(String botToken, String channelId) {
+            this(botToken, channelId, "", false, "", "", Duration.ofSeconds(25),
+                    Duration.ofSeconds(2), 50, 3, true);
+        }
+
         public boolean enabled() {
-            return botToken != null && !botToken.isBlank();
+            return !blank(botToken);
+        }
+
+        private static boolean blank(String value) {
+            return value == null || value.isBlank();
+        }
+
+        private static String normalizeBotUsername(String value) {
+            if (value == null) return "";
+            String normalized = value.strip();
+            return normalized.startsWith("@") ? normalized.substring(1) : normalized;
+        }
+
+        private static boolean validBotUsername(String value) {
+            return value != null && value.matches("(?i)[a-z0-9_]{5,32}")
+                    && value.toLowerCase(java.util.Locale.ROOT).endsWith("bot");
+        }
+
+        private static boolean validChatId(String value) {
+            return validLong(value, "-?[1-9]\\d{0,18}");
+        }
+
+        private static boolean validUserId(String value) {
+            return validLong(value, "[1-9]\\d{0,18}");
+        }
+
+        private static boolean validLong(String value, String pattern) {
+            if (blank(value) || !value.matches(pattern)) return false;
+            try {
+                Long.parseLong(value);
+                return true;
+            } catch (NumberFormatException invalid) {
+                return false;
+            }
         }
     }
 

@@ -5,7 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.jobpilot.applications.domain.ApplicationRecord;
 import com.jobpilot.applications.domain.ApplicationStatus;
+import com.jobpilot.applications.domain.ApplicationStatusChangeSource;
 import com.jobpilot.applications.repository.ApplicationRepository;
+import com.jobpilot.applications.repository.ApplicationStatusHistoryRepository;
+import com.jobpilot.applications.application.ApplicationTrackerService;
 import com.jobpilot.candidate.domain.CandidateProfile;
 import com.jobpilot.candidate.domain.CandidateSkillCategory;
 import com.jobpilot.candidate.domain.ProjectType;
@@ -95,6 +98,10 @@ class PostgresPersistenceIT {
     @Autowired
     private ApplicationRepository applications;
     @Autowired
+    private ApplicationStatusHistoryRepository applicationHistory;
+    @Autowired
+    private ApplicationTrackerService applicationTracker;
+    @Autowired
     private ResumeVersionRepository resumeVersions;
     @Autowired
     private ResumeVersionSkillRepository resumeVersionSkills;
@@ -115,7 +122,7 @@ class PostgresPersistenceIT {
     void flywayMigratesTheSchemaOnRealPostgres() {
         Integer applied = jdbcTemplate.queryForObject(
                 "select count(*) from flyway_schema_history where success", Integer.class);
-        assertThat(applied).isEqualTo(2);
+        assertThat(applied).isEqualTo(3);
         assertThat(jdbcTemplate.queryForList(
                 "select table_name from information_schema.tables where table_schema = 'public'",
                 String.class))
@@ -124,7 +131,7 @@ class PostgresPersistenceIT {
                         "candidate_projects", "candidate_project_bullets", "applications",
                         "resume_versions", "resume_version_skills", "resume_version_projects",
                         "resume_version_project_bullets", "cover_notes", "llm_usage_events",
-                        "telegram_bot_state");
+                        "telegram_bot_state", "application_status_history");
     }
 
     @Test
@@ -250,6 +257,35 @@ class PostgresPersistenceIT {
     }
 
     @Test
+    void tracksApplicationTransitionsAndImmutableHistoryWithOptimisticVersioning() {
+        Instant now = Instant.parse("2026-07-19T10:30:00Z");
+        Job job = jobs.saveAndFlush(job("tracker-pg", "https://example.com/jobs/tracker-pg", now));
+
+        var saved = applicationTracker.transition(job.getId(), ApplicationStatus.SAVED,
+                null, null, ApplicationStatusChangeSource.TELEGRAM_COMMAND);
+        applicationTracker.transition(job.getId(), ApplicationStatus.APPLIED,
+                null, null, ApplicationStatusChangeSource.TELEGRAM_COMMAND);
+        var interview = applicationTracker.transition(job.getId(), ApplicationStatus.INTERVIEW,
+                Instant.parse("2026-08-01T10:00:00Z"), null,
+                ApplicationStatusChangeSource.TELEGRAM_COMMAND);
+        var duplicate = applicationTracker.transition(job.getId(), ApplicationStatus.INTERVIEW,
+                Instant.parse("2026-08-01T10:00:00Z"), null,
+                ApplicationStatusChangeSource.TELEGRAM_CALLBACK);
+
+        entityManager.flush();
+        assertThat(interview.application().status()).isEqualTo(ApplicationStatus.INTERVIEW);
+        assertThat(duplicate.changed()).isFalse();
+        assertThat(applicationHistory.findByApplicationIdOrderByChangedAtAscIdAsc(
+                saved.application().applicationId()))
+                .extracting(change -> change.getNewStatus())
+                .containsExactly(ApplicationStatus.SAVED, ApplicationStatus.APPLIED,
+                        ApplicationStatus.INTERVIEW);
+        assertThat(jdbcTemplate.queryForObject(
+                "select version from applications where id = ?", Long.class,
+                saved.application().applicationId())).isGreaterThanOrEqualTo(2L);
+    }
+
+    @Test
     void persistsResumeVersionFactReferencesAndCascadesResumeDeletion() {
         Instant now = Instant.parse("2026-07-19T11:00:00Z");
         Job job = jobs.saveAndFlush(job("resume", "https://example.com/jobs/resume", now));
@@ -322,12 +358,15 @@ class PostgresPersistenceIT {
     void persistsTelegramLongPollingStateWithoutCredentials() {
         Instant now = Instant.parse("2026-07-19T14:00:00Z");
 
-        telegramBotStates.saveAndFlush(new TelegramBotState(12345L, now));
+        TelegramBotState storedState = new TelegramBotState(12345L, now);
+        storedState.recordFailure(12346L, now.plusSeconds(1));
+        telegramBotStates.saveAndFlush(storedState);
 
         assertThat(telegramBotStates.findById(TelegramBotState.LONG_POLLING_KEY))
                 .hasValueSatisfying(state -> {
                     assertThat(state.getLastProcessedUpdateId()).isEqualTo(12345L);
-                    assertThat(state.getUpdatedAt()).isEqualTo(now);
+                    assertThat(state.getFailedUpdateId()).isEqualTo(12346L);
+                    assertThat(state.getFailedAttempts()).isEqualTo(1);
                 });
     }
 

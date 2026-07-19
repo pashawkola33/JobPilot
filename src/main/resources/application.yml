@@ -31,6 +31,15 @@ jobpilot:
   telegram:
     bot-token: ${TELEGRAM_BOT_TOKEN:}
     channel-id: ${TELEGRAM_CHANNEL_ID:}
+    bot-username: ${TELEGRAM_BOT_USERNAME:}
+    commands-enabled: ${TELEGRAM_COMMANDS_ENABLED:false}
+    allowed-chat-id: ${TELEGRAM_ALLOWED_CHAT_ID:}
+    allowed-user-id: ${TELEGRAM_ALLOWED_USER_ID:}
+    poll-timeout: ${TELEGRAM_POLL_TIMEOUT:25s}
+    poll-delay: ${TELEGRAM_POLL_DELAY:2s}
+    poll-limit: ${TELEGRAM_POLL_LIMIT:50}
+    max-update-failures: ${TELEGRAM_MAX_UPDATE_FAILURES:3}
+    discard-pending-on-first-start: ${TELEGRAM_DISCARD_PENDING_ON_FIRST_START:true}
   sources:
     greenhouse-board-tokens: ${GREENHOUSE_BOARD_TOKENS:}
     lever-company-ids: ${LEVER_COMPANY_IDS:}

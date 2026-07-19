@@ -10,4 +10,9 @@ public class TimeConfig {
     Clock clock() {
         return Clock.systemUTC();
     }
+
+    @Bean
+    Long telegramPollDelay(JobPilotProperties properties) {
+        return properties.telegram().pollDelay().toMillis();
+    }
 }

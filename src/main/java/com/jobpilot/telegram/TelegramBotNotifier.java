@@ -13,7 +13,7 @@ import org.springframework.web.util.HtmlUtils;
 
 @Component
 public class TelegramBotNotifier implements TelegramNotifier {
-    static final int TELEGRAM_MESSAGE_LIMIT = 4096;
+    public static final int TELEGRAM_MESSAGE_LIMIT = 4096;
     private static final String DIGEST_HEADER = "🟡 <b>Daily good matches</b>\n\n";
     private final ExternalHttpClient http;
     private final JobPilotProperties.Telegram telegram;
@@ -31,7 +31,7 @@ public class TelegramBotNotifier implements TelegramNotifier {
                 + "📍 " + escape(String.valueOf(job.getLocation())) + " — " + job.getRemoteType() + "\n\n"
                 + "<b>Why it fits:</b>\n" + lines("✅ ", score.strengths())
                 + (score.risks().isEmpty() ? "" : "\n<b>Risks:</b>\n" + lines("⚠️ ", score.risks()));
-        send(text, List.of(List.of(Map.of("text", "Open vacancy", "url", job.getCanonicalUrl()))));
+        send(text, excellentButtons(job));
     }
 
     @Override
@@ -54,6 +54,14 @@ public class TelegramBotNotifier implements TelegramNotifier {
         return "<b>" + score.getScore() + "/100 — " + escape(job.getTitle()) + "</b>\n"
                 + escape(job.getCompany()) + " · " + escape(String.valueOf(job.getLocation())) + "\n"
                 + "<a href=\"" + escape(job.getCanonicalUrl()) + "\">Open vacancy</a>\n\n";
+    }
+
+    private List<List<Map<String, String>>> excellentButtons(Job job) {
+        var open = List.of(Map.of("text", "Open vacancy", "url", job.getCanonicalUrl()));
+        if (!telegram.commandsEnabled() || job.getId() == null) return List.of(open);
+        return List.of(open, List.of(
+                Map.of("text", "Save", "callback_data", "app:save:" + job.getId()),
+                Map.of("text", "Applied", "callback_data", "app:applied:" + job.getId())));
     }
 
     private void send(String text, List<List<Map<String, String>>> buttons) {

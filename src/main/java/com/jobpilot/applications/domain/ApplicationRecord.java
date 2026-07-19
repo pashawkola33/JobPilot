@@ -15,6 +15,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import java.time.Instant;
 import java.time.LocalDate;
 
@@ -24,6 +25,9 @@ public class ApplicationRecord {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+    @Version
+    @Column(nullable = false)
+    private long version;
     @OneToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "job_id", nullable = false, unique = true)
     private Job job;
@@ -51,6 +55,41 @@ public class ApplicationRecord {
     protected ApplicationRecord() {
     }
 
+    public static ApplicationRecord create(Job job, ApplicationStatus status, Instant now) {
+        if (status != ApplicationStatus.SAVED && status != ApplicationStatus.APPLIED) {
+            throw new IllegalArgumentException("An application can only start as SAVED or APPLIED");
+        }
+        return new ApplicationRecord(job, status,
+                status == ApplicationStatus.APPLIED ? now : null,
+                null, null, null, null, null, null, now, now);
+    }
+
+    public void transitionTo(ApplicationStatus next, Instant interviewAt,
+                             String rejectedBecause, Instant now) {
+        if (next == ApplicationStatus.APPLIED && applicationDate == null) {
+            applicationDate = now;
+        }
+        if (next == ApplicationStatus.INTERVIEW) {
+            if (interviewAt == null) throw new IllegalArgumentException("Interview date is required");
+            interviewDate = interviewAt;
+        }
+        if (next == ApplicationStatus.REJECTED) {
+            rejectionReason = rejectedBecause;
+        }
+        status = next;
+        updatedAt = now;
+    }
+
+    public void changeFollowUpDate(LocalDate date, Instant now) {
+        nextFollowUpDate = date;
+        updatedAt = now;
+    }
+
+    public void changeNotes(String normalizedNotes, Instant now) {
+        notes = normalizedNotes;
+        updatedAt = now;
+    }
+
     public ApplicationRecord(Job job, ApplicationStatus status, Instant applicationDate,
                              ResumeVersion resumeVersion, CoverNote coverNote, String notes,
                              LocalDate nextFollowUpDate, Instant interviewDate,
@@ -69,6 +108,7 @@ public class ApplicationRecord {
     }
 
     public Long getId() { return id; }
+    public long getVersion() { return version; }
     public Job getJob() { return job; }
     public ApplicationStatus getStatus() { return status; }
     public Instant getApplicationDate() { return applicationDate; }

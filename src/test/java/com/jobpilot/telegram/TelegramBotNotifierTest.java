@@ -18,21 +18,25 @@ import com.jobpilot.matching.ScoreBand;
 import com.jobpilot.matching.ScoreCard;
 import com.jobpilot.support.TestProperties;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.springframework.web.client.ResourceAccessException;
+import org.springframework.test.util.ReflectionTestUtils;
 
 class TelegramBotNotifierTest {
     @Test
-    void sendsExcellentMatchWithOpenVacancyButton() {
+    void sendsExcellentMatchWithOpenVacancySaveAndAppliedButtons() {
         ExternalHttpClient http = org.mockito.Mockito.mock(ExternalHttpClient.class);
-        var properties = TestProperties.create(new JobPilotProperties.Telegram("secret-token", "-100123"));
+        var properties = TestProperties.create(commandsEnabledTelegram());
         var notifier = new TelegramBotNotifier(http, properties);
 
-        notifier.notifyExcellent(job(), score());
+        Job job = job();
+        ReflectionTestUtils.setField(job, "id", 42L);
+        notifier.notifyExcellent(job, score());
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> body = ArgumentCaptor.forClass(Map.class);
@@ -40,6 +44,27 @@ class TelegramBotNotifierTest {
         assertThat(body.getValue()).containsEntry("chat_id", "-100123");
         assertThat(body.getValue().get("text").toString()).contains("87/100", "Java &lt;Intern&gt;");
         assertThat(body.getValue()).containsKey("reply_markup");
+        assertThat(body.getValue().get("reply_markup").toString())
+                .contains("Open vacancy", "app:save:42", "app:applied:42")
+                .doesNotContain(job.getCanonicalUrl() + "app:");
+    }
+
+    @Test
+    void sendsOnlyOpenVacancyButtonWhenCommandsAreDisabled() {
+        ExternalHttpClient http = org.mockito.Mockito.mock(ExternalHttpClient.class);
+        var properties = TestProperties.create(new JobPilotProperties.Telegram("secret-token", "-100123"));
+        var notifier = new TelegramBotNotifier(http, properties);
+        Job job = job();
+        ReflectionTestUtils.setField(job, "id", 42L);
+
+        notifier.notifyExcellent(job, score());
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<Map<String, Object>> body = ArgumentCaptor.forClass(Map.class);
+        verify(http).postJson(any(), body.capture());
+        assertThat(body.getValue().get("reply_markup").toString())
+                .contains("Open vacancy")
+                .doesNotContain("callback_data", "app:save:42", "app:applied:42");
     }
 
     @Test
@@ -106,5 +131,11 @@ class TelegramBotNotifierTest {
     private ScoreCard score() {
         return new ScoreCard(87, ScoreBand.EXCELLENT_MATCH, true, 25, 22, 15, 8, 10, 10,
                 5, 8, List.of("Java and Spring Boot match"), List.of("Docker is preferred"), List.of());
+    }
+
+    private JobPilotProperties.Telegram commandsEnabledTelegram() {
+        return new JobPilotProperties.Telegram(
+                "secret-token", "-100123", "JobPilotBot", true, "-100123", "777",
+                Duration.ofSeconds(25), Duration.ofSeconds(2), 50, 3, true);
     }
 }
