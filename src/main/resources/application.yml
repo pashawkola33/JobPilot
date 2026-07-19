@@ -26,6 +26,7 @@ logging:
     root: INFO
     com.jobpilot: INFO
     org.springframework.web.reactive.function.client: WARN
+    org.apache.pdfbox.pdmodel.font.FileSystemFontProvider: OFF
 
 jobpilot:
   telegram:
@@ -78,6 +79,23 @@ jobpilot:
     monthly-budget-usd: ${LLM_MONTHLY_BUDGET_USD:}
     input-cost-per-million-tokens: ${LLM_INPUT_COST_PER_MILLION_TOKENS:}
     output-cost-per-million-tokens: ${LLM_OUTPUT_COST_PER_MILLION_TOKENS:}
+  documents:
+    enabled: ${DOCUMENTS_ENABLED:false}
+    storage-root: ${DOCUMENT_STORAGE_ROOT:./data/documents}
+    max-docx-bytes: ${DOCUMENT_MAX_DOCX_BYTES:2097152}
+    max-pdf-bytes: ${DOCUMENT_MAX_PDF_BYTES:2097152}
+    resume-template-version: ${DOCUMENT_RESUME_TEMPLATE_VERSION:resume-v1}
+    cover-note-template-version: ${DOCUMENT_COVER_NOTE_TEMPLATE_VERSION:cover-note-v1}
+    renderer-version: ${DOCUMENT_RENDERER_VERSION:apache-v1}
+    max-preview-characters: ${DOCUMENT_MAX_PREVIEW_CHARACTERS:4000}
+    stale-after: ${DOCUMENT_STALE_AFTER:10m}
+    contact-cache-hmac-key: ${DOCUMENT_CONTACT_CACHE_HMAC_KEY:}
+    contact:
+      email: ${DOCUMENT_CONTACT_EMAIL:}
+      phone: ${DOCUMENT_CONTACT_PHONE:}
+      github-url: ${DOCUMENT_CONTACT_GITHUB_URL:}
+      linkedin-url: ${DOCUMENT_CONTACT_LINKEDIN_URL:}
+      portfolio-url: ${DOCUMENT_CONTACT_PORTFOLIO_URL:}
   scheduling:
     fetch-cron: ${JOB_FETCH_CRON:0 0 */6 * * *}
     digest-cron: ${DAILY_DIGEST_CRON:0 0 9 * * *}

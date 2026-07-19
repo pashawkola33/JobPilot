@@ -1,8 +1,8 @@
 # JobPilot
 
-JobPilot is a human-in-the-loop internship discovery service for entry-level software roles. Phase 1 fetches public Greenhouse and Lever job boards, normalizes and deduplicates vacancies, deterministically extracts requirements, scores them against a configurable candidate profile, and sends strong matches to a Telegram channel. Phase 2 Stage 1 adds the versioned candidate truth model and persistence foundations used by later application-tracking and document-generation stages. Phase 2 Stage 2 adds safe, deterministic processing of manually submitted public vacancy URLs.
+JobPilot is a human-in-the-loop internship discovery service for entry-level software roles. Phase 1 fetches public Greenhouse and Lever job boards, normalizes and deduplicates vacancies, deterministically extracts requirements, scores them against a configurable candidate profile, and sends strong matches to a Telegram channel. Phase 2 Stage 1 adds the versioned candidate truth model, Stage 2 safely processes manually submitted public vacancy URLs, Stage 3 adds human-maintained application tracking, Stage 4 adds optional structured job analysis, and Stage 5 creates truthful application documents for private human review.
 
-JobPilot never submits applications, answers screening questions, accepts agreements, or contacts recruiters. Phase 2 Stage 3 adds an authorized Telegram command interface and a human-maintained application tracker; it does not automate applications. Phase 2 Stage 4 adds optional structured job analysis through a provider-neutral LLM boundary with database-backed budgets, strict truth validation, caching, and deterministic fallback. Resume tailoring, cover-note/document generation, and protected-site browser automation remain out of scope.
+JobPilot never submits applications, uploads documents to employers, answers screening questions, accepts agreements, or contacts recruiters. Stage 5 generates ATS-oriented DOCX/PDF résumés and optional cover notes, but attaching a completed version to an existing application remains a separate human-triggered internal operation. Protected-site browser automation remains out of scope.
 
 ## Phase 1 features
 
@@ -39,6 +39,11 @@ persisted job + deterministic requirements + optional verified candidate facts
     -> cache lookup + committed database budget reservation
     -> optional provider call outside transactions -> strict structured/truth validation
     -> atomic analysis, usage, and reservation reconciliation OR deterministic fallback
+
+persisted job + validated analysis + exact verified candidate facts
+    -> short IN_PROGRESS claim transaction -> canonical truth validation
+    -> private DOCX/PDF render, structural validation, hash, and atomic file move
+    -> short COMPLETED transaction -> preview/metadata API -> human document selection
 ```
 
 Integrations implement `JobSource`; persistence is isolated behind Spring Data repositories. `JobProcessor` gives one vacancy a transaction, while `JobIngestionService` contains failures so one bad source or posting cannot abort the complete fetch. `JobSchedulingService` prevents overlapping fetches with an atomic guard.
@@ -110,6 +115,20 @@ The canonical result is bounded typed JSON: role summary, requirement/responsibi
 
 The cache key hashes job content, candidate truth/profile version (or generic mode), operation, prompt version, normalized provider, and configured model. A completed valid provider analysis is returned as `CACHED` without a fake usage row. Changing any identity component invalidates the key. Provider/validation failures persist deterministic fallback with a five-minute cooldown; concurrent identical work returns fallback while the winning request is in progress and never starts a second provider call.
 
+### Phase 2 Stage 5 truthful application documents
+
+`POST /internal/v1/jobs/{jobId}/documents` explicitly requests DOCX, PDF, or both and whether to include a cover note. Generation is disabled by default. When enabled, the service loads the active profile and a validated Stage 4 analysis, creates renderer-neutral `ResumeDocumentModel` and `CoverNoteDocumentModel` values, validates every candidate selection against exact verified fact IDs/stable keys, then passes the same canonical wording to both renderers. The database stores the selected skill, project, bullet, language, and cover-note fact references. Contact values never enter those models' persisted truth fields, previews, hashes, change summaries, interview claims, logs, or provider requests; they are validated from runtime configuration and injected only into private artifacts.
+
+Deterministic generation ranks verified facts using normalized vacancy/analysis terms, keywords, project technologies, and verified bullets. Optional `RESUME_DRAFT` and `COVER_NOTE_DRAFT` operations reuse Stage 4's provider, strict schema, reservation, accounting, and sanitized fallback infrastructure. Provider output may select only supplied stable keys; application validation reconstructs all prose. Disabled LLM, budget exhaustion, provider failure, malformed output, and unsupported selections fall back to conservative student-level documents and are marked as fallback metadata.
+
+Apache POI renders macro-free, one-column Office Open XML without tables, headers, footers, hidden text, comments, external relationships, or embedded objects. Apache PDFBox renders selectable text with one or two deterministic pages and no forms, annotations, actions, JavaScript, encryption, or attachments. Both use the same headings: name/contact, target title, summary, technical skills, projects, education, and languages. This conservative structure improves portability but does not guarantee compatibility with every ATS.
+
+Artifacts live below a validated private storage root using server-generated relative names. The lifecycle is a short `IN_PROGRESS` claim transaction, rendering and validation with no transaction, temporary files and atomic moves where supported, followed by a short `COMPLETED` transaction containing SHA-256 hashes, byte sizes, and PDF page count. Missing/tampered cached files are rejected; failed or stale claims may be retried; partial files are removed; and orphan cleanup is bounded. Cache identity includes job content, exact profile truth, analysis, operation, templates, renderer, requested formats, requested provider/model path, and only an opaque HMAC-SHA256 contact identity. Raw contact values and the HMAC secret are never persisted.
+
+Metadata and fixed-name downloads are available from `GET /internal/v1/resumes/{id}`, `/docx`, `/pdf` and the corresponding `/internal/v1/cover-notes/{id}` routes. `PUT /internal/v1/applications/{jobId}/documents` selects a completed, structurally valid résumé and compatible cover note in a short locked transaction. It is idempotent and never changes application status. These remain internal administrative endpoints and must stay behind a trusted network or authentication boundary.
+
+Truth validation rejects invented employment, commercial experience, metrics, employers, certifications, strengthened language levels, practical claims for theoretical knowledge, inactive/CV-disallowed facts, unrelated prose attached to a valid key, and senior/professional titles. Cover notes use a neutral salutation, vacancy-evidenced company/role statements, explicit project-level truth boundaries, and material-gap acknowledgment. These controls reduce hallucination risk but do not provide a perfect prevention guarantee; every document still requires human review.
+
 ## Requirements
 
 - Java 21 or newer (the Maven compiler always targets release 21)
@@ -171,8 +190,25 @@ Important variables:
 | `LLM_MONTHLY_BUDGET_USD` | Enabled: yes | UTC monthly committed/reserved cap |
 | `LLM_INPUT_COST_PER_MILLION_TOKENS` | Enabled: yes | Explicit input price used for accounting |
 | `LLM_OUTPUT_COST_PER_MILLION_TOKENS` | Enabled: yes | Explicit output price used for accounting |
+| `DOCUMENTS_ENABLED` | No | Enables private document generation; default `false` |
+| `DOCUMENT_STORAGE_ROOT` | Documents: yes | Private non-source/non-public root; default `./data/documents` |
+| `DOCUMENT_MAX_DOCX_BYTES` | No | DOCX byte bound, 1 KiB–20 MiB; default `2097152` |
+| `DOCUMENT_MAX_PDF_BYTES` | No | PDF byte bound, 1 KiB–20 MiB; default `2097152` |
+| `DOCUMENT_RESUME_TEMPLATE_VERSION` | No | Résumé cache/template identity |
+| `DOCUMENT_COVER_NOTE_TEMPLATE_VERSION` | No | Cover-note cache/template identity |
+| `DOCUMENT_RENDERER_VERSION` | No | Renderer cache identity |
+| `DOCUMENT_MAX_PREVIEW_CHARACTERS` | No | Contact-free preview bound; default `4000` |
+| `DOCUMENT_STALE_AFTER` | No | Stale `IN_PROGRESS` retry threshold; default `10m` |
+| `DOCUMENT_CONTACT_CACHE_HMAC_KEY` | Documents: yes | Runtime-only Base64 secret containing at least 32 decoded bytes; no default |
+| `DOCUMENT_CONTACT_EMAIL` | Documents: yes | Runtime-only bounded syntactic email; never persisted |
+| `DOCUMENT_CONTACT_PHONE` | No | Runtime-only optional bounded phone |
+| `DOCUMENT_CONTACT_GITHUB_URL` | No | Runtime-only safe HTTPS link |
+| `DOCUMENT_CONTACT_LINKEDIN_URL` | No | Runtime-only safe HTTPS link |
+| `DOCUMENT_CONTACT_PORTFOLIO_URL` | No | Runtime-only safe HTTPS link |
 
 Phase 1 matching facts remain under `jobpilot.candidate` in `application.yml`. The independently versioned Phase 2 truth source is `candidate-profile.yml`; increase `profile-version` whenever verified facts change. Candidate rows are not placed in Flyway migrations.
+
+Generate `DOCUMENT_CONTACT_CACHE_HMAC_KEY` independently from all other credentials using at least 32 random bytes and Base64 encoding. Enabled document generation fails closed when it is absent, malformed, or too short; disabled mode requires no key. The key is runtime-only and must never be logged or committed. Keep it consistent and back it up securely if document-cache reuse across deployments is desired; rotation intentionally invalidates cache identity without exposing the underlying contacts.
 
 ### Greenhouse
 
@@ -243,13 +279,15 @@ Flyway applies the schema automatically. The application does not require source
 ./mvnw verify
 ```
 
-The suite covers normalization, canonical URLs, migration/repository behavior, deduplication, deterministic extraction, scoring/penalties/hard blockers, Greenhouse and Lever payloads, source failure isolation, Telegram messages, candidate-profile validation/versioning, Phase 2 persistence, manual URL safety/parsing, LLM configuration/provider failures, budget boundaries and concurrency, conservative accounting, structured truth/evidence validation, prompt injection, cache invalidation/idempotency, transaction boundaries, typed APIs, and deterministic fallback. H2 in PostgreSQL compatibility mode provides fast repository feedback. `./mvnw verify` also runs the `*IT` suite against real PostgreSQL 16 with Testcontainers when Docker is available.
+The suite covers normalization, canonical URLs, migration/repository behavior, deduplication, deterministic extraction, scoring/penalties/hard blockers, Greenhouse and Lever payloads, source failure isolation, Telegram messages, candidate-profile validation/versioning, Phase 2 persistence, manual URL safety/parsing, LLM configuration/provider failures, budget boundaries and concurrency, conservative accounting, structured truth/evidence validation, prompt injection, cache invalidation/idempotency, transaction boundaries, typed APIs, and deterministic fallback. Stage 5 tests also reopen and inspect generated DOCX/PDF files, verify truth references/contact isolation/storage safety, exercise cache/concurrency and idempotent human selection, and reject unsafe contact destinations. H2 in PostgreSQL compatibility mode provides fast repository feedback. `./mvnw verify` also runs the `*IT` suite against real PostgreSQL 16 with Testcontainers when Docker is available.
 
 ## Security and ethical boundary
 
 - Secrets and generated personal documents are ignored by Git.
 - Tokens are read only from environment variables and are not logged.
 - LLM prompts and raw provider responses are neither logged nor persisted; accounting stores sanitized metadata only.
+- Runtime document contacts are injected only into private final artifacts; previews, audit content, hashes of canonical models, provider requests, and logs exclude them.
+- Private document paths are server-generated, relative, symlink-checked, size-bounded, structurally validated, and Git-ignored.
 - Remote calls have connection/read timeouts, bounded responses, and transient retries.
 - Only documented public Greenhouse and Lever APIs are queried.
 - Manual URL fetches allow only `http`/`https`, reject credentials, validate every original and redirected hostname through DNS, and block loopback, private, link-local, multicast, unspecified, reserved, benchmarking, and cloud-metadata destinations. IPv4 destinations embedded in 6to4, Teredo, NAT64, IPv4-compatible, or IPv4-mapped IPv6 addresses are decoded and checked by the same IPv4 policy.
@@ -264,9 +302,11 @@ The suite covers normalization, canonical URLs, migration/repository behavior, d
 - Telegram command polling is single-instance only; webhooks and distributed poller coordination are not implemented.
 - Optional Stage 4 LLM analysis supports one documented Responses-compatible provider adapter; it is disabled by default and deterministic analysis remains available.
 - LLM delivery is at-most-one active caller per cache key under normal database operation, not exactly-once provider delivery; a crash after provider acceptance can leave only conservative abandoned-reservation accounting.
-- No resume tailoring, DOCX/PDF, cover-note generation, recruiter messages, or screening answers.
+- Stage 5 supports the committed profile's verified student/project truth model; it does not model unverified employment history or arbitrary résumé section templates.
+- ATS-friendly output is deliberately conservative, but no universal ATS parsing/format-compatibility guarantee is possible.
+- Strict schemas and fact validation reduce unsupported LLM selections but cannot guarantee perfect hallucination prevention; human review remains mandatory.
+- Stage 5 never submits/uploads documents, contacts recruiters, or answers screening questions.
 - No browser automation or fallback for JavaScript-only, authenticated, CAPTCHA, or otherwise protected vacancy pages.
 - The standard Java HTTP client performs its own connection-time DNS lookup after policy validation, leaving a narrow DNS-rebinding race; production deployments should also block private and metadata ranges at the network layer.
-- Resume and cover-note models remain persistence foundations for Stage 5; Stage 4 does not write them.
 - PostgreSQL Testcontainers integration tests require a working Docker environment.
 - Board-wide APIs are filtered after retrieval; configure only permitted boards and respect provider policies.

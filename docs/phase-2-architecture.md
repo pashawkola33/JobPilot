@@ -1,6 +1,6 @@
-# Phase 2 architecture — Stages 1 through 4
+# Phase 2 architecture — Stages 1 through 5
 
-Stage 1 establishes the versioned candidate truth model and workflow persistence. Stage 2 adds manually submitted public vacancy URLs. Stage 3 adds authorized Telegram command polling and manual application tracking. Stage 4 adds optional structured LLM job analysis, database-backed budget reservations, usage accounting, strict candidate-truth validation, cache identity, and deterministic fallback. Resume tailoring, cover-note generation, DOCX/PDF rendering, recruiter contact, screening answers, and application automation are not implemented.
+Stage 1 establishes the versioned candidate truth model and workflow persistence. Stage 2 adds manually submitted public vacancy URLs. Stage 3 adds authorized Telegram command polling and manual application tracking. Stage 4 adds optional structured LLM job analysis, database-backed budget reservations, usage accounting, strict candidate-truth validation, cache identity, and deterministic fallback. Stage 5 adds truthful résumé/cover-note models, private DOCX/PDF rendering, artifact lifecycle/versioning, preview, and human document selection. Recruiter contact, screening answers, uploads, browser automation, and application submission are not implemented.
 
 ## Scope
 
@@ -33,9 +33,17 @@ POST /internal/v1/jobs/{jobId}/analysis
     -> strict schema/evidence/truth validation
     -> short atomic analysis + usage + budget reconciliation transaction
     -> deterministic fallback for every non-success provider path
+
+POST /internal/v1/jobs/{jobId}/documents
+    -> validated runtime contact + exact profile/job/analysis snapshots
+    -> short IN_PROGRESS claim transaction and commit
+    -> deterministic or optional validated stable-key draft
+    -> canonical truth model -> DOCX/PDF render/validate/store without transaction
+    -> short COMPLETED metadata/fact-reference transaction
+    -> private preview/download API -> separate human selection transaction
 ```
 
-Stage 1 components perform no external calls. The Stage 2 endpoint performs only the explicitly submitted, policy-approved public fetch or a known ATS public API call. Stage 3 Telegram calls and Stage 4 provider calls run outside database transactions.
+Stage 1 components perform no external calls. The Stage 2 endpoint performs only the explicitly submitted, policy-approved public fetch or a known ATS public API call. Stage 3 Telegram calls and Stage 4/5 provider calls run outside database transactions. Stage 5 rendering and filesystem work also run without an open database transaction.
 
 ## Flyway migration
 
@@ -236,3 +244,61 @@ Invalid and failed provider results are not stored as successful cache entries. 
 `POST /internal/v1/jobs/{jobId}/analysis` is the minimal internal analysis surface. Candidate-specific analysis is the default; `candidateSpecific=false` omits candidate facts. Responses expose only typed status, IDs/profile version, validated analysis, and sanitized category. The endpoint must remain behind a trusted network or authentication boundary.
 
 Stage 4 does not generate or persist a resume, cover note, DOCX, PDF, recruiter message, screening answer, or application action. It adds no Telegram command and no browser automation.
+
+## Stage 5: truthful private application documents
+
+### Canonical model and fact boundary
+
+`CandidateDocumentFacts` and `JobDocumentFacts` are detached, bounded snapshots assembled in a short transaction. They carry the exact profile/source version, verified candidate IDs and stable keys, job content hash, and the validated Stage 4 analysis identity. `ResumeDraftPlan` and `CoverNoteDraftPlan` contain stable-key selections only. The deterministic builder or optional provider may propose a plan, but `ResumeTruthValidator` and `CoverNoteTruthValidator` resolve every selection against those snapshots and reconstruct the canonical wording.
+
+`ResumeDocumentModel` and `CoverNoteDocumentModel` are the only renderer inputs. Both DOCX and PDF therefore contain the same title, summary, skills, languages, projects, verified bullets, and cover-note paragraphs. The résumé uses 8–16 unique active skills, 1–3 active projects, 2–4 verified bullets per selected project, and 2–5 CV-allowed languages with stable tie ordering. With no verified employment, it emits no work-experience section and no professional/senior claim. The cover note uses a neutral salutation, 180–350 words, job title/company evidence, selected candidate fact references, and conservative gap wording.
+
+`DocumentContactPolicy` validates a required bounded syntactic email, optional bounded phone, and optional HTTPS URLs. URL values reject credentials, query, fragment, non-default ports, unsafe schemes, local/internal hosts, and private or special-purpose IP literals. The renderers create no network relationships or remote fetches; safe links are emitted as visible plain text. Contact values are runtime-only and are excluded from prompts, persisted content, canonical hashes, previews, change summaries, interview claims, and logs.
+
+`DocumentContactCacheIdentity` canonicalizes email, phone whitespace, and each safe link once, then uses JDK `HmacSHA256` with the explicit `JobPilot\0document-contact-cache\0v1\0` domain and length-delimited fields. The helper accepts an optional future owner scope, but Stage 5 supplies none and adds no multi-user model. Only this keyed opaque identity influences the persisted document cache key; neither raw contact data nor the key is stored. The dedicated Base64 secret must decode to at least 32 bytes, has no default, is required only when documents are enabled, and is unrelated to provider, Telegram, or database credentials. Decoded key bytes are short-lived and cleared. Deployments that require cache reuse must preserve the secret consistently; rotation deliberately invalidates contact-dependent cache identities.
+
+### Optional drafting and fallback
+
+`RESUME_DRAFT` and `COVER_NOTE_DRAFT` use the existing `LlmProvider`, `LlmBudgetService`, `LlmCostCalculator`, `LlmUsageRecorder`, and Stage 4 transaction conventions. Each operation has a separate strict schema and request identity. The provider receives sanitized untrusted vacancy data plus stable candidate keys, never contact values, and cannot supply canonical prose. Calls occur after reservation commit with no active transaction.
+
+Disabled LLM, budget/call-limit rejection, provider failure, malformed JSON, schema failure, and truth failure all use deterministic generation. Fallback metadata is explicit and is never labelled provider-generated. Résumé ranking uses normalized vacancy/analysis terms, verified skill names, project technologies, bullet keywords, strengths, and gaps. Cover-note fallback uses only the persisted role/company, selected résumé facts, verified project bullets, and validated analysis requirements/gaps.
+
+### V5 persistence and cache identity
+
+Forward-only `V5__resume_cover_note_documents.sql` leaves V1–V4 unchanged. It extends `resume_versions` and `cover_notes` with analysis/profile identity, unique SHA-256 cache key, template/renderer/provider/model identity, deterministic/provider method, fallback marker, requested formats, render status/failure, attempt and optimistic-lock versions, structured content hash, relative artifact paths, byte hashes/sizes, PDF page count, and lifecycle timestamps. Checks prevent a completed row without canonical content and every requested artifact's path/hash/positive bounded size; requested PDFs require one or two pages.
+
+`resume_version_languages` completes the exact résumé-to-fact audit. `cover_note_fact_references` records an ordered typed reference with exactly one foreign key to a profile, skill, language, project, or project bullet. Existing application résumé/cover-note foreign keys remain the selection mechanism. Candidate audit targets use restrictive foreign keys; document-owned selection rows cascade only with their owning document.
+
+The résumé cache key hashes the operation, job description hash, profile source hash/version, analysis cache identity, résumé template, renderer, requested formats, requested LLM path/provider/model, and keyed opaque contact identity. The cover-note identity additionally includes the completed résumé content hash and its own template/operation. A completed valid hit is reused; changed identity creates another row. A database unique constraint resolves concurrent claims to at most one row; a bounded loser waits for and adopts the completed winner. Completed audit rows are immutable; only failed or stale `IN_PROGRESS` rows with the same identity are cleared and retried with an incremented attempt.
+
+### Crash-consistent storage and rendering
+
+The generation lifecycle is:
+
+1. Claim or create `IN_PROGRESS` in a short locked transaction.
+2. Commit before model construction, provider I/O, rendering, or filesystem access.
+3. Build and validate the canonical truth model.
+4. Render requested bytes with Apache POI 5.5.1 and PDFBox 3.0.8.
+5. Write restrictive temporary files, structurally validate them, and atomically move where supported to server-generated relative paths.
+6. Reopen the final file, revalidate content/structure/size, hash final bytes with SHA-256, and retain the PDF page count.
+7. Mark `COMPLETED` and persist exact fact mappings in a final short transaction.
+8. Select documents only through the separate human-triggered operation.
+
+The root is disabled by default and rejected when it is a symlink or lies within source, resources, static/public, or build output directories. Client path/title/company input never enters a filename. Resolution rejects absolute paths, separators, traversal, colon/Unicode-confusion forms, unexpected directory/name shapes, and target-path symlinks. A render/storage/validation failure removes partial and newly finalized files. If final database completion fails, generated files are removed unless another completion won the race. Reads repeat structural/hash/size validation. Orphan cleanup scans only bounded generated depth, accepts an explicit reference set/cutoff, and removes at most 1,000 old unreferenced regular files.
+
+POI emits standard Arial paragraphs, headings, and bullets in a simple one-column `.docx` with no tables, headers, footers, macros, OLE/embeddings, comments, tracked/hidden text, remote templates, external relationships, images, or local paths. PDFBox emits selectable single-column text, deterministic wrapping/pagination, at most two pages, and no encryption, forms, annotations, actions, JavaScript, attachments, launch actions, or remote content. Generated artifacts are reopened and expected canonical text is extracted before completion. The layout is ATS-oriented, not a promise of universal ATS compatibility.
+
+### Internal API and human selection
+
+The internal surface is:
+
+- `POST /internal/v1/jobs/{jobId}/documents` for explicit résumé/cover-note and DOCX/PDF choices;
+- `GET /internal/v1/resumes/{id}` plus `/docx` and `/pdf`;
+- `GET /internal/v1/cover-notes/{id}` plus `/docx` and `/pdf`;
+- `PUT /internal/v1/applications/{jobId}/documents` for explicit selection.
+
+Responses expose typed state, bounded canonical preview/audit metadata, hashes/sizes/page count, and numeric IDs, never contact configuration, absolute paths, prompt/provider bodies, SQL errors, stack traces, or full vacancy text. Downloads use fixed media types, `no-store`, `nosniff`, and server-generated numeric attachment names.
+
+Selection first snapshots document metadata, validates stored artifacts outside a transaction, then opens a short transaction that locks the application and documents and revalidates job, profile version, completion state, and cover-note-to-résumé linkage. It is idempotent and does not change application status. Passing `coverNoteId: null` explicitly clears a previously selected cover note while retaining the selected résumé. Document selection remains a human action. There is no employer upload, automatic submission, recruiter contact, screening response, Telegram command, or browser automation in Stage 5.
+
+The PostgreSQL 16 Testcontainers suite forces two production generation transactions past the same initial cache miss, proves the unique-key race, blocks the real renderer to demonstrate overlap, and verifies winner adoption, exact fact ownership, artifact integrity, stale-claim recovery, active-claim non-stealing, and cache-hit revalidation. Separate worker threads receive separate transaction-bound persistence contexts; no H2 result is used as the concurrency guarantee.

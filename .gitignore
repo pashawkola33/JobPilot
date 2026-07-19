@@ -6,6 +6,7 @@ target/
 .env.*
 !.env.example
 data/
+data/documents/
 *.log
 *.pdf
 *.docx

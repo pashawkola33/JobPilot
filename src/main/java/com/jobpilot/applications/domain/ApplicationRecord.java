@@ -90,6 +90,13 @@ public class ApplicationRecord {
         updatedAt = now;
     }
 
+    public void selectDocuments(ResumeVersion resume, CoverNote note, Instant now) {
+        if (resume == null) throw new IllegalArgumentException("A resume version is required");
+        resumeVersion = resume;
+        coverNote = note;
+        updatedAt = now;
+    }
+
     public ApplicationRecord(Job job, ApplicationStatus status, Instant applicationDate,
                              ResumeVersion resumeVersion, CoverNote coverNote, String notes,
                              LocalDate nextFollowUpDate, Instant interviewDate,

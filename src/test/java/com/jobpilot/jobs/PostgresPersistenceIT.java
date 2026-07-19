@@ -51,6 +51,8 @@ import com.jobpilot.manualurl.application.ManualJobPersistenceService;
 import com.jobpilot.resume.domain.CoverNote;
 import com.jobpilot.resume.domain.ResumeVersion;
 import com.jobpilot.resume.repository.CoverNoteRepository;
+import com.jobpilot.resume.repository.CoverNoteFactReferenceRepository;
+import com.jobpilot.resume.repository.ResumeVersionLanguageRepository;
 import com.jobpilot.resume.repository.ResumeVersionProjectBulletRepository;
 import com.jobpilot.resume.repository.ResumeVersionProjectRepository;
 import com.jobpilot.resume.repository.ResumeVersionRepository;
@@ -141,7 +143,11 @@ class PostgresPersistenceIT {
     @Autowired
     private ResumeVersionProjectBulletRepository resumeVersionProjectBullets;
     @Autowired
+    private ResumeVersionLanguageRepository resumeVersionLanguages;
+    @Autowired
     private CoverNoteRepository coverNotes;
+    @Autowired
+    private CoverNoteFactReferenceRepository coverNoteFactReferences;
     @Autowired
     private LlmUsageEventRepository llmUsageEvents;
     @Autowired
@@ -163,7 +169,7 @@ class PostgresPersistenceIT {
     void flywayMigratesTheSchemaOnRealPostgres() {
         Integer applied = jdbcTemplate.queryForObject(
                 "select count(*) from flyway_schema_history where success", Integer.class);
-        assertThat(applied).isEqualTo(4);
+        assertThat(applied).isEqualTo(5);
         assertThat(jdbcTemplate.queryForList(
                 "select table_name from information_schema.tables where table_schema = 'public'",
                 String.class))
@@ -171,7 +177,8 @@ class PostgresPersistenceIT {
                         "candidate_profiles", "candidate_skills", "candidate_languages",
                         "candidate_projects", "candidate_project_bullets", "applications",
                         "resume_versions", "resume_version_skills", "resume_version_projects",
-                        "resume_version_project_bullets", "cover_notes", "llm_usage_events",
+                        "resume_version_project_bullets", "resume_version_languages",
+                        "cover_notes", "cover_note_fact_references", "llm_usage_events",
                         "telegram_bot_state", "application_status_history",
                         "llm_budget_control", "llm_budget_reservations", "job_analyses");
     }
@@ -333,6 +340,8 @@ class PostgresPersistenceIT {
         Job job = jobs.saveAndFlush(job("resume", "https://example.com/jobs/resume", now));
         CandidateProfile profile = candidateProfiles.findByActiveTrue().orElseThrow();
         var skill = candidateSkills.findByCandidateProfileIdOrderByDisplayOrder(profile.getId()).getFirst();
+        var language = candidateLanguages.findByCandidateProfileIdOrderByDisplayOrder(profile.getId())
+                .stream().filter(value -> value.isAllowedInCv()).findFirst().orElseThrow();
         var project = candidateProjects.findByCandidateProfileIdOrderByDisplayOrder(profile.getId()).getFirst();
         var bullet = candidateProjectBullets.findByProjectIdOrderByDisplayOrder(project.getId()).getFirst();
         ResumeVersion resume = new ResumeVersion(job, profile, profile.getProfileVersion(),
@@ -342,6 +351,7 @@ class PostgresPersistenceIT {
         resume.selectSkill(skill, 0);
         resume.selectProject(project, 0);
         resume.selectProjectBullet(bullet, 0);
+        resume.selectLanguage(language, 0);
         ResumeVersion saved = resumeVersions.saveAndFlush(resume);
 
         assertThat(resumeVersions.findById(saved.getId())).isPresent();
@@ -354,12 +364,14 @@ class PostgresPersistenceIT {
         assertThat(resumeVersionProjectBullets.findByResumeVersionIdOrderByDisplayOrder(saved.getId()))
                 .singleElement().extracting(reference -> reference.getCandidateProjectBullet().getId())
                 .isEqualTo(bullet.getId());
+        assertThat(resumeVersionLanguages.count()).isEqualTo(1);
 
         resumeVersions.delete(saved);
         resumeVersions.flush();
         assertThat(count("resume_version_skills", "resume_version_id", saved.getId())).isZero();
         assertThat(count("resume_version_projects", "resume_version_id", saved.getId())).isZero();
         assertThat(count("resume_version_project_bullets", "resume_version_id", saved.getId())).isZero();
+        assertThat(count("resume_version_languages", "resume_version_id", saved.getId())).isZero();
         assertThat(candidateSkills.existsById(skill.getId())).isTrue();
     }
 
@@ -373,12 +385,24 @@ class PostgresPersistenceIT {
                 "Verified summary", "Preview", "Changes", "Claims", null, null,
                 "d".repeat(64), now));
 
-        CoverNote saved = coverNotes.saveAndFlush(new CoverNote(
-                job, profile, resume, "Factual cover note", "e".repeat(64), now));
+        CoverNote note = new CoverNote(job, profile, resume,
+                "Factual cover note", "e".repeat(64), now);
+        note.referenceProfile(profile, 0);
+        CoverNote saved = coverNotes.saveAndFlush(note);
 
         assertThat(coverNotes.findByJobIdOrderByGeneratedAtDesc(job.getId()))
                 .singleElement().extracting(CoverNote::getContent).isEqualTo("Factual cover note");
         assertThat(saved.getResumeVersion().getId()).isEqualTo(resume.getId());
+        assertThat(coverNoteFactReferences.count()).isEqualTo(1);
+
+        ApplicationRecord application = ApplicationRecord.create(job, ApplicationStatus.SAVED, now);
+        application.selectDocuments(resume, saved, now.plusSeconds(1));
+        applications.saveAndFlush(application);
+        entityManager.clear();
+        ApplicationRecord stored = applications.findByJobId(job.getId()).orElseThrow();
+        assertThat(stored.getResumeVersion().getId()).isEqualTo(resume.getId());
+        assertThat(stored.getCoverNote().getId()).isEqualTo(saved.getId());
+        assertThat(stored.getStatus()).isEqualTo(ApplicationStatus.SAVED);
     }
 
     @Test
