@@ -9,8 +9,14 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.Lock;
+import jakarta.persistence.LockModeType;
 
 public interface JobRepository extends JpaRepository<Job, Long> {
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select job from Job job where job.id = :id")
+    Optional<Job> findByIdForUpdate(Long id);
+
     Optional<Job> findByCanonicalUrl(String canonicalUrl);
 
     Optional<Job> findBySourceAndExternalId(String source, String externalId);

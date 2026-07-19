@@ -1,6 +1,6 @@
-# Phase 2 architecture — Stages 1 and 2
+# Phase 2 architecture — Stages 1 through 4
 
-Stage 1 establishes the versioned candidate truth model and future workflow persistence. Stage 2 adds manually submitted public vacancy URLs. Telegram command polling, application transitions, LLM calls, resume tailoring, cover-note generation, DOCX/PDF rendering, and delivery are not implemented yet.
+Stage 1 establishes the versioned candidate truth model and workflow persistence. Stage 2 adds manually submitted public vacancy URLs. Stage 3 adds authorized Telegram command polling and manual application tracking. Stage 4 adds optional structured LLM job analysis, database-backed budget reservations, usage accounting, strict candidate-truth validation, cache identity, and deterministic fallback. Resume tailoring, cover-note generation, DOCX/PDF rendering, recruiter contact, screening answers, and application automation are not implemented.
 
 ## Scope
 
@@ -25,9 +25,17 @@ POST /internal/v1/jobs/manual-url
     -> known Greenhouse/Lever API reuse OR bounded public-page fetch
     -> deterministic JobPosting/metadata parser
     -> existing JobProcessor pipeline and PostgreSQL constraints
+
+POST /internal/v1/jobs/{jobId}/analysis
+    -> deterministic job/profile hashes and completed-cache lookup
+    -> short locked reservation transaction and commit
+    -> optional provider call without a transaction
+    -> strict schema/evidence/truth validation
+    -> short atomic analysis + usage + budget reconciliation transaction
+    -> deterministic fallback for every non-success provider path
 ```
 
-Stage 1 components perform no external calls. The Stage 2 endpoint performs only the explicitly submitted, policy-approved public fetch or a known ATS public API call.
+Stage 1 components perform no external calls. The Stage 2 endpoint performs only the explicitly submitted, policy-approved public fetch or a known ATS public API call. Stage 3 Telegram calls and Stage 4 provider calls run outside database transactions.
 
 ## Flyway migration
 
@@ -151,3 +159,80 @@ The persistent watermark is the last processed update ID; requests use watermark
 When no state row exists, the configured first-start policy either drains every pending page through an empty response without executing or processes updates normally. The discard loop has a finite safety-page cap to prevent a faulty Bot API client from creating an unbounded tight loop. An `AtomicBoolean` prevents overlapping polls in one JVM. Stage 3 deliberately supports one active polling application instance only: the local guard does not coordinate replicas. Webhooks, automatic application submission, browser automation, screening answers, recruiter contact, and historical Telegram message editing are not implemented.
 
 The manual URL HTTP endpoint remains an internal administrative interface and must stay behind a trusted network boundary or gain authentication in deployment. Stage 3 `/add` reuses that service but does not turn the endpoint into a public trust boundary.
+
+## Stage 4: structured LLM job analysis
+
+### Provider-neutral boundary and configuration
+
+The application layer depends only on `LlmProvider`, `LlmRequest`, and `LlmResponse`. `OpenAiResponsesLlmProvider` is the optional production adapter and follows the official [Responses create reference](https://developers.openai.com/api/reference/resources/responses/methods/create) and [Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs): `POST /v1/responses`, `text.format` strict JSON Schema, `max_output_tokens`, and `store=false`. It accepts only root `status=completed` with exactly one message `output_text`; `incomplete` (including `max_output_tokens`), other final states, refusal-only, missing text, and multiple text blocks are explicit sanitized failures. Optional `usage.input_tokens` / `usage.output_tokens` is parsed only as bounded accounting metadata. No unofficial provider SDK is included.
+
+`LLM_ENABLED=false` is the default. For `provider=openai`, enabled configuration accepts only the exact case-insensitive hostname `api.openai.com`, `/v1` base path, HTTPS, and the default HTTPS port; IP literals, subdomains, local/internal names, credentials, query, fragment, other paths, and other ports fail closed without echoing the URL or key. Immediately before each authorization-bearing request, every resolved address is classified by the shared Stage 2 public-address policy. Any loopback, private, link-local, multicast, unspecified, reserved, benchmarking, documentation, carrier-grade NAT, metadata, or empty resolution rejects the call. Disabled mode performs no DNS check. The JDK HTTP client cannot pin the validated address while preserving normal TLS hostname verification, leaving a residual DNS re-resolution race at connect time; exact endpoint validation is repeated and redirects remain disabled.
+
+Enabled configuration also requires an API key, model, bounded token limits, ordered positive request/day/month budgets, and explicit positive token prices. Monetary configuration is `BigDecimal`, bounded to eight decimal places with ceiling rounding. Startup fails safely if the maximum physical-attempt exposure is excessive. Token counts, retries, and timeouts are bounded. Disabled mode never constructs an endpoint or starts a provider call.
+
+The adapter sends only fixed headers plus the authorization secret, streams a bounded response, and retains no exception cause that could contain a request, response, URL, prompt, or header. Only `429` and `5xx` are retried, in one adapter layer, up to `LLM_MAX_RETRIES`; transport timeouts are not independently retried. Result/exception metadata contains only bounded physical/ambiguous attempt counts and a typed category. `Retry-After` is honored only inside a five-second cap. Tests replace the provider or transport and never contact a live service.
+
+### Migration and persisted data
+
+`V4__llm_analysis_and_budget.sql` adds:
+
+| Table | Purpose |
+|---|---|
+| `llm_budget_control` | Seeded singleton row used as the cross-request pessimistic budget lock |
+| `llm_budget_reservations` | Unique request attempts, UTC day/month buckets, maximum token/cost reservation, provider-start marker, and final reconciliation |
+| `job_analyses` | Unique deterministic cache identity and bounded canonical analysis fields |
+
+It also links `llm_usage_events` to an optional reservation and sanitized request key. There is one usage event per reconciled/abandoned reservation. The schema has no API-key, authorization, raw prompt, raw provider request/response, system-instruction, arbitrary provider metadata, Telegram, or candidate-contact column.
+
+Analysis identity records job, optional candidate profile and version, operation, provider, model, prompt version, job content hash, candidate truth hash, cache key, attempt, result status, fallback marker, sanitized failure category, and timestamps. Canonical list/object fields are JSON text only after strict typed validation; unrestricted provider prose is never the canonical stored result.
+
+### Reservation and accounting algorithm
+
+The service uses explicit `TransactionTemplate` boundaries:
+
+```text
+transaction 1 (short)
+  lock job/cache row and llm_budget_control
+  return completed cache if present
+  conservatively abandon expired reservations
+  compute (maximum single-attempt cost × maximum physical attempts)
+  enforce request, UTC-day, and UTC-month caps
+  insert unique reservation and IN_PROGRESS analysis
+commit
+
+no transaction
+  mark provider-started in a separate short transaction
+  issue one bounded provider request
+  decode and validate canonical result
+
+transaction 2 (short)
+  lock analysis, reservation, and budget control
+  reconcile actual final usage plus conservative ambiguous prior attempts
+  store SUCCEEDED or deterministic FALLBACK analysis
+  store one sanitized usage event
+commit
+```
+
+The singleton `SELECT FOR UPDATE` lock serializes read/check/insert across jobs, persistence contexts, and application instances; PostgreSQL 16 concurrency tests hold that row while genuinely overlapping reservations prove the transaction boundary. The same deterministic request-attempt key cannot reserve twice. Exact budget boundaries are allowed; any positive amount over is `BUDGET_EXCEEDED`. Each reservation covers `maxSingleAttemptCost × (maxRetries + 1)`, so request/day/month decisions include all allowed physical attempts. Provider I/O and retry sleep occur after commit with no budget lock.
+
+Final success accounting combines reported final usage with one maximum single-attempt amount for each earlier `429`/`5xx` attempt whose billing is unknown. Missing final usage and ambiguous delivered failures use non-zero conservative counts; a connect failure known not to deliver can release zero. This deliberately avoids claiming exact provider billing knowledge. The reservation retains its UTC bucket, and reconciliation below the reserved exposure releases capacity.
+
+Expired reservations with no `provider_started_at` are `RELEASED` at zero and create no fake timeout usage. A started expired reservation becomes `ABANDONED` with maximum conservative accounting. If valid structured success later arrives, finalization locks the analysis, budget control, reservation, and existing usage event; it stores the result, transitions to `LATE_SETTLED`, and updates the one event without reducing existing or known usage or double charging. Repeated finalization is idempotent. The system does not claim exactly-once delivery.
+
+### Structured truth and prompt boundary
+
+Candidate contact values and generated resume content are never input. Candidate input is a compact snapshot of active verified facts identified by stable keys, profile version, and source hash. Vacancy title/company/location/description and deterministic requirements are separately encoded as untrusted JSON. C0 controls, every Unicode `Cf` format character, and bidirectional controls are removed from vacancy and candidate strings while normal international text is preserved. Field sizes are bounded. The input estimate is a conservative four-units-per-code-point upper bound with fixed overhead—not provider tokenization—and must fit `LLM_MAX_INPUT_TOKENS`.
+
+The provider result must match a strict schema with no unknown fields: concise role summary; must-have/preferred/responsibility lists; bounded experience, education, language, location, and authorization fields; candidate gaps and ambiguities; evidence; confidence; and a false provider-side fallback flag. Candidate strengths contain only a supplied stable fact key and `MATCH` or `PARTIAL_MATCH`, leaving no free-form candidate-claim field.
+
+Application validation runs even after provider schema enforcement. It rejects null/missing/unknown/oversized values, unknown enums, duplicate or unsupported fact keys, evidence shorter than eight normalized characters, non-originating vacancy evidence, candidate evidence that is not an exact excerpt of the referenced verified fact, strengthened language evidence, positive invented candidate assertions, secret/header patterns, HTML/script output, and repeated prompt-injection phrases. Trivial excerpts such as `a`, `IT`, or `Java` cannot validate a larger claim.
+
+### Cache, fallback, and API
+
+The SHA-256 cache key includes job content, candidate truth hash/profile version (or generic mode), operation, prompt version, normalized provider, and model. A valid completed provider result returns `CACHED` without a usage event. Any changed component creates another identity. Database uniqueness plus locked preparation prevents concurrent identical requests from both calling the provider.
+
+Invalid and failed provider results are not stored as successful cache entries. They store a deterministic fallback and a five-minute retry cooldown; after it expires the same row advances its attempt and uses a new deterministic request-attempt key. Disabled, configuration/input bounds, budget, authentication, connection, timeout, rate-limit, provider, oversized/malformed, schema, and truth failures are typed and never break the Phase 1/Stage 2/Stage 3 paths. Fallback data is explicitly marked and comes from existing deterministic requirements plus verified fact-key matching.
+
+`POST /internal/v1/jobs/{jobId}/analysis` is the minimal internal analysis surface. Candidate-specific analysis is the default; `candidateSpecific=false` omits candidate facts. Responses expose only typed status, IDs/profile version, validated analysis, and sanitized category. The endpoint must remain behind a trusted network or authentication boundary.
+
+Stage 4 does not generate or persist a resume, cover note, DOCX, PDF, recruiter message, screening answer, or application action. It adds no Telegram command and no browser automation.

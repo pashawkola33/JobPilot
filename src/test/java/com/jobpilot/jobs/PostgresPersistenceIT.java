@@ -17,6 +17,7 @@ import com.jobpilot.candidate.repository.CandidateProfileRepository;
 import com.jobpilot.candidate.repository.CandidateProjectBulletRepository;
 import com.jobpilot.candidate.repository.CandidateProjectRepository;
 import com.jobpilot.candidate.repository.CandidateSkillRepository;
+import com.jobpilot.config.JobPilotProperties;
 import com.jobpilot.jobs.domain.Job;
 import com.jobpilot.jobs.domain.JobStatus;
 import com.jobpilot.jobs.domain.RawJob;
@@ -28,6 +29,23 @@ import com.jobpilot.jobs.service.JobProcessor;
 import com.jobpilot.llm.domain.LlmOperationType;
 import com.jobpilot.llm.domain.LlmUsageEvent;
 import com.jobpilot.llm.domain.LlmUsageStatus;
+import com.jobpilot.llm.domain.JobAnalysis;
+import com.jobpilot.llm.domain.JobAnalysisData;
+import com.jobpilot.llm.domain.JobAnalysisJson;
+import com.jobpilot.llm.domain.CandidateStrength;
+import com.jobpilot.llm.domain.CandidateMatchStrength;
+import com.jobpilot.llm.domain.EvidenceReference;
+import com.jobpilot.llm.domain.EvidenceSource;
+import com.jobpilot.llm.budget.LlmBudgetReservation;
+import com.jobpilot.llm.budget.LlmBudgetControl;
+import com.jobpilot.llm.budget.LlmBudgetDecision;
+import com.jobpilot.llm.budget.LlmBudgetReservationResult;
+import com.jobpilot.llm.budget.LlmBudgetReservationStatus;
+import com.jobpilot.llm.budget.LlmBudgetService;
+import com.jobpilot.llm.budget.LlmCostCalculator;
+import com.jobpilot.llm.repository.JobAnalysisRepository;
+import com.jobpilot.llm.repository.LlmBudgetReservationRepository;
+import com.jobpilot.llm.repository.LlmBudgetControlRepository;
 import com.jobpilot.llm.repository.LlmUsageEventRepository;
 import com.jobpilot.manualurl.application.ManualJobPersistenceService;
 import com.jobpilot.resume.domain.CoverNote;
@@ -39,10 +57,20 @@ import com.jobpilot.resume.repository.ResumeVersionRepository;
 import com.jobpilot.resume.repository.ResumeVersionSkillRepository;
 import com.jobpilot.telegram.polling.TelegramBotState;
 import com.jobpilot.telegram.polling.TelegramBotStateRepository;
+import com.jobpilot.support.TestProperties;
 import jakarta.persistence.EntityManager;
 import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -50,7 +78,10 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -114,15 +145,25 @@ class PostgresPersistenceIT {
     @Autowired
     private LlmUsageEventRepository llmUsageEvents;
     @Autowired
+    private JobAnalysisRepository jobAnalyses;
+    @Autowired
+    private LlmBudgetReservationRepository llmBudgetReservations;
+    @Autowired
+    private LlmBudgetControlRepository llmBudgetControls;
+    @Autowired
+    private JobAnalysisJson jobAnalysisJson;
+    @Autowired
     private TelegramBotStateRepository telegramBotStates;
     @Autowired
     private EntityManager entityManager;
+    @Autowired
+    private PlatformTransactionManager transactionManager;
 
     @Test
     void flywayMigratesTheSchemaOnRealPostgres() {
         Integer applied = jdbcTemplate.queryForObject(
                 "select count(*) from flyway_schema_history where success", Integer.class);
-        assertThat(applied).isEqualTo(3);
+        assertThat(applied).isEqualTo(4);
         assertThat(jdbcTemplate.queryForList(
                 "select table_name from information_schema.tables where table_schema = 'public'",
                 String.class))
@@ -131,7 +172,8 @@ class PostgresPersistenceIT {
                         "candidate_projects", "candidate_project_bullets", "applications",
                         "resume_versions", "resume_version_skills", "resume_version_projects",
                         "resume_version_project_bullets", "cover_notes", "llm_usage_events",
-                        "telegram_bot_state", "application_status_history");
+                        "telegram_bot_state", "application_status_history",
+                        "llm_budget_control", "llm_budget_reservations", "job_analyses");
     }
 
     @Test
@@ -352,6 +394,111 @@ class PostgresPersistenceIT {
         assertThat(llmUsageEvents.sumEstimatedCostBetween(
                 Instant.parse("2026-07-01T00:00:00Z"), Instant.parse("2026-08-01T00:00:00Z")))
                 .isEqualByComparingTo("0.001234");
+        assertThat(jdbcTemplate.queryForObject(
+                "select numeric_scale from information_schema.columns "
+                        + "where table_name = 'llm_usage_events' and column_name = 'estimated_cost_usd'",
+                Integer.class)).isEqualTo(8);
+    }
+
+    @Test
+    void persistsStructuredAnalysisReservationAndDeterministicCacheIdentity() {
+        Instant now = Instant.parse("2026-07-19T13:30:00Z");
+        Job job = jobs.saveAndFlush(job("analysis", "https://example.com/jobs/analysis", now));
+        CandidateProfile profile = candidateProfiles.findByActiveTrue().orElseThrow();
+        LlmBudgetReservation reservation = llmBudgetReservations.saveAndFlush(
+                new LlmBudgetReservation("1".repeat(64), job, LlmOperationType.JOB_ANALYSIS,
+                        "synthetic-provider", "model-a", java.time.LocalDate.parse("2026-07-19"),
+                        1000, 500, 1, new BigDecimal("0.00200000"), now,
+                        now.plusSeconds(120)));
+        JobAnalysis analysis = new JobAnalysis(job, profile, LlmOperationType.JOB_ANALYSIS,
+                "synthetic-provider", "model-a", "job-analysis-v1", "2".repeat(64),
+                profile.getSourceHash(), "3".repeat(64), now);
+        analysis.attachReservation(reservation);
+        analysis.complete(new JobAnalysisData("Synthetic Java internship", List.of("Java"),
+                List.of(), List.of(), null, null, null, "Bucharest", null,
+                List.of(new CandidateStrength("java-17", CandidateMatchStrength.MATCH)),
+                List.of(), List.of("Work authorization is unknown"),
+                List.of(new EvidenceReference(EvidenceSource.VACANCY,
+                        "job.description", "Java internship")), 80, false), jobAnalysisJson, now);
+        jobAnalyses.saveAndFlush(analysis);
+
+        entityManager.clear();
+        JobAnalysis stored = jobAnalyses.findByCacheKey("3".repeat(64)).orElseThrow();
+        assertThat(stored.getCandidateProfileVersion()).isEqualTo(profile.getProfileVersion());
+        assertThat(stored.getReservation().getRequestKey()).isEqualTo("1".repeat(64));
+        assertThat(stored.toData(jobAnalysisJson).mustHaveRequirements()).containsExactly("Java");
+        assertThat(jdbcTemplate.queryForObject(
+                "select count(*) from information_schema.columns where table_name = 'job_analyses' "
+                        + "and column_name in ('api_key', 'raw_prompt', 'raw_response')",
+                Integer.class)).isZero();
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void databaseLockSerializesRetryAwareBudgetsAcrossServiceInstances() throws Exception {
+        List<Long> createdJobIds = new ArrayList<>();
+        try {
+            Job overFirst = committedJob("budget-over-a", createdJobIds);
+            Job overSecond = committedJob("budget-over-b", createdJobIds);
+            Clock overClock = fixedClock("2026-07-22T10:00:00Z");
+            LlmBudgetService overA = budgetService("0.00600000", overClock);
+            LlmBudgetService overB = budgetService("0.00600000", overClock);
+
+            List<LlmBudgetReservationResult> over = overlappingReservations(
+                    overA, overFirst, "a".repeat(64), overB, overSecond, "b".repeat(64));
+
+            assertThat(over).extracting(LlmBudgetReservationResult::decision)
+                    .containsExactlyInAnyOrder(LlmBudgetDecision.RESERVED,
+                            LlmBudgetDecision.DAILY_LIMIT);
+            List<LlmBudgetReservation> overPersisted = reservationsOn(LocalDate.parse("2026-07-22"));
+            assertThat(overPersisted).singleElement().satisfies(reservation -> {
+                assertThat(reservation.getStatus()).isEqualTo(LlmBudgetReservationStatus.RESERVED);
+                assertThat(reservation.getReservedCostUsd()).isEqualByComparingTo("0.00400000");
+                assertThat(reservation.getMaxAttempts()).isEqualTo(2);
+            });
+            assertThat(overPersisted).extracting(LlmBudgetReservation::getRequestKey)
+                    .doesNotHaveDuplicates();
+            assertThat(llmBudgetReservations.committedForDay(LocalDate.parse("2026-07-22")))
+                    .isEqualByComparingTo("0.00400000");
+
+            Job exactFirst = committedJob("budget-exact-a", createdJobIds);
+            Job exactSecond = committedJob("budget-exact-b", createdJobIds);
+            Clock exactClock = fixedClock("2026-07-23T10:00:00Z");
+            List<LlmBudgetReservationResult> exact = overlappingReservations(
+                    budgetService("0.00800000", exactClock), exactFirst, "c".repeat(64),
+                    budgetService("0.00800000", exactClock), exactSecond, "d".repeat(64));
+
+            assertThat(exact).extracting(LlmBudgetReservationResult::decision)
+                    .containsOnly(LlmBudgetDecision.RESERVED).hasSize(2);
+            assertThat(reservationsOn(LocalDate.parse("2026-07-23"))).hasSize(2);
+            assertThat(llmBudgetReservations.committedForDay(LocalDate.parse("2026-07-23")))
+                    .isEqualByComparingTo("0.00800000");
+
+            Job releasedFirst = committedJob("budget-release-a", createdJobIds);
+            Job releasedSecond = committedJob("budget-release-b", createdJobIds);
+            LlmBudgetService releaseService = budgetService(
+                    "0.00500000", fixedClock("2026-07-24T10:00:00Z"));
+            LlmBudgetReservation released = releaseService.reserve(releasedFirst,
+                    LlmOperationType.JOB_ANALYSIS, "e".repeat(64)).reservation();
+            new TransactionTemplate(transactionManager).executeWithoutResult(status ->
+                    releaseService.reconcileWithinTransaction(
+                            released.getId(), new BigDecimal("0.00100000")));
+
+            assertThat(releaseService.reserve(releasedSecond, LlmOperationType.JOB_ANALYSIS,
+                    "f".repeat(64)).decision()).isEqualTo(LlmBudgetDecision.RESERVED);
+            assertThat(llmBudgetReservations.committedForDay(LocalDate.parse("2026-07-24")))
+                    .isEqualByComparingTo("0.00500000");
+        } finally {
+            new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+                List<LlmBudgetReservation> createdReservations = llmBudgetReservations.findAll()
+                        .stream().filter(reservation -> createdJobIds.contains(
+                                reservation.getJob().getId())).toList();
+                llmBudgetReservations.deleteAll(createdReservations);
+                llmBudgetReservations.flush();
+                jobs.deleteAllById(createdJobIds);
+                jobs.flush();
+            });
+        }
     }
 
     @Test
@@ -402,6 +549,88 @@ class PostgresPersistenceIT {
         assertThat(count("candidate_languages", "candidate_profile_id", profileId)).isZero();
         assertThat(count("candidate_projects", "candidate_profile_id", profileId)).isZero();
         assertThat(count("candidate_project_bullets", "project_id", projectId)).isZero();
+    }
+
+    private List<LlmBudgetReservationResult> overlappingReservations(
+            LlmBudgetService firstService, Job firstJob, String firstKey,
+            LlmBudgetService secondService, Job secondJob, String secondKey) throws Exception {
+        CountDownLatch controlLocked = new CountDownLatch(1);
+        CountDownLatch releaseControl = new CountDownLatch(1);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        try (var executor = Executors.newFixedThreadPool(3)) {
+            Future<?> lockHolder = executor.submit(() ->
+                    new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+                        llmBudgetControls.findByIdForUpdate(LlmBudgetControl.SINGLETON_ID)
+                                .orElseThrow();
+                        controlLocked.countDown();
+                        await(releaseControl);
+                    }));
+            assertThat(controlLocked.await(5, TimeUnit.SECONDS)).isTrue();
+            Future<LlmBudgetReservationResult> first = executor.submit(() -> {
+                ready.countDown();
+                start.await();
+                return firstService.reserve(firstJob, LlmOperationType.JOB_ANALYSIS, firstKey);
+            });
+            Future<LlmBudgetReservationResult> second = executor.submit(() -> {
+                ready.countDown();
+                start.await();
+                return secondService.reserve(secondJob, LlmOperationType.JOB_ANALYSIS, secondKey);
+            });
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+            try {
+                Thread.sleep(150);
+                assertThat(first.isDone()).isFalse();
+                assertThat(second.isDone()).isFalse();
+            } finally {
+                releaseControl.countDown();
+            }
+            List<LlmBudgetReservationResult> results = List.of(
+                    first.get(5, TimeUnit.SECONDS), second.get(5, TimeUnit.SECONDS));
+            lockHolder.get(5, TimeUnit.SECONDS);
+            return results;
+        }
+    }
+
+    private LlmBudgetService budgetService(String dailyBudget, Clock clock) {
+        JobPilotProperties.Llm llm = new JobPilotProperties.Llm(true, "openai",
+                "https://api.openai.com/v1", "obviously-fake-secret", "model-a",
+                Duration.ofSeconds(1), Duration.ofSeconds(2), 1_000, 500, 1,
+                new BigDecimal("0.00400000"), new BigDecimal(dailyBudget),
+                new BigDecimal("1.00000000"), BigDecimal.ONE, new BigDecimal("2"));
+        JobPilotProperties properties = TestProperties.create(llm);
+        return new LlmBudgetService(llmBudgetControls, llmBudgetReservations,
+                new LlmCostCalculator(properties), llmUsageEvents, properties, clock,
+                transactionManager);
+    }
+
+    private Job committedJob(String externalId, List<Long> createdJobIds) {
+        Job saved = new TransactionTemplate(transactionManager).execute(status ->
+                jobs.saveAndFlush(job(externalId, "https://example.invalid/jobs/" + externalId,
+                        Instant.parse("2026-07-22T09:00:00Z"))));
+        createdJobIds.add(saved.getId());
+        return saved;
+    }
+
+    private List<LlmBudgetReservation> reservationsOn(LocalDate day) {
+        return llmBudgetReservations.findAll().stream()
+                .filter(reservation -> reservation.getBudgetDay().equals(day)).toList();
+    }
+
+    private Clock fixedClock(String instant) {
+        return Clock.fixed(Instant.parse(instant), ZoneOffset.UTC);
+    }
+
+    private void await(CountDownLatch latch) {
+        try {
+            if (!latch.await(5, TimeUnit.SECONDS)) {
+                throw new AssertionError("Timed out while proving PostgreSQL lock overlap");
+            }
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError(interrupted);
+        }
     }
 
     private RawJob raw(String externalId, String url, String description) {
