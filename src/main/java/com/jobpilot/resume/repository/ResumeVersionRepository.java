@@ -7,6 +7,9 @@ import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.domain.Pageable;
+import com.jobpilot.resume.domain.DocumentRenderStatus;
+import java.time.Instant;
 
 public interface ResumeVersionRepository extends JpaRepository<ResumeVersion, Long> {
     List<ResumeVersion> findByJobIdOrderByGeneratedAtDesc(Long jobId);
@@ -26,4 +29,12 @@ public interface ResumeVersionRepository extends JpaRepository<ResumeVersion, Lo
 
     @Query("select resume.pdfPath from ResumeVersion resume where resume.pdfPath is not null")
     List<String> findAllPdfPaths();
+
+    @Query("select resume.id from ResumeVersion resume where resume.renderStatus = :status "
+            + "and resume.updatedAt <= :olderThan order by resume.updatedAt asc, resume.id asc")
+    List<Long> findStaleIds(DocumentRenderStatus status, Instant olderThan, Pageable pageable);
+
+    boolean existsByDocxPathOrPdfPath(String docxPath, String pdfPath);
+
+    long countByRenderStatus(DocumentRenderStatus status);
 }

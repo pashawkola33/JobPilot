@@ -56,6 +56,10 @@ public class TelegramUpdateProcessor {
             safeSend(renderer.error(parsed.error()));
             return;
         }
+        if (parsed.command().kind() == TelegramCommand.Kind.ANALYZE
+                || parsed.command().kind() == TelegramCommand.Kind.DOCUMENTS) {
+            safeSend(renderer.progress(parsed.command().kind()));
+        }
         TelegramCommandResult result = dispatcher.dispatch(
                 parsed.command(), ApplicationStatusChangeSource.TELEGRAM_COMMAND);
         // Any application mutation has committed before this best-effort reply begins.

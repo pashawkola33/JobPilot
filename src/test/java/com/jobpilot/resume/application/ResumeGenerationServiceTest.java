@@ -16,6 +16,8 @@ import com.jobpilot.llm.api.LlmProvider;
 import com.jobpilot.llm.repository.JobAnalysisRepository;
 import com.jobpilot.llm.repository.LlmBudgetReservationRepository;
 import com.jobpilot.llm.repository.LlmUsageEventRepository;
+import com.jobpilot.maintenance.DocumentMaintenanceService;
+import com.jobpilot.resume.domain.DocumentFailureCategory;
 import com.jobpilot.resume.domain.DocumentFormat;
 import com.jobpilot.resume.domain.DocumentRenderStatus;
 import com.jobpilot.resume.repository.CoverNoteRepository;
@@ -23,6 +25,8 @@ import com.jobpilot.resume.repository.ResumeVersionRepository;
 import java.io.ByteArrayInputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.FileTime;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.Set;
@@ -83,6 +87,7 @@ class ResumeGenerationServiceTest {
     @Autowired private LlmBudgetReservationRepository reservations;
     @Autowired private LlmUsageEventRepository usage;
     @Autowired private ApplicationRepository applications;
+    @Autowired private DocumentMaintenanceService maintenance;
     @Autowired private JdbcTemplate jdbc;
     @MockBean private LlmProvider provider;
 
@@ -226,6 +231,46 @@ class ResumeGenerationServiceTest {
                     assertThat(value.getRenderStatus()).isEqualTo(DocumentRenderStatus.COMPLETED));
         }
         verifyNoInteractions(provider);
+    }
+
+    @Test
+    void maintenanceRecoversStaleClaimsAndRemovesBoundedPartialAndOrphanFiles() throws Exception {
+        long jobId = processor.process(new RawJob("synthetic", "stage6-maintenance",
+                "https://example.invalid/jobs/stage6-maintenance", "Java Backend Intern",
+                "Synthetic Company", "Bucharest, Romania",
+                "Java Spring Boot SQL internship with REST API work and mentorship.",
+                "INTERN", Instant.now(), null, "Synthetic maintenance fixture")).job().getId();
+        DocumentGenerationResult generated = service.generate(jobId,
+                new GenerateDocumentsCommand(false, Set.of(DocumentFormat.DOCX), false));
+        var resume = resumes.findById(generated.resumeVersionId()).orElseThrow();
+        Path generatedPath = STORAGE.resolve(resume.getDocxPath());
+        assertThat(generatedPath).exists();
+        jdbc.update("update resume_versions set render_status = 'IN_PROGRESS', generated_at = null, "
+                        + "failure_category = null, updated_at = ? where id = ?",
+                java.sql.Timestamp.from(Instant.now().minus(Duration.ofMinutes(5))), resume.getId());
+
+        Path orphanDirectory = STORAGE.resolve("resumes/999999");
+        Files.createDirectories(orphanDirectory);
+        Path orphan = orphanDirectory.resolve("resume.pdf");
+        Path partial = orphanDirectory.resolve(".jobpilot-orphan.partial");
+        Files.write(orphan, new byte[]{1});
+        Files.write(partial, new byte[]{2});
+        FileTime old = FileTime.from(Instant.now().minus(Duration.ofHours(2)));
+        Files.setLastModifiedTime(orphan, old);
+        Files.setLastModifiedTime(partial, old);
+
+        var result = maintenance.run(10, Duration.ofSeconds(5), Duration.ofMinutes(10));
+
+        assertThat(result.staleResumesRecovered()).isEqualTo(1);
+        assertThat(result.partialArtifactsRemoved()).isEqualTo(1);
+        assertThat(result.orphanArtifactsRemoved()).isEqualTo(1);
+        assertThat(resumes.findById(resume.getId()).orElseThrow().getRenderStatus())
+                .isEqualTo(DocumentRenderStatus.FAILED);
+        assertThat(resumes.findById(resume.getId()).orElseThrow().getFailureCategory())
+                .isEqualTo(DocumentFailureCategory.STALE_GENERATION);
+        assertThat(generatedPath).doesNotExist();
+        assertThat(orphan).doesNotExist();
+        assertThat(partial).doesNotExist();
     }
 
     private static Path temporaryStorage() {

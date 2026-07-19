@@ -14,6 +14,7 @@ import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.time.Instant;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.HashSet;
@@ -21,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
+import java.util.function.Predicate;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -140,16 +142,29 @@ public class DocumentArtifactStorage {
     }
 
     public int cleanupOrphans(Set<String> referencedRelativePaths, Instant olderThan, int limit) {
+        Set<String> referenced = new HashSet<>(referencedRelativePaths == null
+                ? Set.of() : referencedRelativePaths);
+        return cleanupOrphans(referenced::contains, olderThan, limit, Duration.ofMinutes(1));
+    }
+
+    public int cleanupOrphans(Predicate<String> referenced, Instant olderThan, int limit,
+                              Duration maxDuration) {
         if (limit < 1 || limit > 1_000 || olderThan == null) {
             throw new IllegalArgumentException("Orphan cleanup bounds are invalid");
         }
+        requireDuration(maxDuration);
         Path root = requireRoot();
-        Set<String> referenced = new HashSet<>(referencedRelativePaths == null
-                ? Set.of() : referencedRelativePaths);
+        Predicate<String> referenceCheck = referenced == null ? ignored -> false : referenced;
         int removed = 0;
+        int visited = 0;
+        int scanLimit = Math.max(100, limit * 20);
+        long deadline = System.nanoTime() + maxDuration.toNanos();
         try (Stream<Path> paths = Files.walk(root, 3)) {
-            for (Path path : paths.sorted().toList()) {
-                if (removed >= limit) break;
+            var iterator = paths.iterator();
+            while (iterator.hasNext() && removed < limit && visited < scanLimit
+                    && System.nanoTime() < deadline) {
+                Path path = iterator.next();
+                visited++;
                 if (Files.isSymbolicLink(path)
                         || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) continue;
                 String relative = root.relativize(path).toString().replace(path.getFileSystem()
@@ -159,16 +174,68 @@ public class DocumentArtifactStorage {
                 } catch (DocumentStorageException unexpectedName) {
                     continue;
                 }
-                if (!referenced.contains(relative)
-                        && Files.getLastModifiedTime(path, LinkOption.NOFOLLOW_LINKS)
-                        .toInstant().isBefore(olderThan)
-                        && Files.deleteIfExists(path)) {
-                    removed++;
+                try {
+                    if (!referenceCheck.test(relative)
+                            && Files.getLastModifiedTime(path, LinkOption.NOFOLLOW_LINKS)
+                            .toInstant().isBefore(olderThan)
+                            && Files.deleteIfExists(path)) {
+                        removed++;
+                    }
+                } catch (IOException | RuntimeException isolated) {
+                    // Isolate a single unsafe, unreadable, or concurrently changed candidate.
                 }
             }
             return removed;
         } catch (IOException exception) {
             throw new DocumentStorageException("Bounded orphan cleanup failed", exception);
+        }
+    }
+
+    public int cleanupPartials(Instant olderThan, int limit, Duration maxDuration) {
+        if (limit < 1 || limit > 1_000 || olderThan == null) {
+            throw new IllegalArgumentException("Partial cleanup bounds are invalid");
+        }
+        requireDuration(maxDuration);
+        Path root = requireRoot();
+        int removed = 0;
+        int visited = 0;
+        int scanLimit = Math.max(100, limit * 20);
+        long deadline = System.nanoTime() + maxDuration.toNanos();
+        try (Stream<Path> paths = Files.walk(root, 3)) {
+            var iterator = paths.iterator();
+            while (iterator.hasNext() && removed < limit && visited < scanLimit
+                    && System.nanoTime() < deadline) {
+                Path path = iterator.next();
+                visited++;
+                if (Files.isSymbolicLink(path)
+                        || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) continue;
+                String relative = root.relativize(path).toString().replace(
+                        path.getFileSystem().getSeparator(), "/");
+                if (!relative.matches("(?:resumes|cover-notes)/[1-9][0-9]*/"
+                        + "\\.jobpilot-[A-Za-z0-9-]{1,80}\\.partial")) continue;
+                try {
+                    if (Files.getLastModifiedTime(path, LinkOption.NOFOLLOW_LINKS)
+                            .toInstant().isBefore(olderThan) && Files.deleteIfExists(path)) {
+                        removed++;
+                    }
+                } catch (IOException isolated) {
+                    // Isolate one unreadable or concurrently changed partial.
+                }
+            }
+            return removed;
+        } catch (IOException exception) {
+            throw new DocumentStorageException("Bounded partial cleanup failed", exception);
+        }
+    }
+
+    public boolean isReady() {
+        if (!properties.enabled()) return true;
+        try {
+            Path root = requireRoot();
+            return Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)
+                    && !Files.isSymbolicLink(root) && Files.isWritable(root);
+        } catch (RuntimeException failure) {
+            return false;
         }
     }
 
@@ -244,6 +311,13 @@ public class DocumentArtifactStorage {
     private long maximum(DocumentFormat format) {
         return format == DocumentFormat.DOCX
                 ? properties.maxDocxBytes() : properties.maxPdfBytes();
+    }
+
+    private void requireDuration(Duration maxDuration) {
+        if (maxDuration == null || maxDuration.isZero() || maxDuration.isNegative()
+                || maxDuration.compareTo(Duration.ofMinutes(5)) > 0) {
+            throw new IllegalArgumentException("Artifact cleanup duration is invalid");
+        }
     }
 
     private void cleanup(List<Path> paths) {

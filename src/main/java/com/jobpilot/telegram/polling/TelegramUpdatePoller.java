@@ -1,8 +1,11 @@
 package com.jobpilot.telegram.polling;
 
 import com.jobpilot.config.JobPilotProperties;
+import com.jobpilot.common.ApplicationLifecycleGate;
 import com.jobpilot.telegram.api.TelegramClient;
 import com.jobpilot.telegram.api.TelegramUpdate;
+import com.jobpilot.observability.OperationalCounter;
+import com.jobpilot.observability.OperationalCounters;
 import java.time.Duration;
 import java.util.Comparator;
 import java.util.List;
@@ -11,6 +14,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @Component
 public class TelegramUpdatePoller {
@@ -21,13 +25,26 @@ public class TelegramUpdatePoller {
     private final TelegramBotStateService state;
     private final JobPilotProperties.Telegram settings;
     private final AtomicBoolean polling = new AtomicBoolean();
+    private final ApplicationLifecycleGate lifecycle;
+    private final OperationalCounters counters;
 
+    @Autowired
     public TelegramUpdatePoller(TelegramClient client, TelegramUpdateProcessor processor,
-                                TelegramBotStateService state, JobPilotProperties properties) {
+                                TelegramBotStateService state, JobPilotProperties properties,
+                                ApplicationLifecycleGate lifecycle,
+                                OperationalCounters counters) {
         this.client = client;
         this.processor = processor;
         this.state = state;
         this.settings = properties.telegram();
+        this.lifecycle = lifecycle;
+        this.counters = counters;
+    }
+
+    public TelegramUpdatePoller(TelegramClient client, TelegramUpdateProcessor processor,
+                                TelegramBotStateService state, JobPilotProperties properties) {
+        this(client, processor, state, properties, new ApplicationLifecycleGate(),
+                new OperationalCounters());
     }
 
     @Scheduled(fixedDelayString = "#{@telegramPollDelay}")
@@ -36,7 +53,8 @@ public class TelegramUpdatePoller {
     }
 
     public boolean pollOnce() {
-        if (!settings.commandsEnabled() || !polling.compareAndSet(false, true)) return false;
+        if (!settings.commandsEnabled() || !lifecycle.acceptingWork()
+                || !polling.compareAndSet(false, true)) return false;
         try {
             var initial = state.load();
             if (initial.isEmpty() && settings.discardPendingOnFirstStart()) {
@@ -66,16 +84,19 @@ public class TelegramUpdatePoller {
             try {
                 processor.process(update);
                 state.markProcessed(update.updateId());
+                counters.increment(OperationalCounter.TELEGRAM_UPDATES_PROCESSED);
                 watermark = update.updateId();
             } catch (RuntimeException internalFailure) {
                 int attempts = state.recordFailure(update.updateId());
                 if (attempts >= settings.maxUpdateFailures()) {
                     state.markProcessed(update.updateId());
+                    counters.increment(OperationalCounter.TELEGRAM_UPDATES_DEAD_LETTERED);
                     watermark = update.updateId();
                     log.error("Telegram update dead-lettered updateId={} category=internal_failure",
                             update.updateId());
                     continue;
                 }
+                counters.increment(OperationalCounter.TELEGRAM_UPDATES_RETRIED);
                 log.warn("Telegram update will be retried updateId={} category=internal_failure attempt={}",
                         update.updateId(), attempts);
                 break;

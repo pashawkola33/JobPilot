@@ -7,6 +7,9 @@ import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.domain.Pageable;
+import com.jobpilot.resume.domain.DocumentRenderStatus;
+import java.time.Instant;
 
 public interface CoverNoteRepository extends JpaRepository<CoverNote, Long> {
     List<CoverNote> findByJobIdOrderByGeneratedAtDesc(Long jobId);
@@ -26,4 +29,12 @@ public interface CoverNoteRepository extends JpaRepository<CoverNote, Long> {
 
     @Query("select note.pdfPath from CoverNote note where note.pdfPath is not null")
     List<String> findAllPdfPaths();
+
+    @Query("select note.id from CoverNote note where note.renderStatus = :status "
+            + "and note.updatedAt <= :olderThan order by note.updatedAt asc, note.id asc")
+    List<Long> findStaleIds(DocumentRenderStatus status, Instant olderThan, Pageable pageable);
+
+    boolean existsByDocxPathOrPdfPath(String docxPath, String pdfPath);
+
+    long countByRenderStatus(DocumentRenderStatus status);
 }

@@ -1,6 +1,7 @@
 package com.jobpilot.scheduling;
 
 import com.jobpilot.config.JobPilotProperties;
+import com.jobpilot.common.ApplicationLifecycleGate;
 import com.jobpilot.jobs.repository.JobRepository;
 import com.jobpilot.jobs.repository.JobScoreRepository;
 import com.jobpilot.jobs.service.JobIngestionService;
@@ -14,6 +15,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 
 @Component
 public class JobSchedulingService {
@@ -25,20 +27,32 @@ public class JobSchedulingService {
     private final TelegramNotifier telegram;
     private final JobPilotProperties properties;
     private final Clock clock;
+    private final ApplicationLifecycleGate lifecycle;
 
+    @Autowired
     public JobSchedulingService(JobIngestionService ingestion, JobScoreRepository scores,
                                 JobRepository jobs, TelegramNotifier telegram,
-                                JobPilotProperties properties, Clock clock) {
+                                JobPilotProperties properties, Clock clock,
+                                ApplicationLifecycleGate lifecycle) {
         this.ingestion = ingestion;
         this.scores = scores;
         this.jobs = jobs;
         this.telegram = telegram;
         this.properties = properties;
         this.clock = clock;
+        this.lifecycle = lifecycle;
+    }
+
+    public JobSchedulingService(JobIngestionService ingestion, JobScoreRepository scores,
+                                JobRepository jobs, TelegramNotifier telegram,
+                                JobPilotProperties properties, Clock clock) {
+        this(ingestion, scores, jobs, telegram, properties, clock,
+                new ApplicationLifecycleGate());
     }
 
     @Scheduled(cron = "${jobpilot.scheduling.fetch-cron}", zone = "Europe/Bucharest")
     public void fetchJobs() {
+        if (!lifecycle.acceptingWork()) return;
         if (!fetchRunning.compareAndSet(false, true)) {
             LOGGER.info("Skipping overlapping job-source fetch");
             return;
@@ -53,6 +67,7 @@ public class JobSchedulingService {
 
     @Scheduled(cron = "${jobpilot.scheduling.digest-cron}", zone = "Europe/Bucharest")
     public void dailyDigest() {
+        if (!lifecycle.acceptingWork()) return;
         try {
             telegram.sendGoodMatchDigest(scores.findDigest(ScoreBand.GOOD_MATCH,
                     clock.instant().minus(Duration.ofDays(1)), PageRequest.of(0, 20)));

@@ -1,0 +1,14 @@
+server:
+  error:
+    include-message: never
+    include-binding-errors: never
+    include-stacktrace: never
+spring:
+  jpa:
+    show-sql: false
+  web:
+    resources:
+      add-mappings: false
+logging:
+  level:
+    org.hibernate.SQL: WARN

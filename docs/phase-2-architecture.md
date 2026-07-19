@@ -1,6 +1,6 @@
-# Phase 2 architecture — Stages 1 through 5
+# Phase 2 architecture — Stages 1 through 6
 
-Stage 1 establishes the versioned candidate truth model and workflow persistence. Stage 2 adds manually submitted public vacancy URLs. Stage 3 adds authorized Telegram command polling and manual application tracking. Stage 4 adds optional structured LLM job analysis, database-backed budget reservations, usage accounting, strict candidate-truth validation, cache identity, and deterministic fallback. Stage 5 adds truthful résumé/cover-note models, private DOCX/PDF rendering, artifact lifecycle/versioning, preview, and human document selection. Recruiter contact, screening answers, uploads, browser automation, and application submission are not implemented.
+Stage 1 establishes the versioned candidate truth model and workflow persistence. Stage 2 adds manually submitted public vacancy URLs. Stage 3 adds authorized Telegram command polling and manual application tracking. Stage 4 adds optional structured LLM job analysis, database-backed budget reservations, usage accounting, strict candidate-truth validation, cache identity, and deterministic fallback. Stage 5 adds truthful résumé/cover-note models, private DOCX/PDF rendering, artifact lifecycle/versioning, preview, and human document selection. Stage 6 composes those boundaries into the final human workflow and adds bounded maintenance, safe readiness/operational counters, release hardening, and PostgreSQL end-to-end evidence. Recruiter contact, screening answers, employer uploads, protected-site browser automation, and application submission are not implemented.
 
 ## Scope
 
@@ -302,3 +302,87 @@ Responses expose typed state, bounded canonical preview/audit metadata, hashes/s
 Selection first snapshots document metadata, validates stored artifacts outside a transaction, then opens a short transaction that locks the application and documents and revalidates job, profile version, completion state, and cover-note-to-résumé linkage. It is idempotent and does not change application status. Passing `coverNoteId: null` explicitly clears a previously selected cover note while retaining the selected résumé. Document selection remains a human action. There is no employer upload, automatic submission, recruiter contact, screening response, Telegram command, or browser automation in Stage 5.
 
 The PostgreSQL 16 Testcontainers suite forces two production generation transactions past the same initial cache miss, proves the unique-key race, blocks the real renderer to demonstrate overlap, and verifies winner adoption, exact fact ownership, artifact integrity, stale-claim recovery, active-claim non-stealing, and cache-hit revalidation. Separate worker threads receive separate transaction-bound persistence contexts; no H2 result is used as the concurrency guarantee.
+
+## Stage 6: final integration, recovery, and release boundary
+
+### Component responsibilities
+
+| Component | Stage 6 responsibility |
+|---|---|
+| `TelegramCommandParser` / `TelegramCommandDispatcher` | Bounded typed human commands that reuse Stage 2–5 services |
+| `ApplicationTrackerService` | Current application state plus ordered immutable status history |
+| `JobAnalysisService` | Explicit, cache-aware structured analysis without creating an application |
+| `ResumeGenerationService` | Explicit cache-aware generation and safe metadata listing without creating an application |
+| `ApplicationDocumentSelectionService` | Locked compatibility/integrity check on an existing application, with no status transition |
+| `Stage6MaintenanceCoordinator` | One-JVM non-overlap and shared item/time budgets |
+| `LlmBudgetService` | Existing conservative reservation expiration under the global budget lock |
+| `DocumentMaintenanceService` / `DocumentArtifactStorage` | Locked stale-row recovery and bounded symlink-safe partial/orphan cleanup |
+| `HealthController` | Safe database/schema/config/storage readiness with no external call |
+| `OperationalMetricsController` | Fixed-label runtime counters and persisted enum-status counts |
+
+No Stage 6 component implements provider calls, rendering, artifact persistence, vacancy parsing, Telegram authorization, or application transition policy a second time.
+
+### End-to-end human workflow and state invariants
+
+```text
+public vacancy
+  -> normalize / deduplicate / deterministic extract / score / persist
+  -> SAVE application (Telegram or trusted internal API)
+  -> ANALYZE explicitly (no application creation or vacancy mutation)
+  -> GENERATE explicitly (no application creation/status change or vacancy mutation)
+  -> inspect contact-free preview + metadata + internal route IDs
+  -> SELECT completed same-job/same-profile résumé and optional linked cover note
+       requires existing application; status and status-history stay unchanged
+  -> APPLIED explicitly
+  -> INTERVIEW / FOLLOW-UP / REJECTED / OFFER / WITHDRAWN explicitly
+  -> ordered immutable status history
+```
+
+The cache/unique identities make replayed analyze/generate work reuse completed state. Save/status and selection operations return idempotent no-ops when state is identical. Selection snapshots and validates artifacts outside a transaction, then locks application/documents and repeats compatibility checks. The application must exist; résumé and cover note must belong to the job and the exact compatible candidate profile/version; the cover note must link to the selected résumé; every requested artifact must still pass structural/hash/size validation. `REJECTED` and `WITHDRAWN` are terminal and cannot be silently reopened. Only an explicit `APPLIED` transition sets the first application timestamp.
+
+### Telegram integration and delivery decision
+
+Stage 6 retains the one existing `getUpdates` poller, chat-plus-sender authorization policy, bot-username suffix parser, persistent offset, retry counter, and dead-letter behavior. New commands are `/analyze`, `/documents`, `/resumes`, `/covernotes`, `/selectdocs`, and `/history`. IDs accept only positive bounded `long` syntax; scope/format arguments are closed enums. Analysis and generation receive a static bounded progress acknowledgement before long work. Provider/rendering work holds no database transaction or Telegram offset-row lock. The final reply begins only after service transactions have committed. Confirmation failure is swallowed as best effort so it cannot repeat a completed mutation.
+
+The delivery choice is metadata plus numeric internal routes. The current Telegram abstraction supports bounded HTML messages, not safe streaming uploads. Stage 6 therefore does not add multipart/file delivery and never hands Telegram a filesystem path or artifact bytes. Résumé/cover-note lists expose only IDs, completion state, available formats, and `/internal/v1/...` metadata/download route strings. They omit contacts, storage paths, hashes, prompts, provider output, cache keys, and vacancy bodies. All dynamic strings are truncated before HTML escaping and messages are assembled from complete tags/entities within 4,096 characters.
+
+At-least-once delivery remains explicit. A crash before offset persistence can replay a command; Stage 2 deduplication, Stage 3 same-state mutations, Stage 4 analysis cache/reservation identity, Stage 5 document cache/claim identity, and selection equality prevent repeat completed work under their documented guarantees. One active Telegram poller is required; there is no distributed Telegram lease or webhook path.
+
+### Internal administrative API
+
+Stage 6 keeps all HTTP workflow endpoints below `/internal/v1` except the safe `/health` readiness route. Application status/follow-up/notes mutations and current/list/history reads join the existing manual URL, analysis, generation, metadata/download, and selection routes. The operational counter snapshot is `/internal/v1/operations/metrics`. There is no authentication or ownership model: deployments must use loopback or a trusted network boundary. The architecture is single-user; LLM budgets and runtime document contact configuration are global.
+
+### Maintenance and multi-instance behavior
+
+Maintenance is disabled by default and configured by fixed delay, maximum items, maximum wall duration, and orphan grace period. One `AtomicBoolean` prevents overlap in one JVM. The coordinator stops accepting new scheduled work once shutdown begins and shares one item/time budget across:
+
+1. expired `RESERVED` LLM reservations;
+2. stale résumé/cover-note `IN_PROGRESS` rows;
+3. old generated partial files;
+4. old unreferenced generated final files.
+
+Expired reservation IDs are bounded before processing. Each item locks the existing `llm_budget_control` singleton and reservation, rechecks expiry/status, and invokes the existing release/abandon and conservative usage-event logic. No provider call is made. Stage 4 analysis rows already recover through the locked retry/cooldown path on the next explicit request; Stage 6 does not invent a second analysis-cache lifecycle or delete canonical analysis data.
+
+Stale document IDs are bounded, locked individually, and rechecked with the Stage 5 stale threshold. A genuine stale row becomes typed `FAILED/STALE_GENERATION` in a short transaction; its generated bundle is removed afterward with no row lock held. Partial/orphan walking has bounded depth, candidate scan count, removal count, and duration, never follows or removes symlinks, requires server-generated path shapes, applies an age grace period, and database-checks both résumé and cover-note references immediately before deleting a final file. Item failures log only numeric IDs and fixed categories.
+
+Across instances, the budget singleton and pessimistic document locks keep each mutation safe and idempotent, but no distributed scheduler lease prevents redundant scans. A deployment should designate one active maintenance replica. Maintenance never changes application status and performs no Telegram, provider, or vacancy external call.
+
+### Health, observability, and shutdown
+
+`/health` checks database connectivity, Flyway validation/current schema, and enabled artifact-storage readiness. It reports only safe enablement/readiness strings plus configured build version/commit tokens. Telegram, LLM, and maintenance health checks do not send or bill anything. Configuration records fail startup closed when an enabled integration lacks mandatory secrets/IDs/limits.
+
+`OperationalCounters` uses a fixed enum—never arbitrary company, title, URL, candidate, prompt, provider-body, contact, or path labels. It counts Telegram processed/retried/dead-lettered updates, analysis/document outcomes, and maintenance recovery/removal. The internal snapshot also queries counts by fixed application, analysis, and document status enums. Existing budget tables remain the authoritative cost accounting.
+
+Graceful shutdown flips a shared lifecycle gate before scheduled polling, source ingestion, digest, or maintenance can start new work. Spring's scheduler and web server use bounded graceful termination. Already-running provider/rendering/fetch operations remain subject to their own configured timeouts and may finish within the termination window.
+
+### Release and persistence layout
+
+No V6 migration is required. Published migrations remain: V1 initial schema; V2 Phase 2 truth/workflow persistence; V3 Telegram/application history; V4 analysis/budget; and V5 application documents. Docker Compose runs PostgreSQL 16 with a bounded health check and waits for it before app startup, exposes application HTTP only on host loopback, uses a private named document volume, and passes secrets only at runtime. The application image contains source-built code but no `.env`, generated documents, local data, or secrets. Runtime uses fixed UID/GID `10001`, no Linux capabilities, `no-new-privileges`, a read-only root filesystem, and an explicit writable private temp mount.
+
+Backups must include PostgreSQL, the document volume, and the runtime contact HMAC key. Restore database metadata and storage from a consistent point. A missing/corrupt file is rejected; an unreferenced restored file is inaccessible and later eligible for bounded cleanup. HMAC rotation safely invalidates cache identity but prevents exact reuse of prior contact-dependent keys.
+
+### Final verification and accepted limits
+
+The Stage 6 PostgreSQL 16 Testcontainers flow uses only synthetic external adapters. It processes and deduplicates a manual public vacancy, analyzes, generates and structurally reopens DOCX/PDF, saves, selects, explicitly applies, records interview/follow-up/offer, and reads ordered history. A fake Telegram client proves authorization, progress/final replies, persistent offsets, replay filtering, reconstruction from persisted offset, cached analysis/render reuse, no automatic `APPLIED`, and confirmation failure after commit. Existing Stage 4/5 PostgreSQL tests remain the production-concurrency evidence for budget locking and document claim uniqueness; application optimistic locking and manual deduplication also remain enabled.
+
+There is no multi-user support, HTTP authentication, automatic submission, employer upload, screening-answer automation, recruiter contact, protected-page automation, CAPTCHA/authentication bypass, universal ATS guarantee, or perfect hallucination-prevention guarantee. Crawlee and CloakBrowser are not dependencies; their consideration begins only after Phase 2 is merged.

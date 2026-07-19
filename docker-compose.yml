@@ -11,7 +11,9 @@ services:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
+      start_period: 5s
       retries: 12
+    stop_grace_period: 30s
     restart: unless-stopped
 
   app:
@@ -19,9 +21,12 @@ services:
       context: .
       dockerfile: Dockerfile
     environment:
+      SPRING_PROFILES_ACTIVE: prod
       DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-jobpilot}
       POSTGRES_USER: ${POSTGRES_USER:-jobpilot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jobpilot}
+      JOBPILOT_VERSION: ${JOBPILOT_VERSION:-unknown}
+      BUILD_COMMIT: ${BUILD_COMMIT:-unknown}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHANNEL_ID: ${TELEGRAM_CHANNEL_ID:-}
       TELEGRAM_BOT_USERNAME: ${TELEGRAM_BOT_USERNAME:-}
@@ -60,7 +65,7 @@ services:
       LLM_INPUT_COST_PER_MILLION_TOKENS: ${LLM_INPUT_COST_PER_MILLION_TOKENS:-}
       LLM_OUTPUT_COST_PER_MILLION_TOKENS: ${LLM_OUTPUT_COST_PER_MILLION_TOKENS:-}
       DOCUMENTS_ENABLED: ${DOCUMENTS_ENABLED:-false}
-      DOCUMENT_STORAGE_ROOT: ${DOCUMENT_STORAGE_ROOT:-./data/documents}
+      DOCUMENT_STORAGE_ROOT: /var/lib/jobpilot/documents
       DOCUMENT_MAX_DOCX_BYTES: ${DOCUMENT_MAX_DOCX_BYTES:-2097152}
       DOCUMENT_MAX_PDF_BYTES: ${DOCUMENT_MAX_PDF_BYTES:-2097152}
       DOCUMENT_RESUME_TEMPLATE_VERSION: ${DOCUMENT_RESUME_TEMPLATE_VERSION:-resume-v1}
@@ -74,6 +79,20 @@ services:
       DOCUMENT_CONTACT_GITHUB_URL: ${DOCUMENT_CONTACT_GITHUB_URL:-}
       DOCUMENT_CONTACT_LINKEDIN_URL: ${DOCUMENT_CONTACT_LINKEDIN_URL:-}
       DOCUMENT_CONTACT_PORTFOLIO_URL: ${DOCUMENT_CONTACT_PORTFOLIO_URL:-}
+      MAINTENANCE_ENABLED: ${MAINTENANCE_ENABLED:-false}
+      MAINTENANCE_INTERVAL: ${MAINTENANCE_INTERVAL:-15m}
+      MAINTENANCE_MAX_ITEMS_PER_RUN: ${MAINTENANCE_MAX_ITEMS_PER_RUN:-100}
+      MAINTENANCE_MAX_DURATION_PER_RUN: ${MAINTENANCE_MAX_DURATION_PER_RUN:-30s}
+      MAINTENANCE_ORPHAN_GRACE_PERIOD: ${MAINTENANCE_ORPHAN_GRACE_PERIOD:-1h}
+    volumes:
+      - jobpilot-documents:/var/lib/jobpilot/documents
+    read_only: true
+    tmpfs:
+      - /tmp/jobpilot:rw,noexec,nosuid,size=134217728,uid=10001,gid=10001,mode=0700
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     ports:
       - "127.0.0.1:${PORT:-8080}:8080"
     depends_on:
@@ -85,7 +104,9 @@ services:
       timeout: 5s
       start_period: 30s
       retries: 3
+    stop_grace_period: 30s
     restart: unless-stopped
 
 volumes:
   jobpilot-postgres:
+  jobpilot-documents:

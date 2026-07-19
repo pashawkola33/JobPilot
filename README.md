@@ -1,6 +1,6 @@
 # JobPilot
 
-JobPilot is a human-in-the-loop internship discovery service for entry-level software roles. Phase 1 fetches public Greenhouse and Lever job boards, normalizes and deduplicates vacancies, deterministically extracts requirements, scores them against a configurable candidate profile, and sends strong matches to a Telegram channel. Phase 2 Stage 1 adds the versioned candidate truth model, Stage 2 safely processes manually submitted public vacancy URLs, Stage 3 adds human-maintained application tracking, Stage 4 adds optional structured job analysis, and Stage 5 creates truthful application documents for private human review.
+JobPilot is a human-in-the-loop internship discovery service for entry-level software roles. Phase 1 fetches public Greenhouse and Lever job boards, normalizes and deduplicates vacancies, deterministically extracts requirements, scores them against a configurable candidate profile, and sends strong matches to a Telegram channel. Phase 2 Stage 1 adds the versioned candidate truth model, Stage 2 safely processes manually submitted public vacancy URLs, Stage 3 adds human-maintained application tracking, Stage 4 adds optional structured job analysis, Stage 5 creates truthful application documents for private human review, and Stage 6 integrates the complete workflow with maintenance, readiness, safe operational counters, PostgreSQL end-to-end verification, and production-like Docker defaults.
 
 JobPilot never submits applications, uploads documents to employers, answers screening questions, accepts agreements, or contacts recruiters. Stage 5 generates ATS-oriented DOCX/PDF résumés and optional cover notes, but attaching a completed version to an existing application remains a separate human-triggered internal operation. Protected-site browser automation remains out of scope.
 
@@ -44,6 +44,13 @@ persisted job + validated analysis + exact verified candidate facts
     -> short IN_PROGRESS claim transaction -> canonical truth validation
     -> private DOCX/PDF render, structural validation, hash, and atomic file move
     -> short COMPLETED transaction -> preview/metadata API -> human document selection
+
+human Telegram/internal command -> save -> analyze -> generate -> inspect metadata/previews
+    -> select completed compatible documents -> explicit APPLIED transition
+    -> interview/follow-up/outcome -> ordered immutable application history
+
+bounded scheduler -> expired reservation reconciliation + stale document recovery
+    -> bounded symlink-safe partial/orphan cleanup -> safe ID/count-only logs and counters
 ```
 
 Integrations implement `JobSource`; persistence is isolated behind Spring Data repositories. `JobProcessor` gives one vacancy a transaction, while `JobIngestionService` contains failures so one bad source or posting cannot abort the complete fetch. `JobSchedulingService` prevents overlapping fetches with an atomic guard.
@@ -129,6 +136,31 @@ Metadata and fixed-name downloads are available from `GET /internal/v1/resumes/{
 
 Truth validation rejects invented employment, commercial experience, metrics, employers, certifications, strengthened language levels, practical claims for theoretical knowledge, inactive/CV-disallowed facts, unrelated prose attached to a valid key, and senior/professional titles. Cover notes use a neutral salutation, vacancy-evidenced company/role statements, explicit project-level truth boundaries, and material-gap acknowledgment. These controls reduce hallucination risk but do not provide a perfect prevention guarantee; every document still requires human review.
 
+### Phase 2 Stage 6 final integration and operations
+
+The supported human lifecycle is: ingest or add a public vacancy; normalize, deduplicate, extract, and score; save it; explicitly analyze it; explicitly generate a résumé and optional cover note; inspect bounded previews/metadata; select a completed compatible version on an existing application; explicitly mark `APPLIED`; then record interview, follow-up, rejection, offer, or withdrawal and inspect ordered history. Analysis and generation do not create an application. Generation and selection do not edit vacancy content. Selection is idempotent, creates no status-history entry, and leaves the current status unchanged. `REJECTED` and `WITHDRAWN` remain terminal.
+
+Stage 6 extends the existing authorized long-poll command path with `/analyze <jobId>`, `/documents <jobId> [resume|all] [docx|pdf|both]`, `/resumes <jobId>`, `/covernotes <jobId>`, `/selectdocs <jobId> <resumeVersionId> [coverNoteId|none]`, and `/history <jobId>`. Long operations receive a bounded acknowledgement, then reuse the Stage 4/5 cache and claim identities. Authorization, bot-name suffix rules, offset persistence, retry/dead-letter behavior, and commit-before-confirmation semantics are unchanged. Dynamic HTML is escaped and assembled only from complete bounded sections. Telegram returns numeric IDs and trusted internal metadata/download routes; it does not send file bytes and never exposes storage paths or artifact hashes.
+
+The complete internal administrative surface is:
+
+- `POST /internal/v1/jobs/manual-url` and `POST /internal/v1/jobs/{jobId}/analysis`;
+- `POST /internal/v1/jobs/{jobId}/documents`;
+- `GET /internal/v1/resumes/{id}` and `/docx` or `/pdf`;
+- `GET /internal/v1/cover-notes/{id}` and `/docx` or `/pdf`;
+- `PUT /internal/v1/applications/{jobId}/documents` for document selection;
+- `PUT /internal/v1/applications/{jobId}/status`, `/follow-up`, and `/notes`;
+- `GET /internal/v1/applications/{jobId}`, `/{jobId}/history`, and `GET /internal/v1/applications?status=...`;
+- `GET /internal/v1/operations/metrics` for fixed-label runtime counters plus persisted status counts.
+
+These endpoints have no authentication. This is intentionally still a single-user architecture: bind them to loopback or place the service behind a trusted private network boundary. Multi-user identity, ownership, authentication, billing, and per-user budgets are future work.
+
+Maintenance is disabled by default. When enabled, one JVM uses a local atomic guard to prevent overlap and stops accepting new scheduled work during shutdown. Each run has one item budget and one wall-time budget. It reuses the existing Stage 4 reservation reconciliation and Stage 5 failure/storage methods, rechecks rows under database locks, then performs filesystem work outside those transactions. Cleanup never follows symlinks, scans a bounded depth/candidate count, isolates item failures, and database-checks artifact references before deleting old final files. The Stage 4 singleton budget lock and pessimistic document-row locks make duplicate recovery safe across instances, but there is no distributed schedule lease; multiple replicas may perform redundant scans. Run one maintenance scheduler where possible.
+
+`GET /health` performs no provider or Telegram call. It reports only `READY`/`NOT_READY` or `ENABLED`/`DISABLED` for database, Flyway schema, Telegram commands, LLM, documents, artifact storage, and maintenance, plus configured build version/commit tokens. It never exposes credentials, paths, contacts, document hashes, candidate facts, vacancy text, prompts, or provider output. Readiness is `DOWN` when the database, schema, or enabled artifact storage is not ready.
+
+Flyway remains forward-only and Stage 6 adds no migration: V1 is the initial vacancy/application schema, V2 adds candidate truth and workflow persistence, V3 adds authorized Telegram/application history hardening, V4 adds structured analysis and budget accounting, and V5 adds truthful document artifacts and fact references. Published V1–V5 files are unchanged.
+
 ## Requirements
 
 - Java 21 or newer (the Maven compiler always targets release 21)
@@ -153,6 +185,8 @@ Important variables:
 | `POSTGRES_USER` | Docker default provided | PostgreSQL user |
 | `POSTGRES_PASSWORD` | Production: yes | PostgreSQL password |
 | `DATABASE_URL` | Local JVM: yes | JDBC PostgreSQL URL |
+| `JOBPILOT_VERSION` | No | Safe health build version token; default `unknown` |
+| `BUILD_COMMIT` | No | Safe health commit token; default `unknown` |
 | `GREENHOUSE_BOARD_TOKENS` | At least one source | Comma-separated Greenhouse board tokens |
 | `LEVER_COMPANY_IDS` | At least one source | Comma-separated Lever company identifiers |
 | `TELEGRAM_BOT_TOKEN` | Notifications only | BotFather token; never commit it |
@@ -205,6 +239,11 @@ Important variables:
 | `DOCUMENT_CONTACT_GITHUB_URL` | No | Runtime-only safe HTTPS link |
 | `DOCUMENT_CONTACT_LINKEDIN_URL` | No | Runtime-only safe HTTPS link |
 | `DOCUMENT_CONTACT_PORTFOLIO_URL` | No | Runtime-only safe HTTPS link |
+| `MAINTENANCE_ENABLED` | No | Enables bounded Stage 6 recovery; default `false` |
+| `MAINTENANCE_INTERVAL` | No | Fixed delay, `1m`–`1d`; default `15m` |
+| `MAINTENANCE_MAX_ITEMS_PER_RUN` | No | Shared item limit, `1`–`1000`; default `100` |
+| `MAINTENANCE_MAX_DURATION_PER_RUN` | No | Shared duration, `1s`–`5m`; default `30s` |
+| `MAINTENANCE_ORPHAN_GRACE_PERIOD` | No | Minimum artifact age before cleanup, `10m`–`30d`; default `1h` |
 
 Phase 1 matching facts remain under `jobpilot.candidate` in `application.yml`. The independently versioned Phase 2 truth source is `candidate-profile.yml`; increase `profile-version` whenever verified facts change. Candidate rows are not placed in Flyway migrations.
 
@@ -252,6 +291,8 @@ curl http://localhost:8080/health
 docker compose ps
 ```
 
+Compose waits for a bounded PostgreSQL 16 health check before starting the app, binds HTTP to `127.0.0.1`, runs the app as UID/GID `10001`, drops Linux capabilities, uses a read-only root filesystem, mounts an explicit private temporary directory, and persists documents in `jobpilot-documents`. Optional Telegram, LLM, documents, and maintenance remain disabled unless explicitly enabled. Graceful shutdown stops new polling, ingestion, digest, and maintenance work; the scheduler and server have bounded termination windows.
+
 Stop without deleting PostgreSQL data:
 
 ```bash
@@ -279,7 +320,13 @@ Flyway applies the schema automatically. The application does not require source
 ./mvnw verify
 ```
 
-The suite covers normalization, canonical URLs, migration/repository behavior, deduplication, deterministic extraction, scoring/penalties/hard blockers, Greenhouse and Lever payloads, source failure isolation, Telegram messages, candidate-profile validation/versioning, Phase 2 persistence, manual URL safety/parsing, LLM configuration/provider failures, budget boundaries and concurrency, conservative accounting, structured truth/evidence validation, prompt injection, cache invalidation/idempotency, transaction boundaries, typed APIs, and deterministic fallback. Stage 5 tests also reopen and inspect generated DOCX/PDF files, verify truth references/contact isolation/storage safety, exercise cache/concurrency and idempotent human selection, and reject unsafe contact destinations. H2 in PostgreSQL compatibility mode provides fast repository feedback. `./mvnw verify` also runs the `*IT` suite against real PostgreSQL 16 with Testcontainers when Docker is available.
+The suite covers normalization, canonical URLs, migration/repository behavior, deduplication, deterministic extraction, scoring/penalties/hard blockers, Greenhouse and Lever payloads, source failure isolation, Telegram messages, candidate-profile validation/versioning, Phase 2 persistence, manual URL SSRF/redirect policy, LLM destination/budget/provider failures, structured truth/evidence validation, prompt injection, contact HMAC isolation, path traversal/symlinks, DOCX/PDF structure, cache invalidation/idempotency, application/document compatibility, download integrity, transaction boundaries, typed APIs, and deterministic fallback. Stage 6 adds a real PostgreSQL 16 end-to-end lifecycle with synthetic external adapters, Telegram authorization/offset/replay/restart behavior, committed mutation despite confirmation failure, no automatic `APPLIED`, ordered history, artifact reuse, and bounded maintenance cleanup. H2 in PostgreSQL compatibility mode provides fast feedback only; `./mvnw verify` runs the `*IT` concurrency and full-flow evidence against PostgreSQL 16 Testcontainers. Tests make no live OpenAI, Telegram, vacancy, recruiter, or employer call.
+
+### Backup, restore, and troubleshooting
+
+Back up PostgreSQL and the private document volume together. Also preserve `DOCUMENT_CONTACT_CACHE_HMAC_KEY` in a secure secret backup; it is required to reproduce contact-dependent cache identity. A consistent restore must pair database artifact metadata with the same document-volume snapshot. After restore, keep documents disabled until storage is mounted and `/health` reports it ready; metadata without files is rejected, files without metadata remain inaccessible and become cleanup candidates only after the configured grace period. Restoring with a different HMAC key is safe but deliberately causes new document cache identities.
+
+If startup fails, check PostgreSQL health, Flyway validation, and fail-closed configuration for whichever optional integration was enabled. If document generation reports an invalid artifact, verify private-volume ownership/writability and restore consistency; do not edit stored hashes or paths. If Telegram stops advancing, inspect sanitized update IDs, retry/dead-letter counters, and ensure exactly one active poller. If analysis falls back, inspect only the typed failure category and budget counters; prompts/provider bodies are intentionally unavailable.
 
 ## Security and ethical boundary
 
@@ -294,19 +341,25 @@ The suite covers normalization, canonical URLs, migration/repository behavior, d
 - Manual fetches send only fixed `Accept` and `User-Agent` headers—never cookies, authorization, provider tokens, or user-supplied headers—and accept only bounded HTML, XHTML, text, or JSON responses.
 - LinkedIn and protected portals are not scraped; CAPTCHAs, authentication, robots controls, and rate limits are never bypassed.
 - JobPilot discovers and ranks vacancies only. Every application remains a deliberate manual action.
+- Internal HTTP endpoints have no authentication and require loopback or a trusted network boundary.
+- The architecture is single-user; LLM budgets and runtime document contact configuration are global.
+- Back up PostgreSQL, private document storage, and the document contact HMAC key with restore consistency.
 
 ## Current limitations
 
 - HTTP adapters currently use Spring `RestClient`; migration to the originally preferred reactive `WebClient` is pending dependency availability.
 - Manual ingestion supports known ATS links, schema.org `JobPosting`, and confidently identified public job metadata; arbitrary company-page scraping, Jooble, and RSS adapters are not implemented.
 - Telegram command polling is single-instance only; webhooks and distributed poller coordination are not implemented.
+- Maintenance has safe database locking but no distributed scheduler lease; prefer one active maintenance replica.
 - Optional Stage 4 LLM analysis supports one documented Responses-compatible provider adapter; it is disabled by default and deterministic analysis remains available.
 - LLM delivery is at-most-one active caller per cache key under normal database operation, not exactly-once provider delivery; a crash after provider acceptance can leave only conservative abandoned-reservation accounting.
 - Stage 5 supports the committed profile's verified student/project truth model; it does not model unverified employment history or arbitrary résumé section templates.
 - ATS-friendly output is deliberately conservative, but no universal ATS parsing/format-compatibility guarantee is possible.
 - Strict schemas and fact validation reduce unsupported LLM selections but cannot guarantee perfect hallucination prevention; human review remains mandatory.
-- Stage 5 never submits/uploads documents, contacts recruiters, or answers screening questions.
+- Stage 6 never submits applications, uploads documents to employers, contacts recruiters, or answers screening questions.
 - No browser automation or fallback for JavaScript-only, authenticated, CAPTCHA, or otherwise protected vacancy pages.
+- Crawlee and CloakBrowser are intentionally absent and may be considered only after Phase 2 is merged.
+- Multi-user support, ownership, authentication, and per-user contact/budget configuration remain future work.
 - The standard Java HTTP client performs its own connection-time DNS lookup after policy validation, leaving a narrow DNS-rebinding race; production deployments should also block private and metadata ranges at the network layer.
 - PostgreSQL Testcontainers integration tests require a working Docker environment.
 - Board-wide APIs are filtered after retrieval; configure only permitted boards and respect provider policies.

@@ -15,4 +15,9 @@ public class TimeConfig {
     Long telegramPollDelay(JobPilotProperties properties) {
         return properties.telegram().pollDelay().toMillis();
     }
+
+    @Bean
+    Long maintenanceInterval(MaintenanceProperties properties) {
+        return properties.interval().toMillis();
+    }
 }

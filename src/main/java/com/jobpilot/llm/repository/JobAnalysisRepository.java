@@ -1,6 +1,7 @@
 package com.jobpilot.llm.repository;
 
 import com.jobpilot.llm.domain.JobAnalysis;
+import com.jobpilot.llm.domain.JobAnalysisStatus;
 import jakarta.persistence.LockModeType;
 import java.util.List;
 import java.util.Optional;
@@ -20,4 +21,6 @@ public interface JobAnalysisRepository extends JpaRepository<JobAnalysis, Long> 
     Optional<JobAnalysis> findByIdForUpdate(long id);
 
     List<JobAnalysis> findByJobIdOrderByCreatedAtDesc(long jobId);
+
+    long countByStatus(JobAnalysisStatus status);
 }

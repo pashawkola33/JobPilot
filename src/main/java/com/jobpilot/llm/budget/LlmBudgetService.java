@@ -19,9 +19,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.data.domain.PageRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Service
 public class LlmBudgetService {
+    private static final Logger log = LoggerFactory.getLogger(LlmBudgetService.class);
     private static final Duration MIN_RESERVATION_TTL = Duration.ofMinutes(2);
     private final LlmBudgetControlRepository controls;
     private final LlmBudgetReservationRepository reservations;
@@ -123,6 +127,38 @@ public class LlmBudgetService {
         if (reservation.getStatus() == LlmBudgetReservationStatus.RESERVED) {
             expire(reservation, clock.instant());
         }
+    }
+
+    public int expireReservations(int maxItems, Duration maxDuration) {
+        if (maxItems < 1 || maxItems > 1_000 || maxDuration == null
+                || maxDuration.isZero() || maxDuration.isNegative()
+                || maxDuration.compareTo(Duration.ofMinutes(5)) > 0) {
+            throw new IllegalArgumentException("LLM reservation cleanup bounds are invalid");
+        }
+        Instant now = clock.instant();
+        long deadline = System.nanoTime() + maxDuration.toNanos();
+        var ids = reservations.findExpiredIds(LlmBudgetReservationStatus.RESERVED, now,
+                PageRequest.of(0, maxItems));
+        int expired = 0;
+        for (Long id : ids) {
+            if (System.nanoTime() >= deadline) break;
+            try {
+                Boolean changed = transactions.execute(status -> {
+                    controls.findByIdForUpdate(LlmBudgetControl.SINGLETON_ID).orElseThrow();
+                    LlmBudgetReservation reservation = reservations.findByIdForUpdate(id).orElse(null);
+                    if (reservation == null
+                            || reservation.getStatus() != LlmBudgetReservationStatus.RESERVED
+                            || reservation.getExpiresAt().isAfter(now)) return false;
+                    expire(reservation, now);
+                    return true;
+                });
+                if (Boolean.TRUE.equals(changed)) expired++;
+            } catch (RuntimeException failure) {
+                log.warn("LLM reservation maintenance isolated failure reservationId={} category=persistence",
+                        id);
+            }
+        }
+        return expired;
     }
 
     private void abandonExpired(Instant now) {

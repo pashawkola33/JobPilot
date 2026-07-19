@@ -11,6 +11,7 @@ import com.jobpilot.llm.repository.LlmBudgetReservationRepository;
 import com.jobpilot.llm.repository.LlmUsageEventRepository;
 import java.math.BigDecimal;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
@@ -133,6 +134,17 @@ class LlmBudgetServiceTest {
         LlmBudgetReservation reloaded = reservations.findById(stale.getId()).orElseThrow();
         assertThat(reloaded.getStatus()).isEqualTo(LlmBudgetReservationStatus.RELEASED);
         assertThat(reloaded.getFinalCostUsd()).isZero();
+        assertThat(usage.existsByReservationId(stale.getId())).isFalse();
+    }
+
+    @Test
+    void scheduledCleanupExpiresReservationsWithinExplicitBounds() {
+        LlmBudgetReservation stale = reserve(1).reservation();
+        clock.set(Instant.parse("2026-07-19T10:03:00Z"));
+
+        assertThat(budget.expireReservations(1, Duration.ofSeconds(1))).isEqualTo(1);
+        assertThat(reservations.findById(stale.getId()).orElseThrow().getStatus())
+                .isEqualTo(LlmBudgetReservationStatus.RELEASED);
         assertThat(usage.existsByReservationId(stale.getId())).isFalse();
     }
 

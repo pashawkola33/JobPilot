@@ -7,6 +7,8 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
 import java.util.Locale;
+import java.util.Set;
+import com.jobpilot.resume.domain.DocumentFormat;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -48,6 +50,16 @@ public class TelegramCommandParser {
             case "/offer" -> jobOnly(args, TelegramCommand.Kind.OFFER, "Usage: /offer &lt;jobId&gt;");
             case "/withdraw" -> jobOnly(args, TelegramCommand.Kind.WITHDRAW, "Usage: /withdraw &lt;jobId&gt;");
             case "/status" -> jobOnly(args, TelegramCommand.Kind.STATUS, "Usage: /status &lt;jobId&gt;");
+            case "/history" -> jobOnly(args, TelegramCommand.Kind.HISTORY,
+                    "Usage: /history &lt;jobId&gt;");
+            case "/analyze" -> jobOnly(args, TelegramCommand.Kind.ANALYZE,
+                    "Usage: /analyze &lt;jobId&gt;");
+            case "/documents" -> documents(args);
+            case "/resumes" -> jobOnly(args, TelegramCommand.Kind.RESUMES,
+                    "Usage: /resumes &lt;jobId&gt;");
+            case "/covernotes" -> jobOnly(args, TelegramCommand.Kind.COVER_NOTES,
+                    "Usage: /covernotes &lt;jobId&gt;");
+            case "/selectdocs" -> selectDocuments(args);
             case "/interview" -> interview(args);
             case "/rejected" -> rejected(args);
             case "/followup" -> followup(args);
@@ -55,6 +67,54 @@ public class TelegramCommandParser {
             case "/applications" -> applications(args);
             default -> TelegramCommandParseResult.success(TelegramCommand.simple(TelegramCommand.Kind.HELP));
         };
+    }
+
+    private TelegramCommandParseResult documents(String args) {
+        String[] parts = args.isEmpty() ? new String[0] : args.split("\\s+");
+        Long jobId = parts.length >= 1 && parts.length <= 3 ? parseId(parts[0]) : null;
+        if (jobId == null) return TelegramCommandParseResult.failure(
+                "Usage: /documents &lt;jobId&gt; [resume|all] [docx|pdf|both]");
+        TelegramCommand.DocumentScope scope = TelegramCommand.DocumentScope.ALL;
+        if (parts.length >= 2) {
+            scope = switch (parts[1].toLowerCase(Locale.ROOT)) {
+                case "resume" -> TelegramCommand.DocumentScope.RESUME;
+                case "all" -> TelegramCommand.DocumentScope.ALL;
+                default -> null;
+            };
+        }
+        Set<DocumentFormat> formats = Set.of(DocumentFormat.DOCX, DocumentFormat.PDF);
+        if (parts.length == 3) {
+            formats = switch (parts[2].toLowerCase(Locale.ROOT)) {
+                case "docx" -> Set.of(DocumentFormat.DOCX);
+                case "pdf" -> Set.of(DocumentFormat.PDF);
+                case "both" -> Set.of(DocumentFormat.DOCX, DocumentFormat.PDF);
+                default -> null;
+            };
+        }
+        if (scope == null || formats == null) return TelegramCommandParseResult.failure(
+                "Usage: /documents &lt;jobId&gt; [resume|all] [docx|pdf|both]");
+        return TelegramCommandParseResult.success(new TelegramCommand(
+                TelegramCommand.Kind.DOCUMENTS, jobId, null, null, scope, formats,
+                null, null, null, null));
+    }
+
+    private TelegramCommandParseResult selectDocuments(String args) {
+        String[] parts = args.isEmpty() ? new String[0] : args.split("\\s+");
+        if (parts.length < 2 || parts.length > 3) return TelegramCommandParseResult.failure(
+                "Usage: /selectdocs &lt;jobId&gt; &lt;resumeVersionId&gt; [coverNoteId|none]");
+        Long jobId = parseId(parts[0]);
+        Long resumeId = parseId(parts[1]);
+        Long coverId = null;
+        if (parts.length == 3 && !parts[2].equalsIgnoreCase("none")) {
+            coverId = parseId(parts[2]);
+            if (coverId == null) return TelegramCommandParseResult.failure(
+                    "Usage: /selectdocs &lt;jobId&gt; &lt;resumeVersionId&gt; [coverNoteId|none]");
+        }
+        if (jobId == null || resumeId == null) return TelegramCommandParseResult.failure(
+                "Usage: /selectdocs &lt;jobId&gt; &lt;resumeVersionId&gt; [coverNoteId|none]");
+        return TelegramCommandParseResult.success(new TelegramCommand(
+                TelegramCommand.Kind.SELECT_DOCUMENTS, jobId, resumeId, coverId,
+                null, Set.of(), null, null, null, null));
     }
 
     private TelegramCommandParseResult noArgs(String args, TelegramCommand.Kind kind, String usage) {

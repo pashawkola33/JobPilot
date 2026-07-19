@@ -1,5 +1,7 @@
 .git
 .github
+.githooks
+.claude
 .idea
 .vscode
 .env
@@ -10,3 +12,4 @@ data
 *.log
 *.pdf
 *.docx
+*.zip

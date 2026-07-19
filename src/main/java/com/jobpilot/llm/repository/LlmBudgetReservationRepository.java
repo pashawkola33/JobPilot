@@ -11,6 +11,7 @@ import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.domain.Pageable;
 
 public interface LlmBudgetReservationRepository extends JpaRepository<LlmBudgetReservation, Long> {
     Optional<LlmBudgetReservation> findByRequestKey(String requestKey);
@@ -21,6 +22,11 @@ public interface LlmBudgetReservationRepository extends JpaRepository<LlmBudgetR
 
     List<LlmBudgetReservation> findFirst100ByStatusAndExpiresAtLessThanEqualOrderByExpiresAtAsc(
             LlmBudgetReservationStatus status, Instant now);
+
+    @Query("select reservation.id from LlmBudgetReservation reservation "
+            + "where reservation.status = :status and reservation.expiresAt <= :now "
+            + "order by reservation.expiresAt asc, reservation.id asc")
+    List<Long> findExpiredIds(LlmBudgetReservationStatus status, Instant now, Pageable pageable);
 
     @Query("select coalesce(sum(case when reservation.status = "
             + "com.jobpilot.llm.budget.LlmBudgetReservationStatus.RESERVED "

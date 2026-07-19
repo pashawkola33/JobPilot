@@ -18,6 +18,11 @@ spring:
     enabled: true
   lifecycle:
     timeout-per-shutdown-phase: 20s
+  task:
+    scheduling:
+      shutdown:
+        await-termination: true
+        await-termination-period: 20s
 server:
   shutdown: graceful
   port: ${PORT:8080}
@@ -29,6 +34,9 @@ logging:
     org.apache.pdfbox.pdmodel.font.FileSystemFontProvider: OFF
 
 jobpilot:
+  build:
+    version: ${JOBPILOT_VERSION:unknown}
+    commit: ${BUILD_COMMIT:unknown}
   telegram:
     bot-token: ${TELEGRAM_BOT_TOKEN:}
     channel-id: ${TELEGRAM_CHANNEL_ID:}
@@ -96,6 +104,12 @@ jobpilot:
       github-url: ${DOCUMENT_CONTACT_GITHUB_URL:}
       linkedin-url: ${DOCUMENT_CONTACT_LINKEDIN_URL:}
       portfolio-url: ${DOCUMENT_CONTACT_PORTFOLIO_URL:}
+  maintenance:
+    enabled: ${MAINTENANCE_ENABLED:false}
+    interval: ${MAINTENANCE_INTERVAL:15m}
+    max-items-per-run: ${MAINTENANCE_MAX_ITEMS_PER_RUN:100}
+    max-duration-per-run: ${MAINTENANCE_MAX_DURATION_PER_RUN:30s}
+    orphan-grace-period: ${MAINTENANCE_ORPHAN_GRACE_PERIOD:1h}
   scheduling:
     fetch-cron: ${JOB_FETCH_CRON:0 0 */6 * * *}
     digest-cron: ${DAILY_DIGEST_CRON:0 0 9 * * *}

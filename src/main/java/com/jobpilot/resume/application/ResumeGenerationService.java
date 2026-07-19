@@ -352,6 +352,16 @@ public class ResumeGenerationService {
         return transactions.execute(status -> toView(coverNotes.findById(id).orElseThrow()));
     }
 
+    public List<ResumeMetadataView> resumesForJob(long jobId) {
+        return transactions.execute(status -> resumes.findByJobIdOrderByGeneratedAtDesc(jobId).stream()
+                .limit(20).map(this::toView).toList());
+    }
+
+    public List<CoverNoteMetadataView> coverNotesForJob(long jobId) {
+        return transactions.execute(status -> coverNotes.findByJobIdOrderByGeneratedAtDesc(jobId).stream()
+                .limit(20).map(this::toView).toList());
+    }
+
     public DocumentDownload downloadResume(long id, DocumentFormat format) {
         DocumentArtifactMetadata metadata = transactions.execute(status -> {
             ResumeVersion resume = resumes.findById(id).orElseThrow();

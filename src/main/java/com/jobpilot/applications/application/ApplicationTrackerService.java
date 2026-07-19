@@ -132,6 +132,17 @@ public class ApplicationTrackerService {
         });
     }
 
+    public List<ApplicationHistoryView> history(long jobId) {
+        return transactions.execute(status -> {
+            ApplicationRecord application = requiredApplication(jobId);
+            return history.findByApplicationIdOrderByChangedAtAscIdAsc(application.getId()).stream()
+                    .map(value -> new ApplicationHistoryView(value.getId(),
+                            value.getPreviousStatus(), value.getNewStatus(), value.getChangedAt(),
+                            value.getSource()))
+                    .toList();
+        });
+    }
+
     private ApplicationRecord requiredApplication(long jobId) {
         return applications.findByJobId(jobId).orElseThrow(() -> new ApplicationTrackingException(
                 ApplicationTrackingException.Category.APPLICATION_NOT_FOUND,
