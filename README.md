@@ -103,7 +103,7 @@ See [Phase 2 architecture](docs/phase-2-architecture.md) and [resume truth sourc
 
 1. schema.org `JobPosting` JSON-LD, including object, array, `@graph`, multiple-script, and escaped forms;
 2. supported job metadata plus readable page content;
-3. otherwise a typed failure—there is no heuristic browser or LLM fallback.
+3. otherwise a typed failure, except for positive JavaScript-shell evidence that may enter the optional browser fallback; there is no heuristic or LLM fallback.
 
 Successful vacancies enter the existing normalization, deduplication, deterministic requirement extraction, scoring, and persistence pipeline. Tracking parameters are removed without reordering the remaining query parameters. Generic manual sources are scoped by canonical hostname so common external IDs cannot collide across sites. Duplicate protection uses the existing application checks and database uniqueness constraints, including concurrent submissions.
 
@@ -123,7 +123,7 @@ This is an internal administrative endpoint. Keep it behind a trusted network bo
 
 Java extraction is always attempted first, in this order: (1) a known ATS/public API, (2) a safe Java HTTP fetch, (3) JSON-LD, (4) deterministic HTML parsing. Only when that reaches a page but cannot extract a vacancy from an **explicitly safe public JS-required** case does JobPilot optionally call the out-of-process **`scraper-worker`** (Crawlee + CloakBrowser via playwright-core). The worker renders one already-validated public URL and returns bounded typed JSON, which re-enters the **same** Java normalization, deduplication, scoring, and PostgreSQL pipeline. The worker's URL and any identifier are never trusted — the vacancy is persisted against the operator-submitted, SSRF-validated URL.
 
-The fallback is **disabled by default** and never invoked for an invalid/prohibited URL, an SSRF rejection, an authentication requirement, a CAPTCHA/Cloudflare challenge, an explicit block, a rate limit, a protected portal, an unsupported scheme, or when Java already has sufficient data. Public LinkedIn guest detail and bounded guest search extraction are supported, but login/session automation, challenge bypass, pagination queues, and protected LinkedIn pages are not. The worker holds no database, LLM, or Telegram access. See [`scraper-worker/README.md`](scraper-worker/README.md).
+The fallback is **disabled by default** and is invoked only for `JS_RENDERING_REQUIRED`: a nearly empty script-heavy page, an SPA root, an explicit JavaScript-required `noscript`, or a known provider vacancy shell. `PARSE_FAILED`, `UNSUPPORTED_SOURCE`, generic pages, ordinary 404s, and malformed HTML without positive JS evidence never launch the worker. It is also never invoked for an invalid/prohibited URL, an SSRF rejection, an authentication requirement, a CAPTCHA/Cloudflare challenge, an explicit block, a rate limit, a protected portal, an unsupported scheme, or when Java already has sufficient data. Public LinkedIn guest detail and bounded guest search extraction are supported, but login/session automation, challenge bypass, pagination queues, and protected LinkedIn pages are not. The worker holds no database, LLM, or Telegram access. See [`scraper-worker/README.md`](scraper-worker/README.md).
 
 Enabled mode fails startup closed unless a valid worker base URL and a shared secret of at least 32 bytes are present. Configuration: `SCRAPER_WORKER_ENABLED` (default `false`), `SCRAPER_WORKER_BASE_URL` (default `http://scraper-worker:3000`), `SCRAPER_WORKER_SHARED_SECRET` (runtime-only; never committed; distinct from Telegram/OpenAI/database/document-HMAC secrets), `SCRAPER_WORKER_CONNECT_TIMEOUT`, `SCRAPER_WORKER_RESPONSE_TIMEOUT`, `SCRAPER_WORKER_MAX_RESPONSE_BYTES`, `SCRAPER_WORKER_MAX_DESCRIPTION_CHARACTERS`. The Java client targets only the single configured worker endpoint with redirects disabled and a bounded, typed response.
 
@@ -200,7 +200,7 @@ Maintenance is disabled by default. When enabled, one JVM uses a local atomic gu
 
 `GET /health` performs no provider or Telegram call. It reports only `READY`/`NOT_READY` or `ENABLED`/`DISABLED` for database, Flyway schema, Telegram commands, LLM, documents, artifact storage, and maintenance, plus configured build version/commit tokens. It never exposes credentials, paths, contacts, document hashes, candidate facts, vacancy text, prompts, or provider output. Readiness is `DOWN` when the database, schema, or enabled artifact storage is not ready.
 
-Flyway remains forward-only: V1 is the initial vacancy/application schema, V2 adds candidate truth and workflow persistence, V3 adds authorized Telegram/application history hardening, V4 adds structured analysis and budget accounting, V5 adds truthful document artifacts and fact references, V6 adds location eligibility evidence, and V7 adds early-career eligibility evidence. Published V1–V5 files are unchanged.
+Flyway remains forward-only: V1 is the initial vacancy/application schema, V2 adds candidate truth and workflow persistence, V3 adds authorized Telegram/application history hardening, V4 adds structured analysis and budget accounting, V5 adds truthful document artifacts and fact references, V6 adds location eligibility evidence, V7 adds early-career eligibility evidence, and V8 persists `provider_tenant`, migrates legacy rows to the safe `legacy` tenant, replaces `(source, external_id)` uniqueness with `(source, provider_tenant, external_id)`, and adds safe enum checks. Published V1–V7 files are unchanged.
 
 ## Requirements
 
@@ -306,6 +306,8 @@ For a postings URL such as `https://jobs.lever.co/acme`, the identifier is `acme
 LEVER_COMPANY_IDS=acme,another-company
 ```
 
+Greenhouse, Lever, Ashby, and Recruitee tenant values all use the startup-validated grammar `[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}`. Empty, whitespace-padded, oversized, path-like, percent-encoded, or hostname-manipulating values fail startup. Recruitee requests are always constructed as exactly `<tenant>.recruitee.com`.
+
 ## Telegram setup
 
 1. Create a bot with `@BotFather` and copy its token into `.env`.
@@ -376,8 +378,8 @@ If startup fails, check PostgreSQL health, Flyway validation, and fail-closed co
 - LLM prompts and raw provider responses are neither logged nor persisted; accounting stores sanitized metadata only.
 - Runtime document contacts are injected only into private final artifacts; previews, audit content, hashes of canonical models, provider requests, and logs exclude them.
 - Private document paths are server-generated, relative, symlink-checked, size-bounded, structurally validated, and Git-ignored.
-- Remote calls have connection/read timeouts, bounded responses, and transient retries.
-- Only documented public Greenhouse and Lever APIs are queried.
+- Remote calls have connection/read timeouts, manual bounded redirects, response content-type validation, streaming byte limits, and transient retries.
+- Only expected public Greenhouse, Lever, Ashby, Recruitee, and Telegram API hosts are queried; every redirect remains within its original provider family and is revalidated.
 - Manual URL fetches allow only `http`/`https`, reject credentials, validate every original and redirected hostname through DNS, and block loopback, private, link-local, multicast, unspecified, reserved, benchmarking, and cloud-metadata destinations. IPv4 destinations embedded in 6to4, Teredo, NAT64, IPv4-compatible, or IPv4-mapped IPv6 addresses are decoded and checked by the same IPv4 policy.
 - Manual fetches send only fixed `Accept` and `User-Agent` headers—never cookies, authorization, provider tokens, or user-supplied headers—and accept only bounded HTML, XHTML, text, or JSON responses.
 - Only public LinkedIn guest detail/search markup is parsed; protected portals are not scraped, and CAPTCHAs, authentication, robots controls, and rate limits are never bypassed.
@@ -388,7 +390,7 @@ If startup fails, check PostgreSQL health, Flyway validation, and fail-closed co
 
 ## Current limitations
 
-- HTTP adapters currently use Spring `RestClient`; migration to the originally preferred reactive `WebClient` is pending dependency availability.
+- External provider calls use the JDK HTTP client with redirects disabled by default and a bounded, validated redirect loop.
 - Manual ingestion supports known ATS links, schema.org `JobPosting`, and confidently identified public job metadata; arbitrary company-page scraping, Jooble, and RSS adapters are not implemented.
 - Telegram command polling is single-instance only; webhooks and distributed poller coordination are not implemented.
 - Maintenance has safe database locking but no distributed scheduler lease; prefer one active maintenance replica.
@@ -398,7 +400,6 @@ If startup fails, check PostgreSQL health, Flyway validation, and fail-closed co
 - ATS-friendly output is deliberately conservative, but no universal ATS parsing/format-compatibility guarantee is possible.
 - Strict schemas and fact validation reduce unsupported LLM selections but cannot guarantee perfect hallucination prevention; human review remains mandatory.
 - Stage 6 never submits applications, uploads documents to employers, contacts recruiters, or answers screening questions.
-- No browser automation or fallback for JavaScript-only, authenticated, CAPTCHA, or otherwise protected vacancy pages.
 - The optional Crawlee + CloakBrowser browser-rendering fallback (`scraper-worker`) is disabled by default and is used only for an explicitly safe public JS-required case; deterministic Java extraction always runs first. It supports bounded public LinkedIn guest detail/search extraction but performs no CAPTCHA/challenge bypass, login automation, pagination queue, or protected-portal scraping.
 - CloakBrowser is an optional third-party stealth-Chromium dependency; its Chromium binary is downloaded from the vendor at image-build time and is never committed. Review CloakBrowser's license and Chromium redistribution terms before production use. The full `playwright` package is not installed (only `playwright-core`).
 - Romanian source adapters are not yet implemented on this branch; no Romanian-specific ingestion adapter has been added.

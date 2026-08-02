@@ -17,11 +17,11 @@ export function buildLinkedInSearchResult(
   page: RawPageData,
   maxResults: number,
 ): SearchResponse {
-  if (page.signals.hasPasswordField || page.signals.hasLoginForm) {
-    return { requestId: request.requestId, status: "AUTH_REQUIRED" };
-  }
   if (page.signals.challengeMarker) {
     return { requestId: request.requestId, status: "CHALLENGE_DETECTED" };
+  }
+  if (page.signals.hasPasswordField || page.signals.hasLoginForm) {
+    return { requestId: request.requestId, status: "AUTH_REQUIRED" };
   }
   if (page.signals.accessDeniedTitle) {
     return { requestId: request.requestId, status: "BLOCKED" };

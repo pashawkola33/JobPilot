@@ -1,5 +1,7 @@
 package com.jobpilot.jobs.service;
 
+import com.jobpilot.common.Utf16;
+
 import com.jobpilot.common.UrlCanonicalizer;
 import com.jobpilot.jobs.domain.LocationEligibilityDecision;
 import com.jobpilot.jobs.domain.EarlyCareerDecision;
@@ -128,8 +130,9 @@ public class LiveVacancySmokeService {
             try {
                 return "url:" + canonicalizer.canonicalize(raw.url());
             } catch (RuntimeException invalidUrl) {
-                if (raw.externalId() != null && !raw.externalId().isBlank()) {
-                    return "external:" + safe(raw.source()) + ":" + raw.externalId().strip();
+            if (raw.externalId() != null && !raw.externalId().isBlank()) {
+                    return "external:" + safe(raw.source()) + ":" + safe(raw.providerTenant())
+                            + ":" + raw.externalId().strip();
                 }
                 return "content:" + safe(raw.company()) + "|" + safe(raw.title())
                         + "|" + safe(raw.location());
@@ -146,7 +149,7 @@ public class LiveVacancySmokeService {
 
         private String bounded(String value) {
             String safeValue = safe(value);
-            return safeValue.length() <= 160 ? safeValue : safeValue.substring(0, 160);
+            return Utf16.truncate(safeValue, 160);
         }
     }
 }

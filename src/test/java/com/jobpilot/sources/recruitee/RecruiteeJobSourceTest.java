@@ -13,7 +13,7 @@ class RecruiteeJobSourceTest {
     void mapsPublicOfferWorkplaceAndMultipleLocationsWithoutDecidingEligibility() throws Exception {
         var source = new RecruiteeJobSource(mock(ExternalHttpClient.class), TestProperties.create());
         var json = new ObjectMapper().readTree("""
-                {"offers":[{"id":42,"title":"Java Engineer","company_name":"Example",
+                {"offers":[{"id":42,"guid":"stable-guid-42","title":"Java Engineer","company_name":"Example",
                 "careers_url":"https://example.recruitee.com/o/java","description":"<p>Java</p>",
                 "requirements":"<p>Spring Boot</p>","employment_type_code":"full_time",
                 "experience_code":"no_experience",
@@ -25,6 +25,7 @@ class RecruiteeJobSourceTest {
         var jobs = source.parse("example", json);
 
         assertThat(jobs).singleElement().satisfies(job -> {
+            assertThat(job.externalId()).isEqualTo("stable-guid-42");
             assertThat(job.description()).isEqualTo("Java Spring Boot");
             assertThat(job.locationData().workplaceType()).isEqualTo("Hybrid");
             assertThat(job.locationData().structuredLocations())

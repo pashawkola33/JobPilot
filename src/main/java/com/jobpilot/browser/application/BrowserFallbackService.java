@@ -5,6 +5,7 @@ import com.jobpilot.browser.api.BrowserExtractionResponse;
 import com.jobpilot.browser.api.BrowserExtractionStatus;
 import com.jobpilot.browser.api.BrowserFallbackDecision;
 import com.jobpilot.browser.config.ScraperWorkerProperties;
+import com.jobpilot.common.Utf16;
 import com.jobpilot.jobs.domain.RawJob;
 import com.jobpilot.manualurl.fetch.ValidatedManualUrl;
 import com.jobpilot.manualurl.parse.ManualParseStatus;
@@ -50,8 +51,7 @@ public class BrowserFallbackService {
         if (javaStatus == ManualParseStatus.BLOCKED_OR_PROTECTED) {
             return BrowserFallbackDecision.SKIP_PROTECTED;
         }
-        if (javaStatus == ManualParseStatus.UNSUPPORTED_SOURCE
-                || javaStatus == ManualParseStatus.PARSE_FAILED) {
+        if (javaStatus == ManualParseStatus.JS_RENDERING_REQUIRED) {
             return BrowserFallbackDecision.INVOKE;
         }
         return BrowserFallbackDecision.SKIP_NOT_JS_REQUIRED;
@@ -108,7 +108,7 @@ public class BrowserFallbackService {
         String stripped = value.strip();
         if (stripped.length() < 40) return null;
         return stripped.length() > settings.maxDescriptionCharacters()
-                ? stripped.substring(0, settings.maxDescriptionCharacters()) : stripped;
+                ? Utf16.truncate(stripped, settings.maxDescriptionCharacters()) : stripped;
     }
 
     private Instant parseInstant(String value) {

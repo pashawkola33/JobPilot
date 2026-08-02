@@ -34,9 +34,14 @@ export interface ServerDeps {
 
 export function createServer(deps: ServerDeps): Server {
   const now = deps.now ?? (() => Date.now());
-  return createHttpServer((req, res) => {
+  const server = createHttpServer((req, res) => {
     handle(req, res, deps, now).catch(() => sendJson(res, 500, { status: "ERROR" }));
   });
+  server.requestTimeout = deps.config.totalTimeoutMs + 5_000;
+  server.headersTimeout = Math.min(10_000, server.requestTimeout);
+  server.keepAliveTimeout = 5_000;
+  server.setTimeout(deps.config.totalTimeoutMs + 5_000);
+  return server;
 }
 
 async function handle(
@@ -77,6 +82,20 @@ async function handleExtract(
   }
 
   deps.metrics.increment("requested");
+  let body: string;
+  try {
+    body = await readBody(req, deps.config.maxRequestBodyBytes);
+  } catch (error) {
+    sendJson(res, error === TOO_LARGE ? 413 : 400, { status: "BAD_REQUEST" });
+    return;
+  }
+
+  const request = parseRequest(body);
+  if (request === null) {
+    sendJson(res, 400, { status: "BAD_REQUEST" });
+    return;
+  }
+
   const release = deps.admission.tryAcquire();
   if (release === null) {
     deps.metrics.increment("overloaded");
@@ -85,19 +104,6 @@ async function handleExtract(
   }
 
   try {
-    let body: string;
-    try {
-      body = await readBody(req, deps.config.maxRequestBodyBytes);
-    } catch (error) {
-      sendJson(res, error === TOO_LARGE ? 413 : 400, { status: "BAD_REQUEST" });
-      return;
-    }
-
-    const request = parseRequest(body);
-    if (request === null) {
-      sendJson(res, 400, { status: "BAD_REQUEST" });
-      return;
-    }
 
     const started = now();
     if (search && !isLinkedInSearchUrl(request.url)) {

@@ -2,32 +2,32 @@ package com.jobpilot.common;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
-import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
-import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.jobpilot.support.TestProperties;
+import com.jobpilot.config.JobPilotProperties;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
+import java.io.IOException;
+import java.net.InetSocketAddress;
+import java.net.URI;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
-import org.springframework.test.web.client.MockRestServiceServer;
-import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.HttpServerErrorException;
-import org.springframework.web.client.RestClient;
 
 class ExternalHttpClientTest {
-    private static final String URL = "https://api.example.com/jobs";
+    private HttpServer server;
+    private URI origin;
+    private RecordingClient client;
 
-    /** Records requested pauses instead of really sleeping, keeping the tests fast. */
     private static final class RecordingClient extends ExternalHttpClient {
         private final List<Long> pauses = new ArrayList<>();
 
-        private RecordingClient(RestClient client) {
-            super(client, new ObjectMapper(), TestProperties.create());
+        private RecordingClient(JobPilotProperties.Http settings, URI origin) {
+            super(new ObjectMapper(), settings, origin);
         }
 
         @Override
@@ -36,54 +36,95 @@ class ExternalHttpClientTest {
         }
     }
 
-    private final MockRestServiceServer server;
-    private final RecordingClient client;
+    @BeforeEach
+    void startServer() throws Exception {
+        server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/valid", exchange -> json(exchange, 200, "{\"ok\":true}"));
+        server.createContext("/wrong-type", exchange -> respond(exchange, 200, "text/html", "<html>no</html>"));
+        server.createContext("/oversized", exchange -> json(exchange, 200, "x".repeat(2_000)));
+        server.createContext("/private-redirect", exchange -> {
+            exchange.getResponseHeaders().add("Location",
+                    "http://127.0.0.1:" + server.getAddress().getPort() + "/valid");
+            exchange.sendResponseHeaders(302, -1);
+            exchange.close();
+        });
+        server.createContext("/redirect", this::redirect);
+        server.createContext("/timeout", exchange -> {
+            try {
+                Thread.sleep(300);
+                json(exchange, 200, "{\"late\":true}");
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            } catch (IOException disconnected) {
+                exchange.close();
+            }
+        });
+        server.createContext("/malformed", exchange -> json(exchange, 200, "{broken"));
+        server.start();
+        origin = URI.create("http://localhost:" + server.getAddress().getPort());
+        client = new RecordingClient(new JobPilotProperties.Http(
+                Duration.ofMillis(50), Duration.ofMillis(100), 1_024), origin);
+    }
 
-    ExternalHttpClientTest() {
-        RestClient.Builder builder = RestClient.builder();
-        this.server = MockRestServiceServer.bindTo(builder).build();
-        this.client = new RecordingClient(builder.build());
+    @AfterEach
+    void stopServer() {
+        if (server != null) server.stop(0);
     }
 
     @Test
-    void retriesServerErrorsWithBackoffAndSucceeds() {
-        server.expect(requestTo(URL)).andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
-        server.expect(requestTo(URL)).andRespond(withSuccess("{\"ok\":true}", MediaType.APPLICATION_JSON));
-
-        assertThat(client.getJson(URL).path("ok").asBoolean()).isTrue();
-        assertThat(client.pauses).containsExactly(400L);
-        server.verify();
+    void acceptsValidBoundedJson() {
+        assertThat(client.getJson(origin + "/valid").path("ok").asBoolean()).isTrue();
     }
 
     @Test
-    void doesNotSleepAfterTheFinalFailedAttempt() {
-        server.expect(requestTo(URL)).andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
-        server.expect(requestTo(URL)).andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
-        server.expect(requestTo(URL)).andRespond(withStatus(HttpStatus.SERVICE_UNAVAILABLE));
+    void rejectsInvalidContentTypeAndMalformedJson() {
+        assertCategory("/wrong-type", ExternalHttpException.Category.INVALID_CONTENT_TYPE);
+        assertCategory("/malformed", ExternalHttpException.Category.MALFORMED_JSON);
+    }
 
-        assertThatThrownBy(() -> client.getJson(URL)).isInstanceOf(HttpServerErrorException.class);
+    @Test
+    void stopsReadingAtTheHardResponseLimit() {
+        assertCategory("/oversized", ExternalHttpException.Category.RESPONSE_TOO_LARGE);
+    }
+
+    @Test
+    void rejectsRedirectsOutsideTheOriginalAllowedOrigin() {
+        assertCategory("/private-redirect", ExternalHttpException.Category.INVALID_DESTINATION);
+    }
+
+    @Test
+    void capsRedirectCount() {
+        assertCategory("/redirect/0", ExternalHttpException.Category.REDIRECT_LIMIT);
+    }
+
+    @Test
+    void preservesResponseTimeoutAndRetryIsolation() {
+        assertCategory("/timeout", ExternalHttpException.Category.TIMEOUT);
         assertThat(client.pauses).containsExactly(400L, 800L);
-        server.verify();
     }
 
-    @Test
-    void retriesRateLimitsAndHonoursRetryAfterSeconds() {
-        HttpHeaders headers = new HttpHeaders();
-        headers.add("Retry-After", "2");
-        server.expect(requestTo(URL)).andRespond(withStatus(HttpStatus.TOO_MANY_REQUESTS).headers(headers));
-        server.expect(requestTo(URL)).andRespond(withSuccess("{\"ok\":true}", MediaType.APPLICATION_JSON));
-
-        assertThat(client.getJson(URL).path("ok").asBoolean()).isTrue();
-        assertThat(client.pauses).containsExactly(2000L);
-        server.verify();
+    private void assertCategory(String path, ExternalHttpException.Category category) {
+        assertThatThrownBy(() -> client.getJson(origin + path))
+                .isInstanceOfSatisfying(ExternalHttpException.class,
+                        failure -> assertThat(failure.category()).isEqualTo(category));
     }
 
-    @Test
-    void doesNotRetryOtherClientErrors() {
-        server.expect(requestTo(URL)).andRespond(withStatus(HttpStatus.BAD_REQUEST));
+    private void redirect(HttpExchange exchange) throws IOException {
+        int current = Integer.parseInt(exchange.getRequestURI().getPath().substring("/redirect/".length()));
+        exchange.getResponseHeaders().add("Location", "/redirect/" + (current + 1));
+        exchange.sendResponseHeaders(302, -1);
+        exchange.close();
+    }
 
-        assertThatThrownBy(() -> client.getJson(URL)).isInstanceOf(HttpClientErrorException.class);
-        assertThat(client.pauses).isEmpty();
-        server.verify();
+    private void json(HttpExchange exchange, int status, String body) throws IOException {
+        respond(exchange, status, "application/json; charset=utf-8", body);
+    }
+
+    private void respond(HttpExchange exchange, int status, String contentType, String body) throws IOException {
+        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", contentType);
+        exchange.sendResponseHeaders(status, bytes.length);
+        exchange.getResponseBody().write(bytes);
+        exchange.close();
     }
 }

@@ -174,6 +174,30 @@ class DeterministicManualJobParserTest {
                 .status()).isEqualTo(ManualParseStatus.UNSUPPORTED_SOURCE);
     }
 
+    @Test
+    void classifiesOnlyPositiveJavascriptShellEvidenceForFallback() {
+        String script = "window.__BOOTSTRAP__='" + "x".repeat(300) + "';";
+        for (String shell : new String[]{
+                "<html><body><div id='root'></div><script>" + script + "</script></body></html>",
+                "<html><body><noscript>JavaScript is required to view this job.</noscript></body></html>",
+                "<html><body><script>" + script + "</script></body></html>"
+        }) {
+            assertThat(parser.parse(html(shell)).status())
+                    .isEqualTo(ManualParseStatus.JS_RENDERING_REQUIRED);
+        }
+    }
+
+    @Test
+    void ordinary404AndMalformedHtmlWithoutJsEvidenceDoNotTriggerFallback() {
+        assertThat(parser.parse(html("<html><title>404 Not Found</title><body>Missing</body></html>"))
+                .status()).isEqualTo(ManualParseStatus.UNSUPPORTED_SOURCE);
+        assertThat(parser.parse(html("<html><body><main><h1>Broken markup"))
+                .status()).isEqualTo(ManualParseStatus.UNSUPPORTED_SOURCE);
+        assertThat(parser.parse(html(
+                "<script type='application/ld+json'>{\"@type\":\"JobPosting\",bad}</script>"))
+                .status()).isEqualTo(ManualParseStatus.PARSE_FAILED);
+    }
+
     private ManualFetchedResource html(String body) {
         return new ManualFetchedResource(URL, URL, "text/html", body);
     }

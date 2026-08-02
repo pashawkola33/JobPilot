@@ -170,6 +170,13 @@ public class LocationEligibilityService {
                     requiredTimezone, requiredAuthorization);
         }
         if (scope == RemoteScope.UNKNOWN) {
+            if (!settings.rejectUnknownRemoteScope()) {
+                return new LocationEligibilityDecision(workplace,
+                        LocationEligibility.REMOTE_ROMANIA_ELIGIBLE, RemoteScope.UNKNOWN,
+                        city, country, true,
+                        "Remote scope was not specified and is allowed by configuration", restrictions,
+                        requiredTimezone, requiredAuthorization);
+            }
             return unknown(workplace, city, country,
                     "Remote role found, but permitted countries were not specified", restrictions,
                     requiredTimezone, requiredAuthorization);

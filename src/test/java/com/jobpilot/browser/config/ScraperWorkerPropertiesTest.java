@@ -42,6 +42,22 @@ class ScraperWorkerPropertiesTest {
                 .isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test
+    void rejectsEveryUnsafeTimeoutAndBound() {
+        assertThatThrownBy(() -> new ScraperWorkerProperties(true, "http://scraper-worker:3000", SECRET,
+                Duration.ZERO, Duration.ofSeconds(45), 1_048_576, 50_000))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new ScraperWorkerProperties(true, "http://scraper-worker:3000", SECRET,
+                Duration.ofSeconds(5), Duration.ofSeconds(91), 1_048_576, 50_000))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new ScraperWorkerProperties(true, "http://scraper-worker:3000", SECRET,
+                Duration.ofSeconds(5), Duration.ofSeconds(45), 1_023, 50_000))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> new ScraperWorkerProperties(true, "http://scraper-worker:3000", SECRET,
+                Duration.ofSeconds(5), Duration.ofSeconds(45), 1_048_576, 39))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
     private ScraperWorkerProperties enabled(String baseUrl, String secret) {
         return new ScraperWorkerProperties(true, baseUrl, secret, Duration.ofSeconds(5),
                 Duration.ofSeconds(45), 1_048_576, 50_000);

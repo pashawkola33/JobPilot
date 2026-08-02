@@ -44,7 +44,8 @@ public class JobNormalizer {
                 + "|" + normalizedLocation);
         String descriptionHash = Hashing.sha256(normalize(description));
         String payload = raw.rawPayload() == null ? raw.toString() : raw.rawPayload();
-        return new Job(raw.source(), blankToNull(raw.externalId()), canonical, raw.title().strip(),
+        return new Job(raw.source(), raw.providerTenant(), blankToNull(raw.externalId()), canonical,
+                raw.title().strip(),
                 raw.company().strip(), blankToNull(raw.location()), remoteType(raw, eligibility, description),
                 blankToNull(raw.employmentType()), description, raw.publishedAt(), raw.deadline(),
                 Hashing.sha256(payload), descriptionHash, fingerprint, clock.instant(), eligibility,

@@ -7,6 +7,7 @@
  * HTTPS sourceUrl are required; all other fields are optional and bounded.
  */
 import { screenStructure } from "./urlPolicy.js";
+import { truncateUtf16 } from "./text.js";
 import type {
   DescriptionEvidence,
   DetailProvider,
@@ -179,8 +180,8 @@ export function buildResult(
 function classifyProtected(
   page: RawPageData,
 ): "AUTH_REQUIRED" | "CHALLENGE_DETECTED" | "BLOCKED" | null {
-  if (page.signals.hasPasswordField || page.signals.hasLoginForm) return "AUTH_REQUIRED";
   if (page.signals.challengeMarker) return "CHALLENGE_DETECTED";
+  if (page.signals.hasPasswordField || page.signals.hasLoginForm) return "AUTH_REQUIRED";
   if (page.signals.accessDeniedTitle) return "BLOCKED";
   return null;
 }
@@ -674,20 +675,18 @@ function normalizeMultiline(value: string, maxChars: number): string | null {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
   if (collapsed === "") return null;
-  return collapsed.length > maxChars ? collapsed.slice(0, maxChars).trim() : collapsed;
+  return collapsed.length > maxChars ? truncateUtf16(collapsed, maxChars).trim() : collapsed;
 }
 
 export function htmlToText(value: string): string {
-  const bounded = value.slice(0, 400000);
+  const bounded = truncateUtf16(value, 400000);
   const decoded = decodeEntities(bounded);
-  return decodeEntities(
-    decoded
-      .replace(/<!--[\s\S]*?-->/g, " ")
-      .replace(/<\s*(script|style|noscript)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, " ")
-      .replace(/<\s*br\s*\/?\s*>/gi, "\n")
-      .replace(/<\/?\s*(p|div|li|ul|ol|h[1-6]|section|article|blockquote|tr)[^>]*>/gi, "\n")
-      .replace(/<[^>]+>/g, " "),
-  );
+  return decoded
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<\s*(script|style|noscript)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, " ")
+    .replace(/<\s*br\s*\/?\s*>/gi, "\n")
+    .replace(/<\/?\s*(p|div|li|ul|ol|h[1-6]|section|article|blockquote|tr)[^>]*>/gi, "\n")
+    .replace(/<[^>]+>/g, " ");
 }
 
 function decodeEntities(value: string): string {

@@ -1,5 +1,7 @@
 package com.jobpilot.sources;
 
+import com.jobpilot.common.Utf16;
+
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -41,6 +43,6 @@ public class SourceFetchLog {
         status = "FAILED";
         finishedAt = now;
         String message = error.getClass().getSimpleName() + ": " + String.valueOf(error.getMessage());
-        errorSummary = message.substring(0, Math.min(message.length(), 500));
+        errorSummary = Utf16.truncate(message, 500);
     }
 }

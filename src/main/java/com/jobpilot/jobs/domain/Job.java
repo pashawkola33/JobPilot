@@ -17,6 +17,8 @@ public class Job {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     private String source;
+    @Column(nullable = false, length = 300)
+    private String providerTenant;
     private String externalId;
     private String canonicalUrl;
     private String title;
@@ -81,9 +83,9 @@ public class Job {
                String location, RemoteType remoteType, String employmentType, String description,
                Instant publishedAt, Instant deadline, String rawPayloadHash,
                String descriptionHash, String normalizedFingerprint, Instant now) {
-        this(source, externalId, canonicalUrl, title, company, location, remoteType,
+        this(source, company, externalId, canonicalUrl, title, company, location, remoteType,
                 employmentType, description, publishedAt, deadline, rawPayloadHash,
-                descriptionHash, normalizedFingerprint, now, null);
+                descriptionHash, normalizedFingerprint, now, null, null);
     }
 
     public Job(String source, String externalId, String canonicalUrl, String title, String company,
@@ -91,7 +93,7 @@ public class Job {
                Instant publishedAt, Instant deadline, String rawPayloadHash,
                String descriptionHash, String normalizedFingerprint, Instant now,
                LocationEligibilityDecision eligibility) {
-        this(source, externalId, canonicalUrl, title, company, location, remoteType,
+        this(source, company, externalId, canonicalUrl, title, company, location, remoteType,
                 employmentType, description, publishedAt, deadline, rawPayloadHash,
                 descriptionHash, normalizedFingerprint, now, eligibility, null);
     }
@@ -101,7 +103,19 @@ public class Job {
                Instant publishedAt, Instant deadline, String rawPayloadHash,
                String descriptionHash, String normalizedFingerprint, Instant now,
                LocationEligibilityDecision eligibility, EarlyCareerDecision earlyCareer) {
+        this(source, company, externalId, canonicalUrl, title, company, location, remoteType,
+                employmentType, description, publishedAt, deadline, rawPayloadHash,
+                descriptionHash, normalizedFingerprint, now, eligibility, earlyCareer);
+    }
+
+    public Job(String source, String providerTenant, String externalId, String canonicalUrl,
+               String title, String company, String location, RemoteType remoteType,
+               String employmentType, String description, Instant publishedAt, Instant deadline,
+               String rawPayloadHash, String descriptionHash, String normalizedFingerprint,
+               Instant now, LocationEligibilityDecision eligibility, EarlyCareerDecision earlyCareer) {
         this.source = source;
+        this.providerTenant = providerTenant == null || providerTenant.isBlank()
+                ? "legacy" : providerTenant.strip();
         this.externalId = externalId;
         this.canonicalUrl = canonicalUrl;
         this.title = title;
@@ -214,6 +228,7 @@ public class Job {
 
     public Long getId() { return id; }
     public String getSource() { return source; }
+    public String getProviderTenant() { return providerTenant; }
     public String getExternalId() { return externalId; }
     public String getCanonicalUrl() { return canonicalUrl; }
     public String getTitle() { return title; }

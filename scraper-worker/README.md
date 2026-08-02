@@ -36,9 +36,12 @@ policy first). It allows only `http`/`https` and rejects credentials, localhost
 reserved and cloud-metadata ranges, IPv4 embedded in IPv6, obfuscated/numeric IP
 forms, `file:`/`data:`/`javascript:`/`blob:`/`ftp:`, and internal container
 service names. It resolves the hostname and rejects the URL if any resolved
-address is prohibited, and re-validates every main-frame redirect. Request
-interception blocks prohibited destinations, downloads, WebSockets, media, and
-unnecessary images/fonts, and never sends cookies or Authorization. Application
+address is prohibited. After navigation it walks Playwright's complete
+`response.request().redirectedFrom()` chain, enforces `WORKER_MAX_REDIRECTS`,
+DNS-screens every hop, and screens the final page URL again. Request interception
+blocks prohibited destinations, downloads, WebSockets, media, and unnecessary
+images/fonts, strips authorization headers, and blocks service workers. Each
+render uses a fresh isolated context, so cookies never carry across operations. Application
 DNS validation cannot fully eliminate a narrow DNS-rebinding race; production
 network isolation remains required.
 
@@ -64,7 +67,7 @@ protected-portal scraping.
 disabled (`browserPoolOptions.useFingerprints=false`); a fresh isolated browser
 context per extraction; `maxConcurrency=1`, `maxRequestsPerCrawl=1`,
 `maxRequestRetries=0`; no enqueueing/link discovery; dialogs dismissed; popups
-closed; no screenshots/video/trace/HAR; bounded navigation/total timeouts.
+closed; `serviceWorkers="block"`; no screenshots/video/trace/HAR; bounded navigation/total timeouts.
 Chromium's process sandbox is explicitly enabled: Playwright's and the vendor's
 `--no-sandbox` / `--disable-setuid-sandbox` arguments are removed. A
 non-queuing admission controller permits only

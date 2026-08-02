@@ -109,19 +109,25 @@ public record JobPilotProperties(
             List<String> recruiteeCompanyIds) {
 
         public Sources {
-            greenhouseBoardTokens = copy(greenhouseBoardTokens);
-            leverCompanyIds = copy(leverCompanyIds);
-            ashbyBoardNames = copy(ashbyBoardNames);
-            recruiteeCompanyIds = copy(recruiteeCompanyIds);
+            greenhouseBoardTokens = copyAndValidate("Greenhouse", greenhouseBoardTokens);
+            leverCompanyIds = copyAndValidate("Lever", leverCompanyIds);
+            ashbyBoardNames = copyAndValidate("Ashby", ashbyBoardNames);
+            recruiteeCompanyIds = copyAndValidate("Recruitee", recruiteeCompanyIds);
         }
 
         public static Sources empty() {
             return new Sources(List.of(), List.of(), List.of(), List.of());
         }
 
-        private static List<String> copy(List<String> values) {
-            return values == null ? List.of() : values.stream()
-                    .filter(value -> value != null && !value.isBlank()).map(String::strip).toList();
+        private static List<String> copyAndValidate(String provider, List<String> values) {
+            if (values == null) return List.of();
+            for (String value : values) {
+                if (value == null || !value.matches("[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}")) {
+                    throw new IllegalArgumentException(provider
+                            + " tenant must match [a-zA-Z0-9][a-zA-Z0-9._-]{0,62}");
+                }
+            }
+            return List.copyOf(values);
         }
     }
 
@@ -174,6 +180,16 @@ public record JobPilotProperties(
     }
 
     public record Http(Duration connectTimeout, Duration responseTimeout, int maxResponseBytes) {
+        public Http {
+            if (connectTimeout == null || connectTimeout.isZero() || connectTimeout.isNegative()
+                    || connectTimeout.compareTo(Duration.ofSeconds(30)) > 0
+                    || responseTimeout == null || responseTimeout.isZero() || responseTimeout.isNegative()
+                    || responseTimeout.compareTo(Duration.ofSeconds(90)) > 0
+                    || responseTimeout.compareTo(connectTimeout) <= 0
+                    || maxResponseBytes < 1_024 || maxResponseBytes > 10 * 1_024 * 1_024) {
+                throw new IllegalArgumentException("External HTTP limits are outside their safe bounds");
+            }
+        }
     }
 
     public record ManualUrl(

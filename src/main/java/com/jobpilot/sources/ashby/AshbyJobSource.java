@@ -107,6 +107,6 @@ public class AshbyJobSource implements JobSource {
 
     private String plainText(String html) {
         String withoutTags = HtmlUtils.htmlUnescape(html).replaceAll("<[^>]+>", " ");
-        return HtmlUtils.htmlUnescape(withoutTags).replaceAll("\\s+", " ").trim();
+        return withoutTags.replaceAll("\\s+", " ").trim();
     }
 }

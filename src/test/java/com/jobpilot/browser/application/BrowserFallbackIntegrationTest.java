@@ -16,9 +16,6 @@ import com.jobpilot.manualurl.domain.ManualJobStatus;
 import com.jobpilot.manualurl.fetch.ManualAtsResolver;
 import com.jobpilot.manualurl.fetch.ManualFetchedResource;
 import com.jobpilot.manualurl.fetch.SafeManualPageFetcher;
-import com.jobpilot.manualurl.parse.DeterministicManualJobParser;
-import com.jobpilot.manualurl.parse.ManualParseResult;
-import com.jobpilot.manualurl.parse.ManualParseStatus;
 import com.jobpilot.resume.repository.CoverNoteRepository;
 import com.jobpilot.resume.repository.ResumeVersionRepository;
 import java.util.Optional;
@@ -57,16 +54,14 @@ class BrowserFallbackIntegrationTest {
 
     @MockBean private ManualAtsResolver atsResolver;
     @MockBean private SafeManualPageFetcher pageFetcher;
-    @MockBean private DeterministicManualJobParser parser;
     @MockBean private BrowserExtractionClient browserClient;
 
     @Test
     void jsRequiredPageIsRenderedNormalizedPersistedAndDeduplicatedWithNoSideEffects() {
         var fetched = new ManualFetchedResource(java.net.URI.create(URL), java.net.URI.create(URL),
-                "text/html", "<html><body>JavaScript required</body></html>");
+                "text/html", "<html><body><noscript>JavaScript is required to view this vacancy.</noscript></body></html>");
         when(atsResolver.fetch(any())).thenReturn(Optional.empty());
         when(pageFetcher.fetch(any())).thenReturn(fetched);
-        when(parser.parse(any())).thenReturn(ManualParseResult.failure(ManualParseStatus.UNSUPPORTED_SOURCE));
         when(browserClient.extract(any())).thenReturn(new BrowserExtractionResponse(
                 BrowserExtractionStatus.EXTRACTED, "https://93.184.216.34/vacancies/browser-e2e", "BROWSER",
                 new BrowserExtractionResponse.Job("Java Backend Intern", "Synthetic Company",

@@ -164,7 +164,9 @@ services:
       start_period: 20s
       retries: 3
     stop_grace_period: 20s
-    restart: unless-stopped
+    # A missing/weak secret exits with EX_CONFIG. Bound restarts so a
+    # misconfigured optional worker fails closed instead of crash-looping.
+    restart: "on-failure:3"
     networks:
       - scraper-egress
 

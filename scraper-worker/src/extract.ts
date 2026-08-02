@@ -11,7 +11,7 @@
 import { PlaywrightCrawler } from "@crawlee/playwright";
 import { Configuration, RequestList } from "@crawlee/core";
 import { chromium } from "playwright-core";
-import type { Dialog, Download, Page, Route, WebSocketRoute } from "playwright-core";
+import type { Dialog, Download, Page, Request, Response, Route, WebSocketRoute } from "playwright-core";
 import { screenStructure, screenWithDns } from "./urlPolicy.js";
 import { logEvent } from "./logging.js";
 import type { WorkerConfig } from "./config.js";
@@ -22,12 +22,38 @@ import type { ExtractRequest, RawPageData, RenderFn, RenderOutcome, ResultStatus
 const BLOCKED_RESOURCE_TYPES = new Set(["media", "image", "font", "websocket", "eventsource"]);
 const DOM_SCAN_LIMIT = 400000;
 
-export function createBrowserRenderer(config: WorkerConfig, browser: ResolvedBrowser): RenderFn {
+type CrawlerOptions = ConstructorParameters<typeof PlaywrightCrawler>[0];
+
+interface RendererCrawler {
+  run(): Promise<{ requestsTotal: number }>;
+  teardown(): Promise<void>;
+}
+
+/** Narrow test seam around lifecycle dependencies; production uses the defaults. */
+export interface BrowserRendererDependencies {
+  screenUrl?: typeof screenWithDns;
+  openRequestList?: (url: string) => Promise<RequestList>;
+  createCrawler?: (options: CrawlerOptions, configuration: Configuration) => RendererCrawler;
+}
+
+export function createBrowserRenderer(
+  config: WorkerConfig,
+  browser: ResolvedBrowser,
+  dependencies: BrowserRendererDependencies = {},
+): RenderFn {
+  const screenUrl = dependencies.screenUrl ?? screenWithDns;
+  const openRequestList = dependencies.openRequestList
+    ?? ((url: string) => RequestList.open(null, [{ url }]));
+  const createCrawler = dependencies.createCrawler
+    ?? ((options: CrawlerOptions, configuration: Configuration) =>
+      new PlaywrightCrawler(options, configuration));
   return async (request: ExtractRequest): Promise<RenderOutcome> => {
     let outcome: RenderOutcome | null = null;
     let requestCount = 0;
-    let documentNavigations = 0;
     let requestHandlerCalls = 0;
+
+    const initialScreen = await screenUrl(request.url);
+    if (!initialScreen.ok) return { kind: "FAILURE", status: initialScreen.status };
 
     const crawlerConfig = new Configuration({
       persistStorage: false,
@@ -40,8 +66,8 @@ export function createBrowserRenderer(config: WorkerConfig, browser: ResolvedBro
     // waiter state is created. Crawlee 3.17's runtime validator rejects its
     // otherwise-declared `config` RequestList option, so configuration remains
     // on the crawler itself.
-    const requestList = await RequestList.open(null, [{ url: request.url }]);
-    const crawler = new PlaywrightCrawler(
+    const requestList = await openRequestList(initialScreen.url.toString());
+    const crawler = createCrawler(
       {
         requestList,
         launchContext: {
@@ -53,6 +79,7 @@ export function createBrowserRenderer(config: WorkerConfig, browser: ResolvedBro
             chromiumSandbox: true,
             ignoreDefaultArgs: [...SANDBOX_DISABLING_ARGUMENTS],
             acceptDownloads: false,
+            serviceWorkers: "block",
           },
         },
         browserPoolOptions: {
@@ -84,8 +111,7 @@ export function createBrowserRenderer(config: WorkerConfig, browser: ResolvedBro
               if (BLOCKED_RESOURCE_TYPES.has(type)) return route.abort();
               const isMainDocument = type === "document" && req.frame() === page.mainFrame();
               if (isMainDocument) {
-                if (++documentNavigations > config.maxRedirects + 1) return route.abort();
-                const screened = await screenWithDns(url);
+                const screened = await screenUrl(url);
                 if (!screened.ok) {
                   outcome ??= { kind: "FAILURE", status: screened.status };
                   return route.abort();
@@ -97,7 +123,7 @@ export function createBrowserRenderer(config: WorkerConfig, browser: ResolvedBro
               const origin = structural.url.origin;
               let allowed = screenedSubresourceOrigins.get(origin);
               if (allowed === undefined) {
-                allowed = screenWithDns(origin).then((result) => result.ok);
+                allowed = screenUrl(origin).then((result) => result.ok);
                 screenedSubresourceOrigins.set(origin, allowed);
               }
               if (!(await allowed)) return route.abort();
@@ -112,12 +138,22 @@ export function createBrowserRenderer(config: WorkerConfig, browser: ResolvedBro
             outcome = { kind: "FAILURE", status: "FETCH_FAILED" };
             return;
           }
+          const redirectScreen = await screenRedirectChain(
+            response,
+            page.url(),
+            config.maxRedirects,
+            screenUrl,
+          );
+          if (!redirectScreen.ok) {
+            outcome = { kind: "FAILURE", status: redirectScreen.status };
+            return;
+          }
           const statusFailure = classifyHttpStatus(response?.status());
           if (statusFailure) {
             outcome = { kind: "FAILURE", status: statusFailure };
             return;
           }
-          const finalScreen = await screenWithDns(page.url());
+          const finalScreen = await screenUrl(page.url());
           if (!finalScreen.ok) {
             outcome = { kind: "FAILURE", status: finalScreen.status };
             return;
@@ -143,7 +179,8 @@ export function createBrowserRenderer(config: WorkerConfig, browser: ResolvedBro
 
     try {
       const statistics = await crawler.run();
-      if (statistics.requestsTotal !== 1 || requestHandlerCalls !== 1) {
+      if (statistics.requestsTotal !== 1 || requestHandlerCalls > 1
+          || outcome === null && requestHandlerCalls !== 1) {
         outcome = { kind: "FAILURE", status: "FETCH_FAILED" };
       }
     } catch {
@@ -153,6 +190,35 @@ export function createBrowserRenderer(config: WorkerConfig, browser: ResolvedBro
     }
     return outcome ?? { kind: "FAILURE", status: "FETCH_FAILED" };
   };
+}
+
+async function screenRedirectChain(
+  response: Response | undefined,
+  finalPageUrl: string,
+  maxRedirects: number,
+  screenUrl: typeof screenWithDns,
+): Promise<Awaited<ReturnType<typeof screenWithDns>>> {
+  if (response !== undefined) {
+    const reverseChain: Request[] = [];
+    const seen = new Set<Request>();
+    let current: Request | null = response.request();
+    while (current !== null) {
+      if (seen.has(current)) return { ok: false, status: "FETCH_FAILED" };
+      seen.add(current);
+      reverseChain.push(current);
+      if (reverseChain.length - 1 > maxRedirects) {
+        return { ok: false, status: "FETCH_FAILED" };
+      }
+      current = current.redirectedFrom();
+    }
+    for (const hop of reverseChain.reverse()) {
+      const screened = await screenUrl(hop.url());
+      if (!screened.ok) return screened;
+    }
+  }
+  // Re-screen the browser's final URL even when it is also the last response
+  // request. This catches client-side navigation and DNS changes fail-closed.
+  return screenUrl(finalPageUrl);
 }
 
 function classifyHttpStatus(status: number | undefined): Exclude<ResultStatus, "EXTRACTED"> | null {
@@ -178,10 +244,16 @@ function classifyNavigationError(messages: string[] | undefined): Exclude<Result
 export function collectInPage(maxScan: number): RawPageData {
   const doc = (globalThis as unknown as { document: any; location: { href: string } }).document;
   const href = (globalThis as unknown as { location: { href: string } }).location.href;
+  const truncate = (value: string, maximum: number): string => {
+    if (value.length <= maximum) return value;
+    let end = maximum;
+    if (end > 0 && value.charCodeAt(end - 1) >= 0xd800 && value.charCodeAt(end - 1) <= 0xdbff) end--;
+    return value.slice(0, end);
+  };
   const text = (node: any): string | null => {
     if (!node) return null;
     const value = (node.innerText ?? node.textContent ?? "").toString();
-    return value.trim().length > 0 ? value.slice(0, maxScan) : null;
+    return value.trim().length > 0 ? truncate(value, maxScan) : null;
   };
   const attr = (selector: string, name: string): string | null => {
     const el = doc.querySelector(selector);
@@ -226,12 +298,12 @@ export function collectInPage(maxScan: number): RawPageData {
   ];
   for (const [selector, key] of metaKeys) {
     const value = attr(selector, "content");
-    if (value) meta[key] = value.slice(0, 400);
+    if (value) meta[key] = truncate(value, 400);
   }
   const canonical = attr('link[rel="canonical"]', "href");
-  if (canonical) meta["canonical"] = canonical.slice(0, 2000);
+  if (canonical) meta["canonical"] = truncate(canonical, 2000);
   const documentTitle = (doc.title ?? "").toString().trim();
-  if (documentTitle) meta["document:title"] = documentTitle.slice(0, 400);
+  if (documentTitle) meta["document:title"] = truncate(documentTitle, 400);
 
   const pageUrl = new URL(href);
   const host = pageUrl.hostname.toLowerCase();
@@ -271,7 +343,7 @@ export function collectInPage(maxScan: number): RawPageData {
     for (const selector of selectors) {
       const element = doc.querySelector(selector);
       const value = element?.href ?? element?.getAttribute?.("href");
-      if (typeof value === "string" && value.trim()) return value.trim().slice(0, 2000);
+      if (typeof value === "string" && value.trim()) return truncate(value.trim(), 2000);
     }
     return null;
   };
@@ -364,8 +436,8 @@ export function collectInPage(maxScan: number): RawPageData {
       text(doc.querySelector("article")),
   };
 
-  const bodyText = (doc.body ? (doc.body.innerText ?? "") : "").toString().slice(0, maxScan);
-  const lower = (doc.title ?? "").toLowerCase() + " " + bodyText.slice(0, 20000).toLowerCase();
+  const bodyText = truncate((doc.body ? (doc.body.innerText ?? "") : "").toString(), maxScan);
+  const lower = (doc.title ?? "").toLowerCase() + " " + truncate(bodyText, 20000).toLowerCase();
   const signals = {
     hasPasswordField: doc.querySelector('input[type="password"]') !== null,
     hasLoginForm:
@@ -422,7 +494,6 @@ export function collectInPage(maxScan: number): RawPageData {
 function continueWithoutCredentials(route: Route): Promise<void> {
   const headers = { ...route.request().headers() };
   delete headers["authorization"];
-  delete headers["cookie"];
   delete headers["proxy-authorization"];
   return route.continue({ headers });
 }

@@ -20,16 +20,23 @@ public class JobDeduplicationService {
         Optional<Job> byUrl = repository.findByCanonicalUrl(job.getCanonicalUrl());
         if (byUrl.isPresent()) return byUrl;
         if (job.getExternalId() != null) {
-            Optional<Job> byExternalId = repository.findBySourceAndExternalId(job.getSource(), job.getExternalId());
+            Optional<Job> byExternalId = repository.findBySourceAndProviderTenantAndExternalId(
+                    job.getSource(), job.getProviderTenant(), job.getExternalId());
             if (byExternalId.isPresent()) return byExternalId;
         }
         Optional<Job> byFingerprint = repository.findFirstByNormalizedFingerprint(job.getNormalizedFingerprint());
-        if (byFingerprint.isPresent() || job.getDescription().isBlank()) {
+        if (byFingerprint.isPresent() && (job.getExternalId() == null
+                || !byFingerprint.get().getSource().equals(job.getSource()))) {
             return byFingerprint;
         }
+        if (job.getDescription().isBlank()) return Optional.empty();
         // Identical descriptions only count as duplicates within the same company;
         // unrelated companies often share boilerplate vacancy text.
-        return repository.findFirstByCompanyAndDescriptionHash(job.getCompany(), job.getDescriptionHash());
+        Optional<Job> byDescription = repository.findFirstByCompanyAndDescriptionHash(
+                job.getCompany(), job.getDescriptionHash());
+        if (job.getExternalId() != null && byDescription.isPresent()
+                && byDescription.get().getSource().equals(job.getSource())) return Optional.empty();
+        return byDescription;
     }
 
     public Job recordSeen(Job duplicate) {

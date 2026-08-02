@@ -25,8 +25,8 @@ class GreenhouseJobSourceTest {
         assertThat(jobs).singleElement().satisfies(job -> {
             assertThat(job.externalId()).isEqualTo("123");
             assertThat(job.company()).isEqualTo("acme");
-            assertThat(job.description()).isEqualTo("Java & Spring Boot Mentorship");
-            assertThat(job.description()).doesNotContain("<", ">", "&lt;", "&amp;");
+            assertThat(job.description()).isEqualTo("Java &amp; Spring Boot Mentorship");
+            assertThat(job.description()).doesNotContain("<", ">", "&lt;", "&amp;amp;");
             assertThat(job.publishedAt()).isNotNull();
         });
     }

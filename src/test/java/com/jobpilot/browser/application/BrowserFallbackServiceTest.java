@@ -29,9 +29,9 @@ class BrowserFallbackServiceTest {
                     calls.incrementAndGet();
                     return BrowserExtractionResponse.unavailable();
                 });
-        assertThat(service.decide(ManualParseStatus.UNSUPPORTED_SOURCE))
+        assertThat(service.decide(ManualParseStatus.JS_RENDERING_REQUIRED))
                 .isEqualTo(BrowserFallbackDecision.SKIP_DISABLED);
-        assertThat(service.attempt(validated, ManualParseStatus.UNSUPPORTED_SOURCE)).isEmpty();
+        assertThat(service.attempt(validated, ManualParseStatus.JS_RENDERING_REQUIRED)).isEmpty();
         assertThat(calls.get()).isZero();
     }
 
@@ -63,7 +63,7 @@ class BrowserFallbackServiceTest {
             return extracted;
         });
 
-        Optional<RawJob> job = service.attempt(validated, ManualParseStatus.UNSUPPORTED_SOURCE);
+        Optional<RawJob> job = service.attempt(validated, ManualParseStatus.JS_RENDERING_REQUIRED);
 
         assertThat(calls.get()).isEqualTo(1);
         assertThat(job).isPresent();
@@ -85,9 +85,39 @@ class BrowserFallbackServiceTest {
                 BrowserExtractionStatus.INSUFFICIENT_DATA, BrowserExtractionStatus.WORKER_UNAVAILABLE)) {
             BrowserFallbackService service = enabled(
                     request -> new BrowserExtractionResponse(status, null, null, null, null));
-            assertThat(service.attempt(validated, ManualParseStatus.UNSUPPORTED_SOURCE))
+            assertThat(service.attempt(validated, ManualParseStatus.JS_RENDERING_REQUIRED))
                     .as(status.name()).isEmpty();
         }
+    }
+
+    @Test
+    void genericParseFailuresAndUnsupportedPagesNeverInvokeTheWorker() {
+        AtomicInteger calls = new AtomicInteger();
+        BrowserFallbackService service = enabled(request -> {
+            calls.incrementAndGet();
+            return BrowserExtractionResponse.unavailable();
+        });
+
+        for (ManualParseStatus status : List.of(
+                ManualParseStatus.PARSE_FAILED, ManualParseStatus.UNSUPPORTED_SOURCE)) {
+            assertThat(service.decide(status)).isEqualTo(BrowserFallbackDecision.SKIP_NOT_JS_REQUIRED);
+            assertThat(service.attempt(validated, status)).isEmpty();
+        }
+        assertThat(calls.get()).isZero();
+    }
+
+    @Test
+    void descriptionTruncationIsUtf16Safe() {
+        String description = "a".repeat(49_999) + "🚀" + "tail";
+        BrowserExtractionResponse extracted = new BrowserExtractionResponse(
+                BrowserExtractionStatus.EXTRACTED, null, "BROWSER",
+                new BrowserExtractionResponse.Job("Intern", "Example", "Bucharest", description,
+                        "Internship", null, null), null);
+
+        RawJob job = enabled(request -> extracted)
+                .attempt(validated, ManualParseStatus.JS_RENDERING_REQUIRED).orElseThrow();
+
+        assertThat(job.description()).hasSize(49_999).doesNotEndWith("\uD83D");
     }
 
     private BrowserFallbackService enabled(BrowserExtractionClient client) {

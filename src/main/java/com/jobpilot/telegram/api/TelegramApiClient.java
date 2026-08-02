@@ -2,6 +2,7 @@ package com.jobpilot.telegram.api;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.jobpilot.common.ExternalHttpClient;
+import com.jobpilot.common.Utf16;
 import com.jobpilot.config.JobPilotProperties;
 import com.jobpilot.telegram.api.TelegramUpdate.TelegramCallbackQuery;
 import com.jobpilot.telegram.api.TelegramUpdate.TelegramChat;
@@ -59,7 +60,7 @@ public class TelegramApiClient implements TelegramClient {
     public void answerCallbackQuery(String callbackQueryId, String text) {
         Map<String, Object> body = Map.of(
                 "callback_query_id", callbackQueryId,
-                "text", text == null ? "Done" : text.substring(0, Math.min(200, text.length())));
+                "text", text == null ? "Done" : Utf16.truncate(text, 200));
         validResult(call("answerCallbackQuery", body,
                         TelegramTransportException.Operation.ANSWER_CALLBACK_QUERY),
                 TelegramTransportException.Operation.ANSWER_CALLBACK_QUERY);

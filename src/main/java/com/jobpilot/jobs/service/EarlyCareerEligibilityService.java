@@ -1,5 +1,7 @@
 package com.jobpilot.jobs.service;
 
+import com.jobpilot.common.Utf16;
+
 import com.jobpilot.jobs.domain.EarlyCareerDecision;
 import com.jobpilot.jobs.domain.EarlyCareerEligibility;
 import com.jobpilot.jobs.domain.ExperienceRequirement;
@@ -135,7 +137,7 @@ public class EarlyCareerEligibilityService {
         while (matcher.find()) {
             int start = clauseStart(text, matcher.start());
             int end = clauseEnd(text, matcher.end());
-            String context = text.substring(start, end);
+            String context = Utf16.slice(text, start, end);
             String normalized = context.toLowerCase(Locale.ROOT);
             if (!normalized.contains("experience") && !normalized.contains("professional background")) continue;
             if (NON_COMMERCIAL_CONTEXT.matcher(context).find()
@@ -413,7 +415,7 @@ public class EarlyCareerEligibilityService {
 
     private String bounded(String value) {
         String normalized = value.replaceAll("\\s+", " ").strip();
-        return normalized.length() <= 500 ? normalized : normalized.substring(0, 500);
+        return Utf16.truncate(normalized, 500);
     }
 
     private String safe(String value) {

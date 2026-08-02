@@ -68,7 +68,7 @@ public class RecruiteeJobSource implements JobSource {
         String description = plainText(joinText(item.path("description").asText(null),
                 item.path("requirements").asText(null)));
         RawCareerData careerData = careerData(item.path("experience_code").asText(null));
-        return new RawJob(getSourceName(), item.path("id").asText(item.path("guid").asText(null)),
+        return new RawJob(getSourceName(), item.path("guid").asText(item.path("id").asText(null)),
                 item.path("careers_url").asText(), item.path("title").asText(
                         item.path("position").asText()),
                 item.path("company_name").asText(company), item.path("location").asText(""),
@@ -119,6 +119,6 @@ public class RecruiteeJobSource implements JobSource {
 
     private String plainText(String html) {
         String withoutTags = HtmlUtils.htmlUnescape(html).replaceAll("<[^>]+>", " ");
-        return HtmlUtils.htmlUnescape(withoutTags).replaceAll("\\s+", " ").trim();
+        return withoutTags.replaceAll("\\s+", " ").trim();
     }
 }

@@ -80,6 +80,9 @@ public class DeterministicManualJobParser {
         if (metadata != null) {
             return ManualParseResult.success(metadata);
         }
+        if (requiresJavascript(document, resource.finalUri())) {
+            return ManualParseResult.failure(ManualParseStatus.JS_RENDERING_REQUIRED);
+        }
         if (jobPostingSeen || malformedJsonLd && containsJobPostingMarker(resource.body())) {
             return ManualParseResult.failure(ManualParseStatus.PARSE_FAILED);
         }
@@ -366,6 +369,39 @@ public class DeterministicManualJobParser {
                 + "meta[name^=job\\:]") != null;
     }
 
+    private boolean requiresJavascript(Document document, URI uri) {
+        String title = document.title().toLowerCase(Locale.ROOT);
+        if (containsAny(title, "404", "not found", "page unavailable", "job unavailable")) {
+            return false;
+        }
+        int scriptPayload = document.select("script").stream()
+                .mapToInt(script -> script.data().length() + script.attr("src").length()).sum();
+        String visible = document.body() == null ? "" : document.body().text().strip();
+        boolean emptyScriptShell = visible.length() < 80 && scriptPayload >= 256;
+        boolean spaRoot = document.selectFirst("#root, #__next, [data-reactroot]") != null
+                && (scriptPayload >= 64 || document.selectFirst("script[src]") != null);
+        boolean explicitNoScript = document.select("noscript").stream()
+                .map(Element::text)
+                .map(text -> text.toLowerCase(Locale.ROOT))
+                .anyMatch(text -> containsAny(text, "javascript is required", "requires javascript",
+                        "enable javascript to view", "turn on javascript to view"));
+        boolean providerShell = isProviderVacancyUri(uri)
+                && (spaRoot || emptyScriptShell
+                || document.selectFirst("[data-job-id], [data-job-page], [data-ui=job-page]") != null
+                && scriptPayload > 0);
+        return emptyScriptShell || spaRoot || explicitNoScript || providerShell;
+    }
+
+    private boolean isProviderVacancyUri(URI uri) {
+        String host = lower(uri.getHost());
+        if (host == null) return false;
+        String path = String.valueOf(uri.getPath()).toLowerCase(Locale.ROOT);
+        return (host.endsWith("greenhouse.io") && path.contains("/jobs/"))
+                || (host.endsWith("lever.co") && path.split("/").length >= 3)
+                || (host.equals("jobs.ashbyhq.com") && path.split("/").length >= 3)
+                || (host.endsWith(".recruitee.com") && path.startsWith("/o/"));
+    }
+
     private boolean containsJobPostingMarker(String body) {
         return body.toLowerCase(Locale.ROOT).contains("jobposting");
     }
@@ -409,7 +445,7 @@ public class DeterministicManualJobParser {
         if (isBlank(html)) {
             return null;
         }
-        return HtmlUtils.htmlUnescape(Jsoup.parseBodyFragment(HtmlUtils.htmlUnescape(html)).text())
+        return Jsoup.parseBodyFragment(HtmlUtils.htmlUnescape(html)).text()
                 .replaceAll("\\s+", " ").strip();
     }
 

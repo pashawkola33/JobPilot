@@ -182,6 +182,35 @@ test("passes a typed browser failure straight through", async () => {
   await h.close();
 });
 
+test("releases the admission slot after a renderer failure", async () => {
+  let calls = 0;
+  const h = await startServer({
+    render: async () => {
+      calls++;
+      if (calls === 1) throw new Error("renderer failed");
+      return { kind: "PAGE", data: jobPage() };
+    },
+  });
+  const body = JSON.stringify({ requestId: "slot", url: "https://93.184.216.34/jobs/1" });
+  assert.equal((await post(h.url, body, auth)).json.status, "FETCH_FAILED");
+  assert.equal((await post(h.url, body, auth)).json.status, "EXTRACTED");
+  await h.close();
+});
+
+test("sets explicit HTTP request and header timeouts", () => {
+  const config = loadConfig(baseEnv());
+  const server = createServer({
+    config,
+    metrics: new Metrics(),
+    render: async () => ({ kind: "PAGE", data: jobPage() }),
+    admission: new AdmissionController(1),
+    browserReady: true,
+  });
+  assert.equal(server.requestTimeout, config.totalTimeoutMs + 5_000);
+  assert.equal(server.headersTimeout, 10_000);
+  server.close();
+});
+
 test("rejects excess browser work immediately without queueing", async () => {
   let allowRender: (() => void) | undefined;
   let markStarted: (() => void) | undefined;
@@ -213,6 +242,8 @@ test("rejects excess browser work immediately without queueing", async () => {
 
   assert.equal(second.status, 503);
   assert.equal(second.json.status, "BUSY");
+  const malformed = await post(h.url, "{not-json", auth);
+  assert.equal(malformed.status, 400, "bounded parsing happens before admission");
   assert.equal(h.state.renderCalls, 1);
   assert.equal(h.metrics.snapshot().overloaded, 1);
   allowRender?.();

@@ -5,6 +5,7 @@
  * fingerprint, browser path, or exception message.
  */
 import type { ResultStatus } from "./types.js";
+import { truncateUtf16 } from "./text.js";
 
 export interface LogFields {
   requestId: string;
@@ -33,6 +34,6 @@ export function logEvent(fields: LogFields): void {
 
 /** Keep only a short, safe subset of the caller-supplied opaque id. */
 function opaque(requestId: string): string {
-  const safe = (requestId ?? "").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 64);
+  const safe = truncateUtf16((requestId ?? "").replace(/[^A-Za-z0-9._-]/g, ""), 64);
   return safe.length > 0 ? safe : "unknown";
 }

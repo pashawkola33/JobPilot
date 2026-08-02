@@ -128,6 +128,14 @@ test("classifies login, challenge, and access-denied pages conservatively", () =
     buildResult(request, page({ signals: { ...page({}).signals, accessDeniedTitle: true } }), 50000).status,
     "BLOCKED",
   );
+  assert.equal(
+    buildResult(request, page({ signals: {
+      ...page({}).signals,
+      hasPasswordField: true,
+      challengeMarker: true,
+    } }), 50000).status,
+    "CHALLENGE_DETECTED",
+  );
 });
 
 test("rejects NUL / control characters in fields", () => {
@@ -167,6 +175,22 @@ test("truncates an oversized description to the configured maximum", () => {
   const result = buildResult(request, page({ jsonLdBlocks: [block] }), 200);
   assert.equal(result.status, "EXTRACTED");
   if (result.status === "EXTRACTED") assert.ok((result.job.description?.length ?? 0) <= 200);
+});
+
+test("description truncation never leaves a dangling UTF-16 high surrogate", () => {
+  const block = JSON.stringify({
+    "@type": "JobPosting",
+    title: "Java Backend Intern",
+    hiringOrganization: { name: "Example Company" },
+    description: "a".repeat(199) + "🚀" + "tail".repeat(20),
+    url: "https://93.184.216.34/jobs/9",
+  });
+  const result = buildResult(request, page({ jsonLdBlocks: [block] }), 200);
+  assert.equal(result.status, "EXTRACTED");
+  if (result.status === "EXTRACTED") {
+    assert.equal(result.job.description?.length, 199);
+    assert.ok(!/[\uD800-\uDBFF]$/.test(result.job.description ?? ""));
+  }
 });
 
 test("ignores a cross-origin canonical URL and uses the validated final URL", () => {

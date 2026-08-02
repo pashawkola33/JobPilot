@@ -327,7 +327,7 @@ class Stage6EndToEndIT {
         assertThat(health.health().getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(jdbc.queryForObject(
                 "select count(*) from flyway_schema_history where success", Integer.class))
-                .isEqualTo(7);
+                .isEqualTo(8);
     }
 
     private TelegramUpdatePoller poller(FakeTelegramClient client) {

@@ -56,8 +56,25 @@ class JobRepositoryTest {
 
         assertThat(repository.findByCanonicalUrl("https://example.com/jobs/123"))
                 .contains(saved);
-        assertThat(repository.findBySourceAndExternalId("greenhouse", "123"))
+        assertThat(repository.findBySourceAndProviderTenantAndExternalId(
+                "greenhouse", "Example", "123"))
                 .contains(saved);
+    }
+
+    @Test
+    void keepsIdenticalExternalIdsSeparateAcrossTenantsAndReusesTheSameTenant() {
+        RawJob tenantA = new RawJob("greenhouse", "shared-42", "https://a.example/jobs/shared-42",
+                "Java Intern", "Same Company", "Bucharest", "Java internship description", null,
+                null, null, "payload-a", com.jobpilot.jobs.domain.RawLocationData.empty(), "tenant-a");
+        RawJob tenantB = new RawJob("greenhouse", "shared-42", "https://b.example/jobs/shared-42",
+                "Java Intern", "Same Company", "Bucharest", "Java internship description", null,
+                null, null, "payload-b", com.jobpilot.jobs.domain.RawLocationData.empty(), "tenant-b");
+        Job first = repository.saveAndFlush(normalizer.normalize(tenantA));
+
+        assertThat(deduplication.findDuplicate(normalizer.normalize(tenantB))).isEmpty();
+        repository.saveAndFlush(normalizer.normalize(tenantB));
+        assertThat(deduplication.findDuplicate(normalizer.normalize(tenantA))).contains(first);
+        assertThat(repository.count()).isEqualTo(2);
     }
 
     @Test
