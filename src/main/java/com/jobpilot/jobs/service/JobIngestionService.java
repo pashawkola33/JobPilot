@@ -1,23 +1,27 @@
 package com.jobpilot.jobs.service;
 
-import com.jobpilot.matching.ScoreBand;
-import com.jobpilot.jobs.domain.LocationEligibilityDecision;
 import com.jobpilot.jobs.domain.EarlyCareerDecision;
-import com.jobpilot.jobs.domain.EarlyCareerEligibility;
+import com.jobpilot.jobs.domain.LocationEligibility;
+import com.jobpilot.jobs.domain.LocationEligibilityDecision;
+import com.jobpilot.jobs.domain.RawJob;
+import com.jobpilot.jobs.domain.RelevanceDecision;
+import com.jobpilot.jobs.domain.ScreeningDecision;
+import com.jobpilot.jobs.domain.ScreeningDisposition;
 import com.jobpilot.jobs.domain.WorkplaceType;
+import com.jobpilot.matching.ScoreBand;
 import com.jobpilot.sources.JobSource;
 import com.jobpilot.sources.SourceFetchLog;
 import com.jobpilot.sources.SourceFetchLogRepository;
 import com.jobpilot.telegram.TelegramNotifier;
 import java.time.Clock;
-import java.util.List;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -64,10 +68,13 @@ public class JobIngestionService {
         ReportAccumulator report = new ReportAccumulator();
         for (JobSource source : sources) fetchOneSource(source, report);
         JobIngestionReport completed = report.toReport();
-        LOGGER.info("Live vacancy smoke report: fetched={}, uniqueRaw={}, bucharest={}, "
+        LOGGER.info("Vacancy ingestion report: fetched={}, uniqueRaw={}, bucharest={}, "
                         + "remoteRomania={}, remoteUnknown={}, rejectedRemote={}, "
                         + "rejectedOnsiteHybrid={}, earlyCareerEligible={}, earlyCareerUnknown={}, "
-                        + "rejectedSeniority={}, finalEligible={}, eligibleTenants={}",
+                        + "rejectedSeniority={}, locationCareerEligible={}, relevanceMatch={}, "
+                        + "relevanceReview={}, rejectedByRelevance={}, finalMatch={}, finalReview={}, "
+                        + "finalReject={}, duplicateRaw={}, existingUnchanged={}, persistedNew={}, "
+                        + "updated={}, matchTenants={}, reviewTenants={}",
                 completed.totalVacanciesFetched(),
                 completed.totalUniqueVacanciesBeforeEligibilityFiltering(),
                 completed.bucharestLocalVacancies(),
@@ -78,8 +85,13 @@ public class JobIngestionService {
                 completed.earlyCareerEligibleVacancies(),
                 completed.earlyCareerEligibilityUnknown(),
                 completed.rejectedBySeniorityOrExperience(),
-                completed.finalUniqueEligibleVacancies(),
-                completed.eligibleTenantsByProvider());
+                completed.locationAndCareerEligibleVacancies(),
+                completed.relevanceMatchVacancies(), completed.relevanceReviewVacancies(),
+                completed.rejectedByRelevance(), completed.finalMatchVacancies(),
+                completed.finalReviewVacancies(), completed.finalRejectVacancies(),
+                completed.duplicateRawVacancies(), completed.existingUnchangedVacancies(),
+                completed.persistedNewVacancies(), completed.updatedVacancies(),
+                completed.finalMatchTenantsByProvider(), completed.finalReviewTenantsByProvider());
         return completed;
     }
 
@@ -92,29 +104,56 @@ public class JobIngestionService {
         int fetched = 0;
         int saved = 0;
         try {
-            var rawJobs = source.fetchJobs();
+            List<RawJob> rawJobs = source.fetchJobs();
             fetched = rawJobs.size();
-            for (var raw : rawJobs) {
+            for (RawJob raw : rawJobs) {
                 try {
-                    LocationEligibilityDecision decision = eligibility == null ? null : eligibility.evaluate(raw);
-                    EarlyCareerDecision careerDecision = decision != null && decision.accepted()
-                            && earlyCareer != null ? earlyCareer.evaluate(raw) : null;
-                    report.record(raw, decision, careerDecision);
-                    if (decision != null && !decision.accepted()
-                            || careerDecision != null && !careerDecision.accepted()
-                            || !relevance.isRelevant(raw)) continue;
-                    JobProcessingResult result = decision == null ? processor.process(raw)
-                            : careerDecision == null ? processor.process(raw, decision)
-                            : processor.process(raw, decision, careerDecision);
-                    if (result.accepted() && result.newlyCreated()) {
+                    if (!report.recordFetched(raw)) continue;
+                    if (eligibility == null || earlyCareer == null) {
+                        JobProcessingResult result = processor.process(raw);
+                        report.recordPersistence(result);
+                        if (result.newlyCreated()) saved++;
+                        continue;
+                    }
+                    LocationEligibilityDecision locationDecision = eligibility.evaluate(raw);
+                    report.recordLocation(locationDecision);
+                    if (locationDecision.disposition() == ScreeningDisposition.REJECT) {
+                        report.recordFinalReject();
+                        report.recordPersistence(processor.reconcileRejected(
+                                raw, locationDecision, null, null));
+                        continue;
+                    }
+
+                    EarlyCareerDecision careerDecision = earlyCareer.evaluate(raw);
+                    report.recordCareer(careerDecision);
+                    if (careerDecision.disposition() == ScreeningDisposition.REJECT) {
+                        report.recordFinalReject();
+                        report.recordPersistence(processor.reconcileRejected(
+                                raw, locationDecision, careerDecision, null));
+                        continue;
+                    }
+
+                    report.recordLocationAndCareerEligible(raw);
+                    RelevanceDecision relevanceDecision = relevance.evaluate(raw);
+                    report.recordRelevance(relevanceDecision);
+                    ScreeningDecision screening = ScreeningDecision.of(
+                            locationDecision, careerDecision, relevanceDecision);
+                    report.recordFinal(raw, screening);
+                    if (screening.disposition() == ScreeningDisposition.REJECT) {
+                        report.recordPersistence(processor.reconcileRejected(
+                                raw, locationDecision, careerDecision, relevanceDecision));
+                        continue;
+                    }
+
+                    JobProcessingResult result = processor.process(raw, locationDecision,
+                            careerDecision, relevanceDecision);
+                    report.recordPersistence(result);
+                    if (result.newlyCreated()) {
                         saved++;
-                        if (result.score() != null && result.score().band() == ScoreBand.EXCELLENT_MATCH) {
-                            try {
-                                telegram.notifyExcellent(result.job(), result.score());
-                            } catch (RuntimeException notificationFailure) {
-                                LOGGER.warn("Telegram notification failed for job {}: {}", result.job().getId(),
-                                        notificationFailure.getClass().getSimpleName());
-                            }
+                        if (result.finalDisposition() == ScreeningDisposition.MATCH
+                                && result.score() != null
+                                && result.score().band() == ScoreBand.EXCELLENT_MATCH) {
+                            notifyExcellent(result);
                         }
                     }
                 } catch (RuntimeException exception) {
@@ -131,6 +170,15 @@ public class JobIngestionService {
         logs.save(log);
     }
 
+    private void notifyExcellent(JobProcessingResult result) {
+        try {
+            telegram.notifyExcellent(result.job(), result.score());
+        } catch (RuntimeException notificationFailure) {
+            LOGGER.warn("Telegram notification failed for job {}: {}", result.job().getId(),
+                    notificationFailure.getClass().getSimpleName());
+        }
+    }
+
     private static final class ReportAccumulator {
         private int fetched;
         private int bucharest;
@@ -141,55 +189,109 @@ public class JobIngestionService {
         private int earlyEligible;
         private int earlyUnknown;
         private int rejectedSeniority;
+        private int relevanceMatch;
+        private int relevanceReview;
+        private int rejectedRelevance;
+        private int finalReject;
+        private int duplicateRaw;
+        private int existingUnchanged;
+        private int persistedNew;
+        private int updated;
         private final Set<String> uniqueRaw = new LinkedHashSet<>();
-        private final Set<String> uniqueEligible = new LinkedHashSet<>();
-        private final Map<String, Set<String>> tenants = new LinkedHashMap<>();
+        private final Set<String> locationCareerEligible = new LinkedHashSet<>();
+        private final Set<String> finalMatches = new LinkedHashSet<>();
+        private final Set<String> finalReviews = new LinkedHashSet<>();
+        private final Map<String, Set<String>> locationCareerTenants = new LinkedHashMap<>();
+        private final Map<String, Set<String>> matchTenants = new LinkedHashMap<>();
+        private final Map<String, Set<String>> reviewTenants = new LinkedHashMap<>();
 
-        private void record(com.jobpilot.jobs.domain.RawJob raw, LocationEligibilityDecision decision,
-                            EarlyCareerDecision careerDecision) {
+        private boolean recordFetched(RawJob raw) {
             fetched++;
-            String key = key(raw);
-            if (!uniqueRaw.add(key) || decision == null) return;
-            switch (decision.locationEligibility()) {
+            if (uniqueRaw.add(RawJobIdentity.key(raw))) return true;
+            duplicateRaw++;
+            return false;
+        }
+
+        private void recordLocation(LocationEligibilityDecision location) {
+            switch (location.locationEligibility()) {
                 case BUCHAREST_LOCAL -> bucharest++;
                 case REMOTE_ROMANIA_ELIGIBLE -> remoteRomania++;
                 case REMOTE_ELIGIBILITY_UNKNOWN -> unknown++;
                 case REJECTED_LOCATION -> {
-                    if (decision.workplaceType() == WorkplaceType.ONSITE
-                            || decision.workplaceType() == WorkplaceType.HYBRID) rejectedLocal++;
+                    if (location.workplaceType() == WorkplaceType.ONSITE
+                            || location.workplaceType() == WorkplaceType.HYBRID) rejectedLocal++;
                     else rejectedRemote++;
                 }
             }
-            if (decision.accepted()) {
-                if (careerDecision == null
-                        || careerDecision.earlyCareerEligibility() == EarlyCareerEligibility.UNKNOWN) {
-                    earlyUnknown++;
-                } else if (careerDecision.accepted()) {
-                    earlyEligible++;
-                    uniqueEligible.add(key);
-                    tenants.computeIfAbsent(safe(raw.source()), ignored -> new LinkedHashSet<>())
-                            .add(safe(raw.providerTenant()));
-                } else {
-                    rejectedSeniority++;
-                }
+        }
+
+        private void recordCareer(EarlyCareerDecision career) {
+            switch (career.disposition()) {
+                case MATCH -> earlyEligible++;
+                case REVIEW -> earlyUnknown++;
+                case REJECT -> rejectedSeniority++;
+            }
+        }
+
+        private void recordLocationAndCareerEligible(RawJob raw) {
+            String key = RawJobIdentity.key(raw);
+            locationCareerEligible.add(key);
+            tenant(locationCareerTenants, raw);
+        }
+
+        private void recordRelevance(RelevanceDecision relevance) {
+            switch (relevance.disposition()) {
+                case MATCH -> relevanceMatch++;
+                case REVIEW -> relevanceReview++;
+                case REJECT -> rejectedRelevance++;
+            }
+        }
+
+        private void recordFinal(RawJob raw, ScreeningDecision screening) {
+            String key = RawJobIdentity.key(raw);
+            if (screening.disposition() == ScreeningDisposition.MATCH) {
+                finalMatches.add(key);
+                tenant(matchTenants, raw);
+            } else if (screening.disposition() == ScreeningDisposition.REVIEW) {
+                finalReviews.add(key);
+                tenant(reviewTenants, raw);
+            } else {
+                recordFinalReject();
+            }
+        }
+
+        private void recordFinalReject() {
+            finalReject++;
+        }
+
+        private void recordPersistence(JobProcessingResult result) {
+            switch (result.persistenceOutcome()) {
+                case CREATED -> persistedNew++;
+                case UPDATED -> updated++;
+                case UNCHANGED -> existingUnchanged++;
+                case NOT_PERSISTED -> { }
             }
         }
 
         private JobIngestionReport toReport() {
-            Map<String, List<String>> immutableTenants = new LinkedHashMap<>();
-            tenants.forEach((provider, values) -> immutableTenants.put(provider, List.copyOf(values)));
             return new JobIngestionReport(fetched, uniqueRaw.size(), bucharest, remoteRomania,
                     unknown, rejectedRemote, rejectedLocal, earlyEligible, earlyUnknown,
-                    rejectedSeniority, uniqueEligible.size(), immutableTenants);
+                    rejectedSeniority, locationCareerEligible.size(), relevanceMatch,
+                    relevanceReview, rejectedRelevance, finalMatches.size(), finalReviews.size(),
+                    finalReject, duplicateRaw, existingUnchanged, persistedNew, updated,
+                    mapped(locationCareerTenants),
+                    mapped(matchTenants), mapped(reviewTenants));
         }
 
-        private String key(com.jobpilot.jobs.domain.RawJob raw) {
-            if (raw.url() != null && !raw.url().isBlank()) return "url:" + raw.url().strip();
-            if (raw.externalId() != null && !raw.externalId().isBlank()) {
-                return "external:" + safe(raw.source()) + ":" + safe(raw.providerTenant())
-                        + ":" + raw.externalId().strip();
-            }
-            return "content:" + safe(raw.company()) + "|" + safe(raw.title()) + "|" + safe(raw.location());
+        private void tenant(Map<String, Set<String>> target, RawJob raw) {
+            target.computeIfAbsent(safe(raw.source()), ignored -> new LinkedHashSet<>())
+                    .add(safe(raw.providerTenant()));
+        }
+
+        private Map<String, List<String>> mapped(Map<String, Set<String>> source) {
+            Map<String, List<String>> result = new LinkedHashMap<>();
+            source.forEach((provider, tenants) -> result.put(provider, List.copyOf(tenants)));
+            return result;
         }
 
         private String safe(String value) {

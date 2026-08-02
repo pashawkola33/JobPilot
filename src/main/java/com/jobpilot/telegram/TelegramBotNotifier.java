@@ -4,6 +4,7 @@ import com.jobpilot.common.ExternalHttpClient;
 import com.jobpilot.config.JobPilotProperties;
 import com.jobpilot.jobs.domain.Job;
 import com.jobpilot.jobs.domain.JobScore;
+import com.jobpilot.jobs.domain.ScreeningDisposition;
 import com.jobpilot.matching.ScoreCard;
 import java.util.List;
 import java.util.Map;
@@ -24,7 +25,7 @@ public class TelegramBotNotifier implements TelegramNotifier {
 
     @Override
     public void notifyExcellent(Job job, ScoreCard score) {
-        if (!enabled()) return;
+        if (!enabled() || job.getScreeningDisposition() != ScreeningDisposition.MATCH) return;
         String text = "🟢 <b>MATCH: " + score.score() + "/100</b>\n\n"
                 + "<b>" + escape(job.getTitle()) + "</b>\n" + escape(job.getCompany()) + "\n"
                 + "📍 " + escape(String.valueOf(job.getLocation())) + " — " + job.getRemoteType() + "\n\n"
@@ -36,6 +37,10 @@ public class TelegramBotNotifier implements TelegramNotifier {
     @Override
     public void sendGoodMatchDigest(List<JobScore> jobScores) {
         if (!enabled() || jobScores.isEmpty()) return;
+        jobScores = jobScores.stream()
+                .filter(score -> score.getJob().getScreeningDisposition() == ScreeningDisposition.MATCH)
+                .toList();
+        if (jobScores.isEmpty()) return;
         StringBuilder message = new StringBuilder(DIGEST_HEADER);
         for (JobScore score : jobScores) {
             String entry = digestEntry(score);

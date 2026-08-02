@@ -4,12 +4,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.jobpilot.jobs.domain.RawJob;
 import com.jobpilot.jobs.domain.LocationEligibilityDecision;
 import com.jobpilot.jobs.domain.EarlyCareerDecision;
+import com.jobpilot.jobs.domain.RelevanceDecision;
+import com.jobpilot.jobs.domain.ScreeningDecision;
+import com.jobpilot.jobs.domain.ScreeningDisposition;
+import com.jobpilot.matching.ScoreBand;
+import com.jobpilot.matching.ScoreCard;
 import com.jobpilot.sources.JobSource;
 import com.jobpilot.sources.SourceFetchLogRepository;
 import com.jobpilot.telegram.TelegramNotifier;
@@ -23,12 +29,11 @@ class JobIngestionServiceTest {
     void oneSourceFailureDoesNotPreventTheNextSourceFromRunning() {
         JobSource failing = new StubSource("failing", true);
         JobSource succeeding = new StubSource("succeeding", false);
-        JobRelevanceFilter relevance = mock(JobRelevanceFilter.class);
+        JobRelevanceFilter relevance = new JobRelevanceFilter(TestProperties.create());
         JobProcessor processor = mock(JobProcessor.class);
         SourceFetchLogRepository logs = mock(SourceFetchLogRepository.class);
         TelegramNotifier telegram = mock(TelegramNotifier.class);
         when(logs.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-        when(relevance.isRelevant(any())).thenReturn(true);
         when(processor.process(any())).thenReturn(new JobProcessingResult(mock(com.jobpilot.jobs.domain.Job.class), null, false));
         var service = new JobIngestionService(List.of(failing, succeeding), relevance, processor,
                 logs, telegram, Clock.systemUTC());
@@ -59,15 +64,24 @@ class JobIngestionServiceTest {
             public String getSourceName() { return "fixture"; }
             public List<RawJob> fetchJobs() { return vacancies; }
         };
-        JobRelevanceFilter relevance = mock(JobRelevanceFilter.class);
+        JobRelevanceFilter relevance = new JobRelevanceFilter(TestProperties.create());
         JobProcessor processor = mock(JobProcessor.class);
         SourceFetchLogRepository logs = mock(SourceFetchLogRepository.class);
         TelegramNotifier telegram = mock(TelegramNotifier.class);
         when(logs.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-        when(relevance.isRelevant(any())).thenReturn(true);
         when(processor.process(any(RawJob.class), any(LocationEligibilityDecision.class),
-                any(EarlyCareerDecision.class)))
-                .thenReturn(new JobProcessingResult(mock(com.jobpilot.jobs.domain.Job.class), null, false));
+                any(EarlyCareerDecision.class), any(RelevanceDecision.class)))
+                .thenAnswer(invocation -> {
+                    LocationEligibilityDecision location = invocation.getArgument(1);
+                    EarlyCareerDecision career = invocation.getArgument(2);
+                    RelevanceDecision role = invocation.getArgument(3);
+                    ScreeningDecision screening = ScreeningDecision.of(location, career, role);
+                    return screening.disposition() == ScreeningDisposition.REJECT
+                            ? JobProcessingResult.rejected(location, career, role, screening)
+                            : new JobProcessingResult(mock(com.jobpilot.jobs.domain.Job.class), null,
+                            JobPersistenceOutcome.UNCHANGED, location, career, role, screening);
+                });
+        stubRejectedReconciliation(processor, JobPersistenceOutcome.NOT_PERSISTED);
         var service = new JobIngestionService(List.of(source), relevance, processor,
                 new LocationEligibilityService(TestProperties.create()), logs, telegram, Clock.systemUTC());
 
@@ -80,12 +94,234 @@ class JobIngestionServiceTest {
         assertThat(report.remoteEligibilityUnknown()).isEqualTo(1);
         assertThat(report.rejectedByGeographicRestriction()).isEqualTo(2);
         assertThat(report.rejectedOnsiteOrHybridOutsideBucharest()).isEqualTo(2);
-        assertThat(report.earlyCareerEligibleVacancies()).isEqualTo(2);
+        assertThat(report.earlyCareerEligibleVacancies()).isEqualTo(3);
         assertThat(report.earlyCareerEligibilityUnknown()).isEqualTo(1);
         assertThat(report.rejectedBySeniorityOrExperience()).isEqualTo(1);
-        assertThat(report.finalUniqueEligibleVacancies()).isEqualTo(2);
-        assertThat(report.eligibleTenantsByProvider()).containsKey("fixture");
+        assertThat(report.locationAndCareerEligibleVacancies()).isEqualTo(4);
+        assertThat(report.relevanceMatchVacancies()).isEqualTo(4);
+        assertThat(report.relevanceReviewVacancies()).isZero();
+        assertThat(report.rejectedByRelevance()).isZero();
+        assertThat(report.finalMatchVacancies()).isEqualTo(2);
+        assertThat(report.finalReviewVacancies()).isEqualTo(2);
+        assertThat(report.finalMatchTenantsByProvider()).containsKey("fixture");
+        assertThat(report.finalReviewTenantsByProvider()).containsKey("fixture");
+        assertThat(report.finalRejectVacancies()).isEqualTo(5);
+        assertThat(report.duplicateRawVacancies()).isEqualTo(1);
+        assertThat(report.existingUnchangedVacancies()).isEqualTo(4);
+        assertThat(report.updatedVacancies()).isZero();
         verify(telegram, never()).notifyExcellent(any(), any());
+    }
+
+    @Test
+    void persistsAndScoresMatchAndReviewButNotifiesOnlyMatch() {
+        List<RawJob> vacancies = List.of(
+                rawForTenant("match", "Match Tenant", "Bucharest",
+                        "Junior Backend Engineer", "Java, Spring Boot, PostgreSQL, REST APIs."),
+                rawForTenant("review", "Review Tenant", "Remote",
+                        "Software Engineering Internship",
+                        "General software development using Python and cloud services."),
+                rawForTenant("reject", "Reject Tenant", "Bucharest",
+                        "Pre-Sales Solutions Engineer", "Java APIs and cloud integrations."));
+        JobSource source = new JobSource() {
+            public String getSourceName() { return "fixture"; }
+            public List<RawJob> fetchJobs() { return vacancies; }
+        };
+        JobRelevanceFilter relevance = new JobRelevanceFilter(TestProperties.create());
+        JobProcessor processor = mock(JobProcessor.class);
+        SourceFetchLogRepository logs = mock(SourceFetchLogRepository.class);
+        TelegramNotifier telegram = mock(TelegramNotifier.class);
+        when(logs.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(processor.process(any(RawJob.class), any(LocationEligibilityDecision.class),
+                any(EarlyCareerDecision.class), any(RelevanceDecision.class)))
+                .thenAnswer(invocation -> {
+                    LocationEligibilityDecision location = invocation.getArgument(1);
+                    EarlyCareerDecision career = invocation.getArgument(2);
+                    RelevanceDecision role = invocation.getArgument(3);
+                    ScreeningDecision screening = ScreeningDecision.of(location, career, role);
+                    if (screening.disposition() == ScreeningDisposition.REJECT) {
+                        return JobProcessingResult.rejected(location, career, role, screening);
+                    }
+                    return new JobProcessingResult(mock(com.jobpilot.jobs.domain.Job.class),
+                            excellent(), JobPersistenceOutcome.CREATED,
+                            location, career, role, screening);
+                });
+        stubRejectedReconciliation(processor, JobPersistenceOutcome.NOT_PERSISTED);
+        var service = new JobIngestionService(List.of(source), relevance, processor,
+                new LocationEligibilityService(TestProperties.create()),
+                new EarlyCareerEligibilityService(), logs, telegram, Clock.systemUTC());
+
+        JobIngestionReport report = service.fetchAllSources();
+
+        assertThat(report.finalMatchVacancies()).isEqualTo(1);
+        assertThat(report.finalReviewVacancies()).isEqualTo(1);
+        assertThat(report.rejectedByRelevance()).isEqualTo(1);
+        assertThat(report.persistedNewVacancies()).isEqualTo(2);
+        assertThat(report.finalMatchTenantsByProvider().get("fixture"))
+                .containsExactly("Match Tenant");
+        assertThat(report.finalReviewTenantsByProvider().get("fixture"))
+                .containsExactly("Review Tenant");
+        verify(telegram, times(1)).notifyExcellent(any(), any());
+    }
+
+    @Test
+    void rawDuplicatesUnchangedRowsAndUpdatedRowsUseIndependentCounters() {
+        RawJob unchanged = raw("unchanged", "https://example.com/unchanged",
+                "Bucharest", "Java internship");
+        RawJob rawDuplicate = raw("duplicate-copy", "https://example.com/unchanged",
+                "Bucharest", "same raw identity");
+        RawJob updatedReview = raw("updated", "https://example.com/updated",
+                "Remote", "Java internship");
+        JobProcessor processor = mock(JobProcessor.class);
+        TelegramNotifier telegram = mock(TelegramNotifier.class);
+        when(processor.process(any(RawJob.class), any(LocationEligibilityDecision.class),
+                any(EarlyCareerDecision.class), any(RelevanceDecision.class)))
+                .thenAnswer(invocation -> {
+                    RawJob raw = invocation.getArgument(0);
+                    LocationEligibilityDecision location = invocation.getArgument(1);
+                    EarlyCareerDecision career = invocation.getArgument(2);
+                    RelevanceDecision role = invocation.getArgument(3);
+                    ScreeningDecision screening = ScreeningDecision.of(location, career, role);
+                    JobPersistenceOutcome outcome = raw.externalId().equals("updated")
+                            ? JobPersistenceOutcome.UPDATED : JobPersistenceOutcome.UNCHANGED;
+                    return new JobProcessingResult(mock(com.jobpilot.jobs.domain.Job.class),
+                            excellent(), outcome, location, career, role, screening);
+                });
+
+        JobIngestionReport report = new JobIngestionService(
+                List.of(new JobSource() {
+                    public String getSourceName() { return "fixture"; }
+                    public List<RawJob> fetchJobs() {
+                        return List.of(unchanged, rawDuplicate, updatedReview);
+                    }
+                }), new JobRelevanceFilter(TestProperties.create()), processor,
+                new LocationEligibilityService(TestProperties.create()),
+                new EarlyCareerEligibilityService(), successfulLogs(), telegram,
+                Clock.systemUTC()).fetchAllSources();
+
+        assertThat(report.duplicateRawVacancies()).isEqualTo(1);
+        assertThat(report.existingUnchangedVacancies()).isEqualTo(1);
+        assertThat(report.updatedVacancies()).isEqualTo(1);
+        assertThat(report.persistedNewVacancies()).isZero();
+        verify(telegram, never()).notifyExcellent(any(), any());
+    }
+
+    @Test
+    void newLocationRejectSkipsLaterStagesAndOnlyAttemptsReconciliation() {
+        RawJob raw = raw("location-reject", "https://example.com/location-reject",
+                "Cluj-Napoca", "Java role");
+        LocationEligibilityService location = mock(LocationEligibilityService.class);
+        EarlyCareerEligibilityService career = mock(EarlyCareerEligibilityService.class);
+        JobRelevanceFilter relevance = mock(JobRelevanceFilter.class);
+        JobProcessor processor = mock(JobProcessor.class);
+        SourceFetchLogRepository logs = successfulLogs();
+        LocationEligibilityDecision rejection =
+                new LocationEligibilityService(TestProperties.create()).evaluate(raw);
+        when(location.evaluate(raw)).thenReturn(rejection);
+        stubRejectedReconciliation(processor, JobPersistenceOutcome.NOT_PERSISTED);
+
+        JobIngestionReport report = new JobIngestionService(List.of(source(raw)), relevance,
+                processor, location, career, logs, mock(TelegramNotifier.class), Clock.systemUTC())
+                .fetchAllSources();
+
+        assertThat(report.finalRejectVacancies()).isEqualTo(1);
+        assertThat(report.persistedNewVacancies()).isZero();
+        assertThat(report.updatedVacancies()).isZero();
+        assertThat(report.existingUnchangedVacancies()).isZero();
+        verify(career, never()).evaluate(any());
+        verify(relevance, never()).evaluate(any());
+        verify(processor, never()).process(any(RawJob.class), any(LocationEligibilityDecision.class),
+                any(EarlyCareerDecision.class), any(RelevanceDecision.class));
+        verify(processor).reconcileRejected(raw, rejection, null, null);
+    }
+
+    @Test
+    void existingMatchBecomingCareerRejectSkipsRelevanceAndCountsAnUpdate() {
+        RawJob raw = rawWithTitle("career-reject", "https://example.com/career-reject",
+                "Bucharest", "Senior Java Developer", "Java role");
+        LocationEligibilityService location = mock(LocationEligibilityService.class);
+        EarlyCareerEligibilityService career = mock(EarlyCareerEligibilityService.class);
+        JobRelevanceFilter relevance = mock(JobRelevanceFilter.class);
+        JobProcessor processor = mock(JobProcessor.class);
+        LocationEligibilityDecision locationDecision =
+                new LocationEligibilityService(TestProperties.create()).evaluate(raw);
+        EarlyCareerDecision careerDecision = new EarlyCareerEligibilityService().evaluate(raw);
+        when(location.evaluate(raw)).thenReturn(locationDecision);
+        when(career.evaluate(raw)).thenReturn(careerDecision);
+        stubRejectedReconciliation(processor, JobPersistenceOutcome.UPDATED);
+        TelegramNotifier telegram = mock(TelegramNotifier.class);
+
+        JobIngestionReport report = new JobIngestionService(List.of(source(raw)), relevance,
+                processor, location, career, successfulLogs(), telegram,
+                Clock.systemUTC()).fetchAllSources();
+
+        assertThat(report.finalRejectVacancies()).isEqualTo(1);
+        assertThat(report.updatedVacancies()).isEqualTo(1);
+        assertThat(report.persistedNewVacancies()).isZero();
+        verify(relevance, never()).evaluate(any());
+        verify(processor, never()).process(any(RawJob.class), any(LocationEligibilityDecision.class),
+                any(EarlyCareerDecision.class), any(RelevanceDecision.class));
+        verify(processor).reconcileRejected(raw, locationDecision, careerDecision, null);
+        verify(telegram, never()).notifyExcellent(any(), any());
+    }
+
+    @Test
+    void existingReviewBecomingRelevanceRejectOnlyAttemptsReconciliation() {
+        RawJob raw = rawWithTitle("role-reject", "https://example.com/role-reject",
+                "Bucharest", "Pre-Sales Solutions Engineer", "Java integrations");
+        LocationEligibilityService location = mock(LocationEligibilityService.class);
+        EarlyCareerEligibilityService career = mock(EarlyCareerEligibilityService.class);
+        JobRelevanceFilter relevance = mock(JobRelevanceFilter.class);
+        JobProcessor processor = mock(JobProcessor.class);
+        LocationEligibilityDecision locationDecision =
+                new LocationEligibilityService(TestProperties.create()).evaluate(raw);
+        EarlyCareerDecision careerDecision = new EarlyCareerEligibilityService().evaluate(raw);
+        RelevanceDecision relevanceDecision =
+                new JobRelevanceFilter(TestProperties.create()).evaluate(raw);
+        when(location.evaluate(raw)).thenReturn(locationDecision);
+        when(career.evaluate(raw)).thenReturn(careerDecision);
+        when(relevance.evaluate(raw)).thenReturn(relevanceDecision);
+        stubRejectedReconciliation(processor, JobPersistenceOutcome.UPDATED);
+
+        JobIngestionReport report = new JobIngestionService(List.of(source(raw)), relevance,
+                processor, location, career, successfulLogs(), mock(TelegramNotifier.class),
+                Clock.systemUTC()).fetchAllSources();
+
+        assertThat(report.rejectedByRelevance()).isEqualTo(1);
+        assertThat(report.finalRejectVacancies()).isEqualTo(1);
+        assertThat(report.updatedVacancies()).isEqualTo(1);
+        verify(processor, never()).process(any(RawJob.class), any(LocationEligibilityDecision.class),
+                any(EarlyCareerDecision.class), any(RelevanceDecision.class));
+        verify(processor).reconcileRejected(
+                raw, locationDecision, careerDecision, relevanceDecision);
+    }
+
+    @Test
+    void duplicateRejectedRawIdentityReconcilesAndCountsOnlyOnce() {
+        RawJob first = raw("reject", "https://example.com/duplicate-reject",
+                "USA | Remote", "Java role");
+        RawJob duplicate = raw("reject-copy", "https://example.com/duplicate-reject",
+                "USA | Remote", "duplicate payload");
+        JobProcessor processor = mock(JobProcessor.class);
+        stubRejectedReconciliation(processor, JobPersistenceOutcome.UPDATED);
+
+        JobIngestionReport report = new JobIngestionService(
+                List.of(new JobSource() {
+                    public String getSourceName() { return "fixture"; }
+                    public List<RawJob> fetchJobs() { return List.of(first, duplicate); }
+                }), mock(JobRelevanceFilter.class), processor,
+                new LocationEligibilityService(TestProperties.create()),
+                mock(EarlyCareerEligibilityService.class), successfulLogs(),
+                mock(TelegramNotifier.class), Clock.systemUTC()).fetchAllSources();
+
+        assertThat(report.totalVacanciesFetched()).isEqualTo(2);
+        assertThat(report.totalUniqueVacanciesBeforeEligibilityFiltering()).isEqualTo(1);
+        assertThat(report.duplicateRawVacancies()).isEqualTo(1);
+        assertThat(report.finalRejectVacancies()).isEqualTo(1);
+        assertThat(report.updatedVacancies()).isEqualTo(1);
+        assertThat(report.existingUnchangedVacancies()).isZero();
+        assertThat(report.persistedNewVacancies()).isZero();
+        verify(processor, times(1)).reconcileRejected(
+                any(RawJob.class), any(LocationEligibilityDecision.class), any(), any());
     }
 
     private RawJob raw(String id, String url, String location, String description) {
@@ -96,6 +332,48 @@ class JobIngestionServiceTest {
                                 String description) {
         return new RawJob("fixture", id, url, title, "Example",
                 location, description, "Internship", null, null, "{}");
+    }
+
+    private RawJob rawForTenant(String id, String tenant, String location,
+                                String title, String description) {
+        return new RawJob("fixture", id, "https://example.com/" + id, title, tenant,
+                location, description, "Internship", null, null, "{}",
+                com.jobpilot.jobs.domain.RawLocationData.empty(), tenant);
+    }
+
+    private ScoreCard excellent() {
+        return new ScoreCard(90, ScoreBand.EXCELLENT_MATCH, true,
+                10, 25, 15, 10, 10, 10, 10, 0,
+                List.of("match"), List.of(), List.of());
+    }
+
+    private JobSource source(RawJob raw) {
+        return new JobSource() {
+            public String getSourceName() { return "fixture"; }
+            public List<RawJob> fetchJobs() { return List.of(raw); }
+        };
+    }
+
+    private SourceFetchLogRepository successfulLogs() {
+        SourceFetchLogRepository logs = mock(SourceFetchLogRepository.class);
+        when(logs.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        return logs;
+    }
+
+    private void stubRejectedReconciliation(JobProcessor processor,
+                                            JobPersistenceOutcome outcome) {
+        when(processor.reconcileRejected(any(RawJob.class),
+                any(LocationEligibilityDecision.class), any(), any()))
+                .thenAnswer(invocation -> {
+                    LocationEligibilityDecision location = invocation.getArgument(1);
+                    EarlyCareerDecision career = invocation.getArgument(2);
+                    RelevanceDecision role = invocation.getArgument(3);
+                    ScreeningDecision screening = ScreeningDecision.of(location, career, role);
+                    com.jobpilot.jobs.domain.Job job = outcome == JobPersistenceOutcome.NOT_PERSISTED
+                            ? null : mock(com.jobpilot.jobs.domain.Job.class);
+                    return new JobProcessingResult(job, null, outcome,
+                            location, career, role, screening);
+                });
     }
 
     private static final class StubSource implements JobSource {

@@ -2,6 +2,7 @@ package com.jobpilot.jobs.service;
 
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 public record JobIngestionReport(
         int totalVacanciesFetched,
@@ -14,30 +15,25 @@ public record JobIngestionReport(
         int earlyCareerEligibleVacancies,
         int earlyCareerEligibilityUnknown,
         int rejectedBySeniorityOrExperience,
-        int finalUniqueEligibleVacancies,
-        Map<String, List<String>> eligibleTenantsByProvider) {
+        int locationAndCareerEligibleVacancies,
+        int relevanceMatchVacancies,
+        int relevanceReviewVacancies,
+        int rejectedByRelevance,
+        int finalMatchVacancies,
+        int finalReviewVacancies,
+        int finalRejectVacancies,
+        int duplicateRawVacancies,
+        int existingUnchangedVacancies,
+        int persistedNewVacancies,
+        int updatedVacancies,
+        Map<String, List<String>> locationAndCareerEligibleTenantsByProvider,
+        Map<String, List<String>> finalMatchTenantsByProvider,
+        Map<String, List<String>> finalReviewTenantsByProvider) {
 
     public JobIngestionReport {
-        eligibleTenantsByProvider = eligibleTenantsByProvider == null ? Map.of()
-                : eligibleTenantsByProvider.entrySet().stream().collect(
-                java.util.stream.Collectors.toUnmodifiableMap(Map.Entry::getKey,
-                        entry -> List.copyOf(entry.getValue())));
-    }
-
-    public JobIngestionReport(int totalVacanciesFetched,
-                              int totalUniqueVacanciesBeforeEligibilityFiltering,
-                              int bucharestLocalVacancies,
-                              int remoteVacanciesEligibleFromRomania,
-                              int remoteEligibilityUnknown,
-                              int rejectedByGeographicRestriction,
-                              int rejectedOnsiteOrHybridOutsideBucharest,
-                              int finalUniqueEligibleVacancies,
-                              Map<String, List<String>> eligibleTenantsByProvider) {
-        this(totalVacanciesFetched, totalUniqueVacanciesBeforeEligibilityFiltering,
-                bucharestLocalVacancies, remoteVacanciesEligibleFromRomania,
-                remoteEligibilityUnknown, rejectedByGeographicRestriction,
-                rejectedOnsiteOrHybridOutsideBucharest, finalUniqueEligibleVacancies,
-                0, 0, finalUniqueEligibleVacancies, eligibleTenantsByProvider);
+        locationAndCareerEligibleTenantsByProvider = immutable(locationAndCareerEligibleTenantsByProvider);
+        finalMatchTenantsByProvider = immutable(finalMatchTenantsByProvider);
+        finalReviewTenantsByProvider = immutable(finalReviewTenantsByProvider);
     }
 
     public boolean rawTargetMet() {
@@ -52,7 +48,6 @@ public record JobIngestionReport(
         return locationEligibleVacancies() >= 150;
     }
 
-    /** Compatibility alias for the original location-volume target. */
     public boolean eligibleTargetMet() {
         return locationEligibleTargetMet();
     }
@@ -61,12 +56,22 @@ public record JobIngestionReport(
         return Math.max(0, 150 - locationEligibleVacancies());
     }
 
-    /** Estimate based on the current average yield of boards that produced eligible jobs. */
+    public int notificationEligibleVacancies() {
+        return finalMatchVacancies;
+    }
+
     public int estimatedAdditionalRelevantTenantBoardsNeeded() {
         if (locationEligibleTargetMet()) return 0;
-        int producingTenants = eligibleTenantsByProvider.values().stream().mapToInt(List::size).sum();
+        int producingTenants = locationAndCareerEligibleTenantsByProvider.values().stream()
+                .mapToInt(List::size).sum();
         if (producingTenants == 0 || locationEligibleVacancies() == 0) return eligibleShortfall();
         double averageYield = (double) locationEligibleVacancies() / producingTenants;
         return (int) Math.ceil(eligibleShortfall() / averageYield);
+    }
+
+    private static Map<String, List<String>> immutable(Map<String, List<String>> source) {
+        if (source == null) return Map.of();
+        return source.entrySet().stream().collect(Collectors.toUnmodifiableMap(
+                Map.Entry::getKey, entry -> List.copyOf(entry.getValue())));
     }
 }

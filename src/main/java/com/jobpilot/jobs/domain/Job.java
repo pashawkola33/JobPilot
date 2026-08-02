@@ -9,6 +9,10 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.Instant;
+import java.util.List;
+import java.util.Objects;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "jobs")
@@ -48,6 +52,17 @@ public class Job {
     @Enumerated(EnumType.STRING)
     private EarlyCareerEligibility earlyCareerEligibility;
     private String earlyCareerEligibilityReason;
+    @Enumerated(EnumType.STRING)
+    private ScreeningDisposition screeningDisposition;
+    @Enumerated(EnumType.STRING)
+    private ScreeningDisposition locationDisposition;
+    @Enumerated(EnumType.STRING)
+    private ScreeningDisposition careerDisposition;
+    @Enumerated(EnumType.STRING)
+    private ScreeningDisposition relevanceDisposition;
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = "jsonb", nullable = false)
+    private List<ScreeningReason> screeningReasons;
     private String employmentType;
     @Column(columnDefinition = "text")
     private String description;
@@ -113,6 +128,18 @@ public class Job {
                String employmentType, String description, Instant publishedAt, Instant deadline,
                String rawPayloadHash, String descriptionHash, String normalizedFingerprint,
                Instant now, LocationEligibilityDecision eligibility, EarlyCareerDecision earlyCareer) {
+        this(source, providerTenant, externalId, canonicalUrl, title, company, location, remoteType,
+                employmentType, description, publishedAt, deadline, rawPayloadHash,
+                descriptionHash, normalizedFingerprint, now, eligibility, earlyCareer,
+                ScreeningDecision.legacyMatch());
+    }
+
+    public Job(String source, String providerTenant, String externalId, String canonicalUrl,
+               String title, String company, String location, RemoteType remoteType,
+               String employmentType, String description, Instant publishedAt, Instant deadline,
+               String rawPayloadHash, String descriptionHash, String normalizedFingerprint,
+               Instant now, LocationEligibilityDecision eligibility, EarlyCareerDecision earlyCareer,
+               ScreeningDecision screening) {
         this.source = source;
         this.providerTenant = providerTenant == null || providerTenant.isBlank()
                 ? "legacy" : providerTenant.strip();
@@ -131,6 +158,7 @@ public class Job {
         this.normalizedFingerprint = normalizedFingerprint;
         applyEligibility(eligibility);
         applyEarlyCareer(earlyCareer);
+        applyScreening(screening);
         this.fetchedAt = now;
         this.firstSeenAt = now;
         this.lastSeenAt = now;
@@ -184,7 +212,137 @@ public class Job {
         this.experienceRawText = updated.experienceRawText;
         this.earlyCareerEligibility = updated.earlyCareerEligibility;
         this.earlyCareerEligibilityReason = updated.earlyCareerEligibilityReason;
+        copyScreening(updated);
         seenAgain(now);
+    }
+
+    public boolean refreshScreening(Job updated) {
+        boolean changed = !Objects.equals(this.title, updated.title)
+                || !Objects.equals(this.location, updated.location)
+                || this.remoteType != updated.remoteType
+                || !Objects.equals(this.employmentType, updated.employmentType)
+                || updated.deadline != null && !Objects.equals(this.deadline, updated.deadline)
+                || updated.publishedAt != null && !Objects.equals(this.publishedAt, updated.publishedAt)
+                || !Objects.equals(this.normalizedFingerprint, updated.normalizedFingerprint)
+                || this.locationEligibility != updated.locationEligibility
+                || this.remoteScope != updated.remoteScope
+                || !Objects.equals(this.normalizedCity, updated.normalizedCity)
+                || !Objects.equals(this.normalizedCountry, updated.normalizedCountry)
+                || this.eligibleFromRomania != updated.eligibleFromRomania
+                || !Objects.equals(this.eligibilityReason, updated.eligibilityReason)
+                || !Objects.equals(this.detectedLocationRestrictions,
+                        updated.detectedLocationRestrictions)
+                || !Objects.equals(this.requiredTimezone, updated.requiredTimezone)
+                || !Objects.equals(this.requiredWorkAuthorization, updated.requiredWorkAuthorization)
+                || this.seniorityLevel != updated.seniorityLevel
+                || !Objects.equals(this.experienceMinimumYears, updated.experienceMinimumYears)
+                || !Objects.equals(this.experienceMaximumYears, updated.experienceMaximumYears)
+                || this.experienceMandatory != updated.experienceMandatory
+                || !Objects.equals(this.experienceRawText, updated.experienceRawText)
+                || this.earlyCareerEligibility != updated.earlyCareerEligibility
+                || !Objects.equals(this.earlyCareerEligibilityReason,
+                        updated.earlyCareerEligibilityReason)
+                || this.screeningDisposition != updated.screeningDisposition
+                || this.locationDisposition != updated.locationDisposition
+                || this.careerDisposition != updated.careerDisposition
+                || this.relevanceDisposition != updated.relevanceDisposition
+                || !Objects.equals(this.screeningReasons, updated.screeningReasons);
+        this.title = updated.title;
+        this.location = updated.location;
+        this.remoteType = updated.remoteType;
+        this.employmentType = updated.employmentType;
+        if (updated.deadline != null) this.deadline = updated.deadline;
+        if (updated.publishedAt != null) this.publishedAt = updated.publishedAt;
+        this.normalizedFingerprint = updated.normalizedFingerprint;
+        this.locationEligibility = updated.locationEligibility;
+        this.remoteScope = updated.remoteScope;
+        this.normalizedCity = updated.normalizedCity;
+        this.normalizedCountry = updated.normalizedCountry;
+        this.eligibleFromRomania = updated.eligibleFromRomania;
+        this.eligibilityReason = updated.eligibilityReason;
+        this.detectedLocationRestrictions = updated.detectedLocationRestrictions;
+        this.requiredTimezone = updated.requiredTimezone;
+        this.requiredWorkAuthorization = updated.requiredWorkAuthorization;
+        this.seniorityLevel = updated.seniorityLevel;
+        this.experienceMinimumYears = updated.experienceMinimumYears;
+        this.experienceMaximumYears = updated.experienceMaximumYears;
+        this.experienceMandatory = updated.experienceMandatory;
+        this.experienceRawText = updated.experienceRawText;
+        this.earlyCareerEligibility = updated.earlyCareerEligibility;
+        this.earlyCareerEligibilityReason = updated.earlyCareerEligibilityReason;
+        copyScreening(updated);
+        if (changed) this.rawPayloadHash = updated.rawPayloadHash;
+        return changed;
+    }
+
+    public void applyScreening(ScreeningDecision decision) {
+        ScreeningDecision safe = decision == null ? ScreeningDecision.legacyMatch() : decision;
+        this.screeningDisposition = safe.disposition();
+        this.locationDisposition = safe.locationDisposition();
+        this.careerDisposition = safe.careerDisposition();
+        this.relevanceDisposition = safe.relevanceDisposition();
+        this.screeningReasons = List.copyOf(safe.reasons());
+    }
+
+    /**
+     * Applies only decisions evaluated before the current hard-reject short circuit. Dispositions
+     * for skipped stages deliberately retain their last persisted values.
+     */
+    public boolean reconcileRejected(LocationEligibilityDecision location,
+                                     EarlyCareerDecision career,
+                                     RelevanceDecision relevance,
+                                     List<ScreeningReason> currentReasons,
+                                     Instant now) {
+        boolean changed = screeningDisposition != ScreeningDisposition.REJECT
+                || !Objects.equals(screeningReasons, currentReasons);
+        if (location != null) {
+            changed |= locationDisposition != location.disposition()
+                    || locationEligibility != location.locationEligibility()
+                    || remoteScope != location.remoteScope()
+                    || !Objects.equals(normalizedCity, location.normalizedCity())
+                    || !Objects.equals(normalizedCountry, location.normalizedCountry())
+                    || eligibleFromRomania != location.eligibleFromRomania()
+                    || !Objects.equals(eligibilityReason, location.eligibilityReason())
+                    || !Objects.equals(detectedLocationRestrictions,
+                    String.join("|", location.detectedLocationRestrictions()))
+                    || !Objects.equals(requiredTimezone, location.requiredTimezone())
+                    || !Objects.equals(requiredWorkAuthorization,
+                    location.requiredWorkAuthorization());
+            applyEligibility(location);
+            locationDisposition = location.disposition();
+        }
+        if (career != null) {
+            changed |= careerDisposition != career.disposition()
+                    || seniorityLevel != career.seniorityLevel()
+                    || !Objects.equals(experienceMinimumYears,
+                    career.experienceRequirement().minimumYears())
+                    || !Objects.equals(experienceMaximumYears,
+                    career.experienceRequirement().maximumYears())
+                    || experienceMandatory != career.experienceRequirement().mandatory()
+                    || !Objects.equals(experienceRawText,
+                    career.experienceRequirement().rawText())
+                    || earlyCareerEligibility != career.earlyCareerEligibility()
+                    || !Objects.equals(earlyCareerEligibilityReason,
+                    career.eligibilityReason());
+            applyEarlyCareer(career);
+            careerDisposition = career.disposition();
+        }
+        if (relevance != null) {
+            changed |= relevanceDisposition != relevance.disposition();
+            relevanceDisposition = relevance.disposition();
+        }
+        screeningDisposition = ScreeningDisposition.REJECT;
+        screeningReasons = List.copyOf(currentReasons);
+        seenAgain(now);
+        return changed;
+    }
+
+    private void copyScreening(Job updated) {
+        this.screeningDisposition = updated.screeningDisposition;
+        this.locationDisposition = updated.locationDisposition;
+        this.careerDisposition = updated.careerDisposition;
+        this.relevanceDisposition = updated.relevanceDisposition;
+        this.screeningReasons = updated.screeningReasons;
     }
 
     private void applyEligibility(LocationEligibilityDecision decision) {
@@ -252,6 +410,11 @@ public class Job {
     public String getExperienceRawText() { return experienceRawText; }
     public EarlyCareerEligibility getEarlyCareerEligibility() { return earlyCareerEligibility; }
     public String getEarlyCareerEligibilityReason() { return earlyCareerEligibilityReason; }
+    public ScreeningDisposition getScreeningDisposition() { return screeningDisposition; }
+    public ScreeningDisposition getLocationDisposition() { return locationDisposition; }
+    public ScreeningDisposition getCareerDisposition() { return careerDisposition; }
+    public ScreeningDisposition getRelevanceDisposition() { return relevanceDisposition; }
+    public List<ScreeningReason> getScreeningReasons() { return screeningReasons; }
     public String getEmploymentType() { return employmentType; }
     public String getDescription() { return description; }
     public Double getRequiredExperienceYears() { return requiredExperienceYears; }

@@ -11,6 +11,8 @@ import com.jobpilot.browser.api.BrowserExtractionResponse;
 import com.jobpilot.browser.api.BrowserExtractionStatus;
 import com.jobpilot.browser.config.ScraperWorkerProperties;
 import com.jobpilot.jobs.domain.RawJob;
+import com.jobpilot.jobs.domain.ScreeningDecision;
+import com.jobpilot.jobs.domain.ScreeningDisposition;
 import com.jobpilot.jobs.service.EarlyCareerEligibilityService;
 import com.jobpilot.jobs.service.JobIngestionReport;
 import com.jobpilot.jobs.service.JobIngestionService;
@@ -52,21 +54,26 @@ class BrowserToJavaEligibilityPipelineTest {
     }
 
     @Test
-    void rejectsUnknownRemoteScopeBeforeScoringPersistenceOrNotification() {
+    void reviewsUnknownRemoteScopeAndStillUsesTheProcessorWithoutNotification() {
         Pipeline result = run(job("Software Engineer", "Remote",
                 "Work remotely building Java and Spring Boot services with the engineering team.", "Full time"));
 
         assertThat(result.report().remoteEligibilityUnknown()).isEqualTo(1);
-        assertRejected(result, 0, 0);
+        assertThat(result.report().finalReviewVacancies()).isEqualTo(1);
+        verifyProcessed(result);
+        verify(result.telegram(), never()).notifyExcellent(any(), any());
     }
 
     @Test
-    void rejectsJuniorRoleWithThreeMandatoryYearsBeforeScoringPersistenceOrNotification() {
+    void reviewsJuniorRoleWithThreeMandatoryYearsWithoutNotification() {
         Pipeline result = run(job("Junior Software Engineer", "Bucharest, Romania",
                 "Junior Java role in Bucharest. At least 3+ years of professional experience is required.",
                 "Full time"));
 
-        assertRejected(result, 0, 1);
+        assertThat(result.report().earlyCareerEligibilityUnknown()).isEqualTo(1);
+        assertThat(result.report().finalReviewVacancies()).isEqualTo(1);
+        verifyProcessed(result);
+        verify(result.telegram(), never()).notifyExcellent(any(), any());
     }
 
     @Test
@@ -75,10 +82,8 @@ class BrowserToJavaEligibilityPipelineTest {
                 "Java and Spring Boot internship with mentoring, tests, and production delivery.",
                 "Internship"));
 
-        assertThat(result.report().finalUniqueEligibleVacancies()).isEqualTo(1);
-        verify(result.processor()).process(any(RawJob.class),
-                any(com.jobpilot.jobs.domain.LocationEligibilityDecision.class),
-                any(com.jobpilot.jobs.domain.EarlyCareerDecision.class));
+        assertThat(result.report().finalMatchVacancies()).isEqualTo(1);
+        verifyProcessed(result);
         verify(result.telegram(), never()).notifyExcellent(any(), any());
     }
 
@@ -98,10 +103,40 @@ class BrowserToJavaEligibilityPipelineTest {
         JobProcessor processor = mock(JobProcessor.class);
         when(processor.process(any(RawJob.class),
                 any(com.jobpilot.jobs.domain.LocationEligibilityDecision.class),
-                any(com.jobpilot.jobs.domain.EarlyCareerDecision.class)))
-                .thenReturn(new JobProcessingResult(mock(com.jobpilot.jobs.domain.Job.class), null, false));
-        JobRelevanceFilter relevance = mock(JobRelevanceFilter.class);
-        when(relevance.isRelevant(any())).thenReturn(true);
+                any(com.jobpilot.jobs.domain.EarlyCareerDecision.class),
+                any(com.jobpilot.jobs.domain.RelevanceDecision.class)))
+                .thenAnswer(invocation -> {
+                    var location = invocation.getArgument(1,
+                            com.jobpilot.jobs.domain.LocationEligibilityDecision.class);
+                    var career = invocation.getArgument(2,
+                            com.jobpilot.jobs.domain.EarlyCareerDecision.class);
+                    var relevanceDecision = invocation.getArgument(3,
+                            com.jobpilot.jobs.domain.RelevanceDecision.class);
+                    ScreeningDecision screening = ScreeningDecision.of(
+                            location, career, relevanceDecision);
+                    if (screening.disposition() == ScreeningDisposition.REJECT) {
+                        return JobProcessingResult.rejected(location, career,
+                                relevanceDecision, screening);
+                    }
+                    return new JobProcessingResult(mock(com.jobpilot.jobs.domain.Job.class), null,
+                            com.jobpilot.jobs.service.JobPersistenceOutcome.UNCHANGED,
+                            location, career, relevanceDecision, screening);
+                });
+        when(processor.reconcileRejected(any(RawJob.class),
+                any(com.jobpilot.jobs.domain.LocationEligibilityDecision.class), any(), any()))
+                .thenAnswer(invocation -> {
+                    var location = invocation.getArgument(1,
+                            com.jobpilot.jobs.domain.LocationEligibilityDecision.class);
+                    var career = invocation.getArgument(2,
+                            com.jobpilot.jobs.domain.EarlyCareerDecision.class);
+                    var relevanceDecision = invocation.getArgument(3,
+                            com.jobpilot.jobs.domain.RelevanceDecision.class);
+                    return new JobProcessingResult(null, null,
+                            com.jobpilot.jobs.service.JobPersistenceOutcome.NOT_PERSISTED,
+                            location, career, relevanceDecision,
+                            ScreeningDecision.of(location, career, relevanceDecision));
+                });
+        JobRelevanceFilter relevance = new JobRelevanceFilter(TestProperties.create());
         SourceFetchLogRepository logs = mock(SourceFetchLogRepository.class);
         when(logs.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         TelegramNotifier telegram = mock(TelegramNotifier.class);
@@ -116,10 +151,23 @@ class BrowserToJavaEligibilityPipelineTest {
         assertThat(result.report().rejectedOnsiteOrHybridOutsideBucharest()
                 + result.report().rejectedByGeographicRestriction()).isEqualTo(locationRejected);
         assertThat(result.report().rejectedBySeniorityOrExperience()).isEqualTo(careerRejected);
+        assertThat(result.report().finalRejectVacancies()).isEqualTo(1);
         verify(result.processor(), never()).process(any(RawJob.class),
                 any(com.jobpilot.jobs.domain.LocationEligibilityDecision.class),
-                any(com.jobpilot.jobs.domain.EarlyCareerDecision.class));
+                any(com.jobpilot.jobs.domain.EarlyCareerDecision.class),
+                any(com.jobpilot.jobs.domain.RelevanceDecision.class));
+        verify(result.processor()).reconcileRejected(any(RawJob.class),
+                any(com.jobpilot.jobs.domain.LocationEligibilityDecision.class), any(), any());
         verify(result.telegram(), never()).notifyExcellent(any(), any());
+    }
+
+    private void verifyProcessed(Pipeline result) {
+        verify(result.processor()).process(any(RawJob.class),
+                any(com.jobpilot.jobs.domain.LocationEligibilityDecision.class),
+                any(com.jobpilot.jobs.domain.EarlyCareerDecision.class),
+                any(com.jobpilot.jobs.domain.RelevanceDecision.class));
+        verify(result.processor(), never()).reconcileRejected(any(RawJob.class),
+                any(com.jobpilot.jobs.domain.LocationEligibilityDecision.class), any(), any());
     }
 
     private BrowserExtractionResponse job(String title, String location,

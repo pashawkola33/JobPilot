@@ -22,6 +22,16 @@ public interface JobRepository extends JpaRepository<Job, Long> {
     Optional<Job> findBySourceAndProviderTenantAndExternalId(
             String source, String providerTenant, String externalId);
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select job from Job job where job.source = :source "
+            + "and job.providerTenant = :providerTenant and job.externalId = :externalId")
+    Optional<Job> findByStableIdentityForUpdate(
+            String source, String providerTenant, String externalId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select job from Job job where job.canonicalUrl = :canonicalUrl")
+    Optional<Job> findByCanonicalUrlForUpdate(String canonicalUrl);
+
     Optional<Job> findFirstByNormalizedFingerprint(String normalizedFingerprint);
 
     Optional<Job> findFirstByCompanyAndDescriptionHash(String company, String descriptionHash);

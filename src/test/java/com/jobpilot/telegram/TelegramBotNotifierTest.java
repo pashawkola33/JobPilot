@@ -14,6 +14,8 @@ import com.jobpilot.config.JobPilotProperties;
 import com.jobpilot.jobs.domain.Job;
 import com.jobpilot.jobs.domain.JobScore;
 import com.jobpilot.jobs.domain.RemoteType;
+import com.jobpilot.jobs.domain.ScreeningDecision;
+import com.jobpilot.jobs.domain.ScreeningDisposition;
 import com.jobpilot.matching.ScoreBand;
 import com.jobpilot.matching.ScoreCard;
 import com.jobpilot.support.TestProperties;
@@ -72,6 +74,22 @@ class TelegramBotNotifierTest {
         ExternalHttpClient http = org.mockito.Mockito.mock(ExternalHttpClient.class);
         var notifier = new TelegramBotNotifier(http, TestProperties.create());
         notifier.notifyExcellent(job(), score());
+        verify(http, never()).postJson(any(), any());
+    }
+
+    @Test
+    void neverNotifiesReviewVacancyAutomatically() {
+        ExternalHttpClient http = org.mockito.Mockito.mock(ExternalHttpClient.class);
+        var properties = TestProperties.create(
+                new JobPilotProperties.Telegram("secret-token", "-100123"));
+        var notifier = new TelegramBotNotifier(http, properties);
+        Job review = job();
+        review.applyScreening(new ScreeningDecision(null, ScreeningDisposition.MATCH,
+                ScreeningDisposition.REVIEW, ScreeningDisposition.MATCH, List.of()));
+
+        notifier.notifyExcellent(review, score());
+        notifier.sendGoodMatchDigest(List.of(new JobScore(review, score(), Instant.now())));
+
         verify(http, never()).postJson(any(), any());
     }
 

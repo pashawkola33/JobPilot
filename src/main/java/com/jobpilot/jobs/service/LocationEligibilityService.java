@@ -6,9 +6,13 @@ import com.jobpilot.jobs.domain.LocationEligibilityDecision;
 import com.jobpilot.jobs.domain.RawJob;
 import com.jobpilot.jobs.domain.RawLocationData;
 import com.jobpilot.jobs.domain.RemoteScope;
+import com.jobpilot.jobs.domain.ScreeningDisposition;
+import com.jobpilot.jobs.domain.ScreeningReason;
+import com.jobpilot.jobs.domain.ScreeningStage;
 import com.jobpilot.jobs.domain.WorkplaceType;
 import java.text.Normalizer;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -21,6 +25,10 @@ import org.springframework.stereotype.Service;
 /** Applies the same conservative geographic policy to jobs from every provider. */
 @Service
 public class LocationEligibilityService {
+    private static final String US_STATE_CODES =
+            "AL|AK|AZ|AR|CA|CO|CT|DE|FL|GA|HI|ID|IL|IN|IA|KS|KY|LA|ME|MD|MA|MI|MN|"
+                    + "MS|MO|MT|NE|NV|NH|NJ|NM|NY|NC|ND|OH|OK|OR|PA|RI|SC|SD|TN|TX|"
+                    + "UT|VT|VA|WA|WV|WI|WY";
     private static final Pattern COUNTRY_RESIDENCE = Pattern.compile(
             "(?i)(?:must|should|required to|candidates? must|applicants? must)?\\s*"
                     + "(?:be based|be located|live|reside|be resident|have permanent residence|"
@@ -40,13 +48,36 @@ public class LocationEligibilityService {
     private static final Pattern TIMEZONE_VALUE = Pattern.compile(
             "(?i)\\b(?:PST|PDT|EST|EDT|CST|MST|Pacific(?: Time)?|Eastern(?: Time)?|"
                     + "UTC\\s*[-−]\\s*(?:4|5|6|7|8|9|10|11|12))\\b");
+    private static final Pattern US_STATE_CODE = Pattern.compile(
+            "(?i)(?:[,|/()]|\\s[-–—]\\s)\\s*(?:" + US_STATE_CODES + ")(?:\\b|\\))");
+    private static final Pattern TITLE_PARENTHESIZED_LOCATION = Pattern.compile(
+            "\\(([^()]{2,80})\\)\\s*$");
+    private static final Pattern TITLE_DASH_LOCATION = Pattern.compile(
+            "\\s[-–—]\\s*([^|()]{2,80})\\s*$");
+    private static final Pattern TITLE_US_CITY_STATE = Pattern.compile(
+            "(?iu)([\\p{L}][\\p{L}.'-]*(?:\\s+[\\p{L}][\\p{L}.'-]*){0,3}"
+                    + "\\s*,\\s*(?:" + US_STATE_CODES + "))\\s*$");
+    private static final Pattern US_CITY_STATE = Pattern.compile(
+            "(?iu)[\\p{L}][\\p{L}.'-]*(?:\\s+[\\p{L}][\\p{L}.'-]*){0,3}"
+                    + "\\s*,\\s*(?:" + US_STATE_CODES + ")");
     private static final List<String> REMOTE_NOISE = List.of(
             "remote interview", "remote interviews", "remote onboarding", "remote collaboration",
             "remote support", "remote team member", "remote team members", "work remotely occasionally",
             "ability to work remotely occasionally");
-    private static final Set<String> NON_ROMANIA_COUNTRIES = Set.of(
-            "united states", "usa", "us", "canada", "united kingdom", "uk", "germany",
-            "france", "poland", "spain", "italy", "netherlands", "australia", "india");
+    private static final Set<String> NON_ROMANIA_COUNTRIES = nonRomaniaCountries();
+    private static final List<String> INCOMPATIBLE_CITIES = List.of(
+            "San Francisco", "Seattle", "Boston", "Austin", "New York", "Los Angeles",
+            "Chicago", "Denver", "Portland", "Washington DC", "London", "Paris", "Berlin",
+            "Munich", "Warsaw", "Amsterdam", "Toronto", "Vancouver");
+    private static final List<String> US_STATES = List.of(
+            "Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado", "Connecticut",
+            "Delaware", "Florida", "Georgia", "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa",
+            "Kansas", "Kentucky", "Louisiana", "Maine", "Maryland", "Massachusetts", "Michigan",
+            "Minnesota", "Mississippi", "Missouri", "Montana", "Nebraska", "Nevada",
+            "New Hampshire", "New Jersey", "New Mexico", "New York", "North Carolina",
+            "North Dakota", "Ohio", "Oklahoma", "Oregon", "Pennsylvania", "Rhode Island",
+            "South Carolina", "South Dakota", "Tennessee", "Texas", "Utah", "Vermont",
+            "Virginia", "Washington", "West Virginia", "Wisconsin", "Wyoming");
 
     private final JobPilotProperties.Eligibility settings;
 
@@ -97,6 +128,10 @@ public class LocationEligibilityService {
         String requiredTimezone = firstNonBlank(data.requiredTimezone(), detectedTimezone(description));
         String requiredAuthorization = firstNonBlank(data.requiredWorkAuthorization(),
                 detectedWorkAuthorization(description));
+        String titleLocation = explicitIncompatibleTitleLocation(raw.title());
+        String incompatibleLocation = firstNonBlank(
+                titleLocation, explicitIncompatibleLocation(locations));
+        RemoteScope authoritativeApplicantScope = authoritativeApplicantScope(raw);
 
         if (descriptionBucharest && !structuredBucharest
                 && (city != null && !"Bucharest".equals(city)
@@ -104,6 +139,30 @@ public class LocationEligibilityService {
             return unknown(workplace, city, country,
                     "Structured location contradicts the description", restrictions,
                     requiredTimezone, requiredAuthorization);
+        }
+
+        if (incompatibleLocation != null) {
+            WorkplaceType explicitWorkplace = explicitLocalWorkplace(
+                    structuredLocationType, jsonLdType, descriptionType, workplace);
+            boolean titleEvidence = titleLocation != null;
+            boolean authoritativeContradiction = acceptedScope(authoritativeApplicantScope)
+                    && (titleEvidence || explicitWorkplace == WorkplaceType.REMOTE);
+            String evidenceLabel = titleEvidence ? "Title location: " : "Structured location: ";
+            String reasonLabel = titleEvidence ? "title location" : "structured location";
+            if (authoritativeContradiction) {
+                restrictions = append(restrictions, evidenceLabel + incompatibleLocation);
+                return unknown(explicitWorkplace, city, country,
+                        "Explicit " + reasonLabel + " " + incompatibleLocation
+                                + " contradicts authoritative applicant scope "
+                                + scopeLabel(authoritativeApplicantScope),
+                        restrictions, requiredTimezone, requiredAuthorization,
+                        "LOCATION_SCOPE_CONTRADICTION");
+            }
+            restrictions = append(restrictions, evidenceLabel + incompatibleLocation);
+            return rejected(explicitWorkplace, RemoteScope.COUNTRY_RESTRICTED, city, country,
+                    "Explicit " + reasonLabel + " is incompatible with Romania: "
+                            + incompatibleLocation,
+                    restrictions, requiredTimezone, requiredAuthorization);
         }
 
         if (workplace == WorkplaceType.REMOTE && officeAttendance && !bucharest) {
@@ -170,13 +229,6 @@ public class LocationEligibilityService {
                     requiredTimezone, requiredAuthorization);
         }
         if (scope == RemoteScope.UNKNOWN) {
-            if (!settings.rejectUnknownRemoteScope()) {
-                return new LocationEligibilityDecision(workplace,
-                        LocationEligibility.REMOTE_ROMANIA_ELIGIBLE, RemoteScope.UNKNOWN,
-                        city, country, true,
-                        "Remote scope was not specified and is allowed by configuration", restrictions,
-                        requiredTimezone, requiredAuthorization);
-            }
             return unknown(workplace, city, country,
                     "Remote role found, but permitted countries were not specified", restrictions,
                     requiredTimezone, requiredAuthorization);
@@ -231,9 +283,53 @@ public class LocationEligibilityService {
     private LocationEligibilityDecision unknown(
             WorkplaceType workplace, String city, String country, String reason,
             List<String> restrictions, String timezone, String authorization) {
+        return unknown(workplace, city, country, reason, restrictions, timezone, authorization,
+                "LOCATION_UNCERTAIN");
+    }
+
+    private LocationEligibilityDecision unknown(
+            WorkplaceType workplace, String city, String country, String reason,
+            List<String> restrictions, String timezone, String authorization, String reasonCode) {
         return new LocationEligibilityDecision(workplace,
                 LocationEligibility.REMOTE_ELIGIBILITY_UNKNOWN, RemoteScope.UNKNOWN,
-                city, country, false, reason, restrictions, timezone, authorization);
+                city, country, false, reason, restrictions, timezone, authorization,
+                ScreeningDisposition.REVIEW,
+                List.of(new ScreeningReason(ScreeningStage.LOCATION, reasonCode, reason)));
+    }
+
+    private WorkplaceType explicitLocalWorkplace(
+            WorkplaceType structured, WorkplaceType jsonLd, WorkplaceType description,
+            WorkplaceType fallback) {
+        for (WorkplaceType candidate : List.of(structured, jsonLd, description)) {
+            if (candidate == WorkplaceType.ONSITE || candidate == WorkplaceType.HYBRID) {
+                return candidate;
+            }
+        }
+        return fallback;
+    }
+
+    private RemoteScope authoritativeApplicantScope(RawJob raw) {
+        RawLocationData data = raw.locationData();
+        for (String value : data.applicantLocationRequirements()) {
+            RemoteScope detected = scope(value, true);
+            if (detected != RemoteScope.UNKNOWN) return detected;
+        }
+        for (String value : data.remoteRegions()) {
+            RemoteScope detected = scope(value, true);
+            if (detected != RemoteScope.UNKNOWN) return detected;
+        }
+        for (String value : data.structuredLocations()) {
+            RemoteScope detected = scope(value, true);
+            if (detected != RemoteScope.UNKNOWN) return detected;
+        }
+        RemoteScope locationScope = scope(raw.location(), true);
+        if (locationScope != RemoteScope.UNKNOWN) return locationScope;
+        return RemoteScope.UNKNOWN;
+    }
+
+    private boolean acceptedScope(RemoteScope scope) {
+        return scope != RemoteScope.UNKNOWN && settings.acceptRemoteFromRomania()
+                && settings.acceptedRemoteRegions().contains(scope);
     }
 
     private RemoteScope remoteScope(RawJob raw) {
@@ -252,6 +348,11 @@ public class LocationEligibilityService {
 
     private RemoteScope scope(String candidate, boolean structured) {
         String value = normalize(candidate);
+        if (containsAny(value, "timezone", "time zone")
+                && !containsAny(value, "open to", "applicants", "candidates", "hiring in",
+                "based in", "located in")) {
+            return RemoteScope.UNKNOWN;
+        }
         if (!structured) {
             if (containsAny(value, "remote romania", "romania remote", "work from romania",
                     "based in romania", "located in romania", "candidates in romania",
@@ -265,8 +366,9 @@ public class LocationEligibilityService {
             if (containsAny(value, "remote eu", "remote within the eu", "open to the eu",
                     "based in the eu", "european union")) return RemoteScope.EU;
             if (containsAny(value, "remote europe", "remote within europe", "remote across europe",
-                    "open to europe", "based in europe", "located in europe",
-                    "europe timezone", "european timezone")) return RemoteScope.EUROPE;
+                    "open to europe", "based in europe", "located in europe")) {
+                return RemoteScope.EUROPE;
+            }
             if (containsAny(value, "worldwide remote", "remote worldwide", "global remote",
                     "remote globally", "work from anywhere", "anywhere in the world")) {
                 return RemoteScope.WORLDWIDE;
@@ -285,11 +387,118 @@ public class LocationEligibilityService {
         return RemoteScope.UNKNOWN;
     }
 
+    private String explicitIncompatibleLocation(String locations) {
+        String text = normalize(locations);
+        if (text.isBlank()) return null;
+        for (String city : INCOMPATIBLE_CITIES) {
+            if (word(text, city)) return city;
+        }
+        for (String state : US_STATES) {
+            if (word(text, state)) return state + ", United States";
+        }
+        if (US_STATE_CODE.matcher(locations).find()) return "United States";
+        for (String country : NON_ROMANIA_COUNTRIES) {
+            if (word(text, country)) return displayCountry(country);
+        }
+        return null;
+    }
+
+    private String explicitIncompatibleTitleLocation(String title) {
+        String value = safe(title).strip();
+        if (value.isBlank()) return null;
+
+        for (Pattern structuredSuffix : List.of(
+                TITLE_PARENTHESIZED_LOCATION, TITLE_DASH_LOCATION)) {
+            Matcher matcher = structuredSuffix.matcher(value);
+            if (matcher.find()) {
+                String location = incompatibleTitleLocationCandidate(matcher.group(1));
+                if (location != null) return location;
+            }
+        }
+
+        Matcher cityState = TITLE_US_CITY_STATE.matcher(value);
+        if (cityState.find()) return cityState.group(1).strip();
+
+        int comma = value.lastIndexOf(',');
+        if (comma > 0 && comma < value.length() - 1) {
+            String suffix = value.substring(comma + 1).strip();
+            String country = exactIncompatibleCountry(suffix);
+            if (country != null) return country;
+            for (String state : US_STATES) {
+                if (normalize(suffix).equals(normalize(state))) {
+                    return state + ", United States";
+                }
+            }
+        }
+
+        String normalizedTitle = normalize(value);
+        for (String country : NON_ROMANIA_COUNTRIES) {
+            String normalizedCountry = normalize(country);
+            if (normalizedTitle.equals(normalizedCountry + " only")
+                    || normalizedTitle.endsWith(" " + normalizedCountry + " only")) {
+                return displayCountry(country) + " only";
+            }
+        }
+        return null;
+    }
+
+    private String incompatibleTitleLocationCandidate(String candidate) {
+        String value = safe(candidate).strip();
+        String normalized = normalize(value);
+        if (normalized.isBlank() || normalized.equals("remote")) return null;
+
+        if (US_CITY_STATE.matcher(value).matches()) return value;
+        for (String state : US_STATES) {
+            if (normalized.equals(normalize(state))) return state + ", United States";
+        }
+        if (normalized.matches("(?i)^(?:" + US_STATE_CODES + ")$")) {
+            return value.toUpperCase(Locale.ROOT) + ", United States";
+        }
+        for (String city : INCOMPATIBLE_CITIES) {
+            if (normalized.equals(normalize(city))) return city;
+        }
+
+        int comma = value.lastIndexOf(',');
+        if (comma > 0 && comma < value.length() - 1) {
+            String country = value.substring(comma + 1).strip();
+            String incompatibleCountry = exactIncompatibleCountry(country);
+            if (incompatibleCountry != null) return value.substring(0, comma).strip()
+                    + ", " + incompatibleCountry;
+        }
+
+        String countryOnly = normalized.endsWith(" only")
+                ? normalized.substring(0, normalized.length() - " only".length()).strip()
+                : normalized;
+        String incompatibleCountry = exactIncompatibleCountry(countryOnly);
+        return incompatibleCountry == null ? null
+                : incompatibleCountry + (normalized.endsWith(" only") ? " only" : "");
+    }
+
+    private String exactIncompatibleCountry(String value) {
+        String normalized = normalize(value);
+        for (String country : NON_ROMANIA_COUNTRIES) {
+            if (normalized.equals(normalize(country))) return displayCountry(country);
+        }
+        return null;
+    }
+
     private String countryRestriction(RawJob raw) {
         String text = restrictionText(raw);
         for (Pattern pattern : List.of(COUNTRY_ONLY, REMOTE_WITHIN_COUNTRY, COUNTRY_RESIDENCE)) {
             Matcher matcher = pattern.matcher(text);
             if (matcher.find()) return displayCountry(matcher.group(1));
+        }
+        String normalizedText = normalize(text);
+        for (String country : NON_ROMANIA_COUNTRIES) {
+            if (word(normalizedText, country + " only")
+                    || word(normalizedText, country + " residents only")
+                    || word(normalizedText, "remote in " + country)
+                    || word(normalizedText, "remote within " + country)
+                    || word(normalizedText, "must be based in " + country)
+                    || word(normalizedText, "must be located in " + country)
+                    || word(normalizedText, "must reside in " + country)) {
+                return displayCountry(country);
+            }
         }
         List<String> structuredRestrictions = new ArrayList<>();
         structuredRestrictions.addAll(raw.locationData().applicantLocationRequirements());
@@ -387,8 +596,9 @@ public class LocationEligibilityService {
     private String normalizedCity(String locations) {
         if (containsBucharest(locations)) return settings.targetCity();
         if (word(locations, "ilfov")) return "Ilfov";
-        for (String city : List.of("Cluj-Napoca", "Berlin", "London", "Paris", "Munich",
-                "Warsaw", "Amsterdam", "Toronto", "New York")) {
+        for (String city : List.of("Cluj-Napoca", "San Francisco", "Seattle", "Boston", "Austin",
+                "Berlin", "London", "Paris", "Munich", "Warsaw", "Amsterdam", "Toronto",
+                "New York")) {
             if (normalize(locations).contains(normalize(city))) return city;
         }
         return null;
@@ -464,6 +674,17 @@ public class LocationEligibilityService {
             case "uk", "united kingdom" -> "United Kingdom";
             default -> title(value);
         };
+    }
+
+    private static Set<String> nonRomaniaCountries() {
+        Set<String> countries = new HashSet<>();
+        for (String code : Locale.getISOCountries()) {
+            String name = Locale.of("", code).getDisplayCountry(Locale.ENGLISH)
+                    .toLowerCase(Locale.ROOT);
+            if (!"romania".equals(name)) countries.add(name);
+        }
+        countries.addAll(Set.of("usa", "us", "u.s.", "u.s.a.", "uk", "u.k."));
+        return Set.copyOf(countries);
     }
 
     private String normalize(String value) {

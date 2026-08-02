@@ -68,19 +68,30 @@ public class EarlyCareerEligibilityService {
                     EarlyCareerEligibility.INELIGIBLE, responsibilityBlocker);
         }
 
-        if (descriptionExperience.mandatory() && exceedsEarlyCareer(descriptionExperience)) {
+        if (descriptionExperience.mandatory() && hardExperienceBlocker(descriptionExperience)) {
             return decision(bestLevel(providerLevel, employmentLevel, titleLevel), descriptionExperience,
                     EarlyCareerEligibility.INELIGIBLE, experienceRejection(descriptionExperience));
         }
-        if (structuredExperience.mandatory() && exceedsEarlyCareer(structuredExperience)) {
+        if (structuredExperience.mandatory() && hardExperienceBlocker(structuredExperience)) {
             return decision(bestLevel(providerLevel, employmentLevel, titleLevel), structuredExperience,
                     EarlyCareerEligibility.INELIGIBLE, experienceRejection(structuredExperience));
         }
 
-        SeniorityLevel rejectedLevel = rejectedLevel(providerLevel, titleLevel);
+        SeniorityLevel rejectedLevel = rejectedLevel(providerLevel, employmentLevel, titleLevel);
         if (rejectedLevel != null) {
             return decision(rejectedLevel, selectedExperience, EarlyCareerEligibility.INELIGIBLE,
                     rejectedLevel == SeniorityLevel.LEADERSHIP ? "Leadership title" : rejectedLevelName(rejectedLevel));
+        }
+
+        if (descriptionExperience.mandatory() && threeYearReview(descriptionExperience)) {
+            return decision(bestLevel(providerLevel, employmentLevel, titleLevel), descriptionExperience,
+                    EarlyCareerEligibility.UNKNOWN,
+                    "Exactly 3 years of mandatory experience requires manual review");
+        }
+        if (structuredExperience.mandatory() && threeYearReview(structuredExperience)) {
+            return decision(bestLevel(providerLevel, employmentLevel, titleLevel), structuredExperience,
+                    EarlyCareerEligibility.UNKNOWN,
+                    "Exactly 3 years of mandatory experience requires manual review");
         }
 
         SeniorityLevel explicitLevel = bestLevel(providerLevel, employmentLevel, titleLevel);
@@ -217,6 +228,7 @@ public class EarlyCareerEligibilityService {
         if (value == null || value.isBlank()) return SeniorityLevel.UNKNOWN;
         String text = value.toLowerCase(Locale.ROOT).replace('_', ' ').replace('-', ' ')
                 .replaceAll("\\s+", " ").strip();
+        text = text.replaceAll("\\blead generation\\b", "sales generation");
         if (matches(text, "\\b(?:staff|principal|architect|manager|head|director|vice president|vp|executive|chief|leadership)\\b"
                 + "|\\b(?:technical|engineering|software|team|product|project|program|data|qa) lead\\b"
                 + "|\\blead (?:engineer|developer|architect|designer|scientist|team|manager)\\b"
@@ -280,8 +292,10 @@ public class EarlyCareerEligibilityService {
         return SeniorityLevel.UNKNOWN;
     }
 
-    private SeniorityLevel rejectedLevel(SeniorityLevel provider, SeniorityLevel title) {
+    private SeniorityLevel rejectedLevel(SeniorityLevel provider, SeniorityLevel employment,
+                                          SeniorityLevel title) {
         if (isRejected(provider)) return provider;
+        if (isRejected(employment)) return employment;
         if (isRejected(title)) return title;
         return null;
     }
@@ -310,6 +324,18 @@ public class EarlyCareerEligibilityService {
                 || requirement.maximumYears() != null && requirement.maximumYears() > 2.0;
     }
 
+    private boolean hardExperienceBlocker(ExperienceRequirement requirement) {
+        return requirement.minimumYears() != null && requirement.minimumYears() >= 4.0
+                || requirement.maximumYears() != null && requirement.maximumYears() >= 4.0;
+    }
+
+    private boolean threeYearReview(ExperienceRequirement requirement) {
+        if (!requirement.known()) return false;
+        double upper = upperBound(requirement);
+        double lower = requirement.minimumYears() == null ? upper : requirement.minimumYears();
+        return lower >= 3.0 && upper < 4.0;
+    }
+
     private boolean withinEarlyCareer(ExperienceRequirement requirement) {
         if (!requirement.known()) return false;
         if (exceedsEarlyCareer(requirement)) return false;
@@ -328,12 +354,12 @@ public class EarlyCareerEligibilityService {
         double threshold = upperBound(requirement);
         if (requirement.minimumYears() != null && requirement.maximumYears() != null
                 && !requirement.minimumYears().equals(requirement.maximumYears())) {
-            return "Mandatory experience range extends beyond 2 years";
+            return "Mandatory experience range includes 4 or more years";
         }
-        if (threshold >= 3 && Math.rint(threshold) == threshold) {
+        if (threshold >= 4 && Math.rint(threshold) == threshold) {
             return "Requires at least " + (int) threshold + " years of professional experience";
         }
-        return "Mandatory experience requirement exceeds 2 years";
+        return "Mandatory experience requirement is at least 4 years";
     }
 
     private String experienceEligibility(ExperienceRequirement requirement) {

@@ -7,6 +7,7 @@ import com.jobpilot.jobs.domain.RawJob;
 import com.jobpilot.jobs.domain.RemoteType;
 import com.jobpilot.jobs.domain.LocationEligibilityDecision;
 import com.jobpilot.jobs.domain.EarlyCareerDecision;
+import com.jobpilot.jobs.domain.ScreeningDecision;
 import java.time.Clock;
 import java.util.Locale;
 import org.springframework.stereotype.Service;
@@ -31,6 +32,11 @@ public class JobNormalizer {
 
     public Job normalize(RawJob raw, LocationEligibilityDecision eligibility,
                          EarlyCareerDecision earlyCareer) {
+        return normalize(raw, eligibility, earlyCareer, ScreeningDecision.legacyMatch());
+    }
+
+    public Job normalize(RawJob raw, LocationEligibilityDecision eligibility,
+                         EarlyCareerDecision earlyCareer, ScreeningDecision screening) {
         requireText(raw.url(), "url");
         requireText(raw.title(), "title");
         requireText(raw.company(), "company");
@@ -49,7 +55,7 @@ public class JobNormalizer {
                 raw.company().strip(), blankToNull(raw.location()), remoteType(raw, eligibility, description),
                 blankToNull(raw.employmentType()), description, raw.publishedAt(), raw.deadline(),
                 Hashing.sha256(payload), descriptionHash, fingerprint, clock.instant(), eligibility,
-                earlyCareer);
+                earlyCareer, screening);
     }
 
     public String canonicalizeUrl(String raw) {

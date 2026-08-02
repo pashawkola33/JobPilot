@@ -31,9 +31,9 @@ class LiveVacancySmokeTest {
         assertThat(report.totalUniqueVacanciesBeforeEligibilityFiltering()).isPositive();
         assertThat(report.rawTargetMet()).isTrue();
         assertThat(report.locationEligibleTargetMet()).isTrue();
-        assertThat(report.finalUniqueEligibleVacancies())
-                .isEqualTo(report.earlyCareerEligibleVacancies())
-                .isLessThanOrEqualTo(report.bucharestLocalVacancies()
-                        + report.remoteVacanciesEligibleFromRomania());
+        assertThat(report.locationAndCareerEligibleVacancies())
+                .isLessThanOrEqualTo(report.totalUniqueVacanciesBeforeEligibilityFiltering());
+        assertThat(report.finalMatchVacancies() + report.finalReviewVacancies())
+                .isLessThanOrEqualTo(report.locationAndCareerEligibleVacancies());
     }
 }

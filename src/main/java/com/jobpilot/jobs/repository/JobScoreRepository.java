@@ -15,11 +15,8 @@ public interface JobScoreRepository extends JpaRepository<JobScore, Long> {
     List<JobScore> findByBandOrderByScoreDesc(ScoreBand band, Pageable pageable);
 
     @Query("select s from JobScore s where s.band = :band and s.scoredAt >= :since "
-            + "and s.job.locationEligibility in "
-            + "(com.jobpilot.jobs.domain.LocationEligibility.BUCHAREST_LOCAL, "
-            + "com.jobpilot.jobs.domain.LocationEligibility.REMOTE_ROMANIA_ELIGIBLE) "
-            + "and s.job.earlyCareerEligibility = "
-            + "com.jobpilot.jobs.domain.EarlyCareerEligibility.ELIGIBLE "
+            + "and s.job.screeningDisposition = "
+            + "com.jobpilot.jobs.domain.ScreeningDisposition.MATCH "
             + "order by s.score desc")
     List<JobScore> findDigest(ScoreBand band, Instant since, Pageable pageable);
 

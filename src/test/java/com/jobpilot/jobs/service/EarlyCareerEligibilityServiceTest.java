@@ -7,6 +7,7 @@ import com.jobpilot.jobs.domain.RawCareerData;
 import com.jobpilot.jobs.domain.RawJob;
 import com.jobpilot.jobs.domain.RawLocationData;
 import com.jobpilot.jobs.domain.SeniorityLevel;
+import com.jobpilot.jobs.domain.ScreeningDisposition;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -24,6 +25,8 @@ class EarlyCareerEligibilityServiceTest {
         assertThat(decision.earlyCareerEligibility()).isEqualTo(EarlyCareerEligibility.ELIGIBLE);
         assertThat(decision.seniorityLevel()).isEqualTo(level);
         assertThat(decision.eligibilityReason()).isNotBlank();
+        assertThat(decision.disposition()).isEqualTo(ScreeningDisposition.MATCH);
+        assertThat(decision.reasons()).isNotEmpty();
     }
 
     static Stream<Arguments> earlyCareerTitles() {
@@ -44,6 +47,7 @@ class EarlyCareerEligibilityServiceTest {
 
         assertThat(decision.earlyCareerEligibility()).isEqualTo(EarlyCareerEligibility.INELIGIBLE);
         assertThat(decision.seniorityLevel()).isEqualTo(level);
+        assertThat(decision.disposition()).isEqualTo(ScreeningDisposition.REJECT);
     }
 
     static Stream<Arguments> rejectedTitles() {
@@ -139,6 +143,16 @@ class EarlyCareerEligibilityServiceTest {
 
         assertThat(decision.earlyCareerEligibility()).isEqualTo(EarlyCareerEligibility.UNKNOWN);
         assertThat(decision.seniorityLevel()).isEqualTo(SeniorityLevel.UNKNOWN);
+        assertThat(decision.disposition()).isEqualTo(ScreeningDisposition.REVIEW);
+    }
+
+    @Test
+    void doesNotTreatLeadGenerationAsEngineeringLeadership() {
+        var decision = service.evaluate(raw("Lead Generation Specialist",
+                "Support business development campaigns."));
+
+        assertThat(decision.seniorityLevel()).isEqualTo(SeniorityLevel.UNKNOWN);
+        assertThat(decision.disposition()).isEqualTo(ScreeningDisposition.REVIEW);
     }
 
     @Test
@@ -154,21 +168,21 @@ class EarlyCareerEligibilityServiceTest {
     }
 
     @Test
-    void rejectsStructuredMandatoryThreeYears() {
+    void reviewsStructuredMandatoryThreeYears() {
         RawJob raw = raw("Junior Developer", "Build Java services.",
                 new RawCareerData("junior", 3.0, null, true, "3+ years"));
 
         assertThat(service.evaluate(raw).earlyCareerEligibility())
-                .isEqualTo(EarlyCareerEligibility.INELIGIBLE);
+                .isEqualTo(EarlyCareerEligibility.UNKNOWN);
     }
 
     @Test
-    void mandatoryExperienceIsNotWeakenedByOptionalTextInAnotherSentence() {
+    void threeMandatoryYearsAreNotWeakenedByOptionalTextInAnotherSentence() {
         var decision = service.evaluate(raw("Junior Developer",
                 "Nice-to-have: exposure to cloud platforms. Candidates must have 3+ years "
                         + "of professional experience."));
 
-        assertThat(decision.earlyCareerEligibility()).isEqualTo(EarlyCareerEligibility.INELIGIBLE);
+        assertThat(decision.earlyCareerEligibility()).isEqualTo(EarlyCareerEligibility.UNKNOWN);
         assertThat(decision.experienceRequirement().mandatory()).isTrue();
     }
 

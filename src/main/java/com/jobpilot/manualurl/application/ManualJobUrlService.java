@@ -3,6 +3,7 @@ package com.jobpilot.manualurl.application;
 import com.jobpilot.browser.application.BrowserFallbackService;
 import com.jobpilot.config.JobPilotProperties;
 import com.jobpilot.jobs.domain.RawJob;
+import com.jobpilot.jobs.domain.ScreeningDisposition;
 import com.jobpilot.jobs.service.JobProcessingResult;
 import com.jobpilot.manualurl.domain.ManualJobStatus;
 import com.jobpilot.manualurl.domain.ManualJobSubmissionResult;
@@ -86,7 +87,7 @@ public class ManualJobUrlService {
     private ManualJobSubmissionResult success(JobProcessingResult processed) {
         if (!processed.accepted() || processed.job() == null) {
             if (processed.eligibilityDecision() != null
-                    && !processed.eligibilityDecision().accepted()) {
+                    && processed.eligibilityDecision().disposition() == ScreeningDisposition.REJECT) {
                 return new ManualJobSubmissionResult(ManualJobStatus.LOCATION_INELIGIBLE,
                         null, null, null, java.util.List.of(),
                         java.util.List.of(processed.eligibilityDecision().eligibilityReason()),
