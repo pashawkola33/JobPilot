@@ -24,7 +24,8 @@ POST /internal/v1/jobs/manual-url
     -> canonical URL and destination policy
     -> known Greenhouse/Lever API reuse OR bounded public-page fetch
     -> deterministic JobPosting/metadata parser
-    -> existing JobProcessor pipeline and PostgreSQL constraints
+    -> shared location + early-career hard gates
+    -> canonicalization/deduplication/scoring and PostgreSQL constraints
 
 POST /internal/v1/jobs/{jobId}/analysis
     -> deterministic job/profile hashes and completed-cache lookup
@@ -103,7 +104,7 @@ Spring Data repositories exist for each aggregate and normalized fact/reference 
 
 ## Manual URL processing
 
-The internal endpoint accepts a JSON body shaped as `{"url":"https://…"}` and returns one typed domain outcome. `CREATED` maps to HTTP 201, `ALREADY_EXISTS` to 200, `INVALID_URL` to 400, `BLOCKED_OR_PROTECTED` to 403, `UNSUPPORTED_SOURCE` and `PARSE_FAILED` to 422, and `FETCH_FAILED` to 502. Successful results include the persisted job ID, canonical URL, score, strengths, and risks.
+The internal endpoint accepts a JSON body shaped as `{"url":"https://…"}` and returns one typed domain outcome. `CREATED` maps to HTTP 201, `ALREADY_EXISTS` to 200, `INVALID_URL` to 400, `BLOCKED_OR_PROTECTED` to 403, `UNSUPPORTED_SOURCE`, `PARSE_FAILED`, `LOCATION_INELIGIBLE`, and `EARLY_CAREER_INELIGIBLE` to 422, and `FETCH_FAILED` to 502. Successful results include the persisted job ID, canonical URL, score, strengths, and risks.
 
 The endpoint is not a public trust boundary: deployments must keep it behind a trusted network boundary or add authentication. The default Docker Compose mapping exposes it only on host loopback.
 
@@ -377,7 +378,7 @@ Graceful shutdown flips a shared lifecycle gate before scheduled polling, source
 
 ### Release and persistence layout
 
-No V6 migration is required. Published migrations remain: V1 initial schema; V2 Phase 2 truth/workflow persistence; V3 Telegram/application history; V4 analysis/budget; and V5 application documents. Docker Compose runs PostgreSQL 16 with a bounded health check and waits for it before app startup, exposes application HTTP only on host loopback, uses a private named document volume, and passes secrets only at runtime. The application image contains source-built code but no `.env`, generated documents, local data, or secrets. Runtime uses fixed UID/GID `10001`, no Linux capabilities, `no-new-privileges`, a read-only root filesystem, and an explicit writable private temp mount.
+Published Phase 2 migrations V1–V5 remain unchanged. V6 adds normalized location eligibility evidence and V7 adds normalized seniority, experience, and early-career eligibility evidence. Docker Compose runs PostgreSQL 16 with a bounded health check and waits for it before app startup, exposes application HTTP only on host loopback, uses a private named document volume, and passes secrets only at runtime. The application image contains source-built code but no `.env`, generated documents, local data, or secrets. Runtime uses fixed UID/GID `10001`, no Linux capabilities, `no-new-privileges`, a read-only root filesystem, and an explicit writable private temp mount.
 
 Backups must include PostgreSQL, the document volume, and the runtime contact HMAC key. Restore database metadata and storage from a consistent point. A missing/corrupt file is rejected; an unreferenced restored file is inaccessible and later eligible for bounded cleanup. HMAC rotation safely invalidates cache identity but prevents exact reuse of prior contact-dependent keys.
 
@@ -386,3 +387,64 @@ Backups must include PostgreSQL, the document volume, and the runtime contact HM
 The Stage 6 PostgreSQL 16 Testcontainers flow uses only synthetic external adapters. It processes and deduplicates a manual public vacancy, analyzes, generates and structurally reopens DOCX/PDF, saves, selects, explicitly applies, records interview/follow-up/offer, and reads ordered history. A fake Telegram client proves authorization, progress/final replies, persistent offsets, replay filtering, reconstruction from persisted offset, cached analysis/render reuse, no automatic `APPLIED`, and confirmation failure after commit. Existing Stage 4/5 PostgreSQL tests remain the production-concurrency evidence for budget locking and document claim uniqueness; application optimistic locking and manual deduplication also remain enabled.
 
 There is no multi-user support, HTTP authentication, automatic submission, employer upload, screening-answer automation, recruiter contact, protected-page automation, CAPTCHA/authentication bypass, universal ATS guarantee, or perfect hallucination-prevention guarantee. Crawlee and CloakBrowser are not dependencies; their consideration begins only after Phase 2 is merged.
+
+## Optional browser-rendering fallback (`scraper-worker`)
+
+This is post-Phase-2 work on the `feature/romania-source-expansion` branch. It
+adds an **optional, disabled-by-default** JavaScript-rendering fallback as a
+separate Node process. No Romanian source adapter is added here.
+
+### Java-first extraction hierarchy
+
+Manual-URL extraction always attempts, in order: (1) a known ATS/public API,
+(2) a safe Java HTTP fetch, (3) JSON-LD, (4) deterministic HTML parsing. The
+browser fallback is reached only when a non-ATS page was fetched but the
+deterministic parser returned `UNSUPPORTED_SOURCE`/`PARSE_FAILED` — a safe public
+JS-required case. It is never reached for a validation failure, `BLOCKED_OR_PROTECTED`,
+or a successful Java parse. `BrowserFallbackService.decide(...)` encodes this;
+`BrowserFallbackDecision` is `INVOKE`, `SKIP_DISABLED`, `SKIP_PROTECTED`, or
+`SKIP_NOT_JS_REQUIRED`.
+
+### Boundary
+
+`BrowserExtractionClient` (JDK `HttpClient`) posts to the single configured
+worker endpoint with redirects disabled, the shared secret in a fixed header, a
+bounded response, and typed Jackson deserialization; any transport or shape
+failure yields a conservative `WORKER_UNAVAILABLE`. The worker network call runs
+**outside any database transaction**. Only an `EXTRACTED` result is mapped to a
+`RawJob`, bounded, and persisted **against the operator-submitted, SSRF-validated
+URL** — Node's URL and any identifier are never trusted. The result re-enters the
+existing `JobProcessor` normalization/dedup/scoring/persistence pipeline, so
+deduplication and DB-generated IDs are unchanged. `ScraperWorkerProperties` is a
+separate `@ConfigurationProperties` record that fails startup closed when enabled
+without a valid base URL and a ≥32-byte shared secret.
+
+### The worker
+
+A stateless Node service (`PlaywrightCrawler` → `playwright-core` → CloakBrowser
+Chromium binary). It re-validates the URL, every main-frame redirect, and every
+subresource origin against its own SSRF policy (an independent boundary
+mirroring the Stage 2 address classifier), intercepts and blocks prohibited
+destinations/downloads/WebSockets/media/fonts, strips credential-bearing request
+headers, uses a fresh isolated context per extraction with fingerprints disabled
+and no recursion, and returns only bounded typed JSON. A fixed-capacity,
+non-queuing admission controller rejects excess browser work immediately. Public
+LinkedIn guest detail and search extractors are bounded and stop at login or
+challenge pages; they perform no pagination/link discovery. Chromium's sandbox
+is explicitly enabled and vendor/Playwright sandbox-disabling flags are removed.
+The worker has no PostgreSQL, LLM, or Telegram access. See
+`scraper-worker/README.md`.
+
+### Docker
+
+The worker runs under the optional Compose `scraper` profile with no host port,
+a non-root UID/GID 10001, a read-only root filesystem, a bounded writable tmpfs
+for browser temporary data, explicit CPU/memory/PID/file-descriptor/shared-memory
+limits, `cap_drop: ALL` with only `SYS_CHROOT` restored for Chromium's namespace
+jail, the official Playwright seccomp profile, `no-new-privileges`, `init: true`,
+and a healthcheck. It
+joins only the `scraper-egress` network and is not attached to PostgreSQL's
+`database` network. The CloakBrowser Chromium binary is prepared during the
+controlled image build (never downloaded on a request path) and is not committed.
+The default `docker compose up` starts only PostgreSQL and the app; Spring Boot
+runs normally with the worker disabled or absent.

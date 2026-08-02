@@ -1,0 +1,31 @@
+{
+  "name": "jobpilot-scraper-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Optional JavaScript-rendering fallback worker for JobPilot. Renders a single validated public vacancy URL with Crawlee + CloakBrowser and returns bounded typed JSON. No database, LLM, Telegram, scoring, or application logic.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": "22.11.0",
+    "npm": "10.9.0"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "node scripts/lint.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/index.js",
+    "test": "tsc -p tsconfig.json && node --test --test-concurrency=1 dist/test/*.test.js",
+    "test:browser": "RUN_BROWSER_TESTS=true node --test dist/test/extract.browser.test.js"
+  },
+  "dependencies": {
+    "@crawlee/core": "3.17.0",
+    "@crawlee/playwright": "3.17.0",
+    "cloakbrowser": "0.4.12",
+    "playwright-core": "1.61.1"
+  },
+  "devDependencies": {
+    "@types/node": "22.9.0",
+    "typescript": "5.6.3"
+  }
+}

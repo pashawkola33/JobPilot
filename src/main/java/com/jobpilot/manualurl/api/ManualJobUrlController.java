@@ -31,7 +31,8 @@ public class ManualJobUrlController {
             case ALREADY_EXISTS -> HttpStatus.OK;
             case INVALID_URL -> HttpStatus.BAD_REQUEST;
             case BLOCKED_OR_PROTECTED -> HttpStatus.FORBIDDEN;
-            case UNSUPPORTED_SOURCE, PARSE_FAILED -> HttpStatus.UNPROCESSABLE_ENTITY;
+            case UNSUPPORTED_SOURCE, PARSE_FAILED, LOCATION_INELIGIBLE,
+                    EARLY_CAREER_INELIGIBLE -> HttpStatus.UNPROCESSABLE_ENTITY;
             case FETCH_FAILED -> HttpStatus.BAD_GATEWAY;
         };
     }

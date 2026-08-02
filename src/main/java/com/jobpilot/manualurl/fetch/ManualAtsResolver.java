@@ -95,7 +95,7 @@ public class ManualAtsResolver {
         String url = job.url() == null || job.url().isBlank() ? submittedUrl.toString() : job.url();
         return new RawJob(job.source(), job.externalId(), url, job.title(), job.company(),
                 job.location(), job.description(), job.employmentType(), job.publishedAt(),
-                job.deadline(), job.rawPayload());
+                job.deadline(), job.rawPayload(), job.locationData(), job.providerTenant());
     }
 
     private List<String> pathSegments(URI uri) {

@@ -24,6 +24,28 @@ public class Job {
     private String location;
     @Enumerated(EnumType.STRING)
     private RemoteType remoteType;
+    @Enumerated(EnumType.STRING)
+    private LocationEligibility locationEligibility;
+    @Enumerated(EnumType.STRING)
+    private RemoteScope remoteScope;
+    private String normalizedCity;
+    private String normalizedCountry;
+    private boolean eligibleFromRomania;
+    private String eligibilityReason;
+    @Column(columnDefinition = "text")
+    private String detectedLocationRestrictions;
+    private String requiredTimezone;
+    private String requiredWorkAuthorization;
+    @Enumerated(EnumType.STRING)
+    private SeniorityLevel seniorityLevel;
+    private Double experienceMinimumYears;
+    private Double experienceMaximumYears;
+    private boolean experienceMandatory;
+    @Column(columnDefinition = "text")
+    private String experienceRawText;
+    @Enumerated(EnumType.STRING)
+    private EarlyCareerEligibility earlyCareerEligibility;
+    private String earlyCareerEligibilityReason;
     private String employmentType;
     @Column(columnDefinition = "text")
     private String description;
@@ -59,6 +81,26 @@ public class Job {
                String location, RemoteType remoteType, String employmentType, String description,
                Instant publishedAt, Instant deadline, String rawPayloadHash,
                String descriptionHash, String normalizedFingerprint, Instant now) {
+        this(source, externalId, canonicalUrl, title, company, location, remoteType,
+                employmentType, description, publishedAt, deadline, rawPayloadHash,
+                descriptionHash, normalizedFingerprint, now, null);
+    }
+
+    public Job(String source, String externalId, String canonicalUrl, String title, String company,
+               String location, RemoteType remoteType, String employmentType, String description,
+               Instant publishedAt, Instant deadline, String rawPayloadHash,
+               String descriptionHash, String normalizedFingerprint, Instant now,
+               LocationEligibilityDecision eligibility) {
+        this(source, externalId, canonicalUrl, title, company, location, remoteType,
+                employmentType, description, publishedAt, deadline, rawPayloadHash,
+                descriptionHash, normalizedFingerprint, now, eligibility, null);
+    }
+
+    public Job(String source, String externalId, String canonicalUrl, String title, String company,
+               String location, RemoteType remoteType, String employmentType, String description,
+               Instant publishedAt, Instant deadline, String rawPayloadHash,
+               String descriptionHash, String normalizedFingerprint, Instant now,
+               LocationEligibilityDecision eligibility, EarlyCareerDecision earlyCareer) {
         this.source = source;
         this.externalId = externalId;
         this.canonicalUrl = canonicalUrl;
@@ -73,6 +115,8 @@ public class Job {
         this.rawPayloadHash = rawPayloadHash;
         this.descriptionHash = descriptionHash;
         this.normalizedFingerprint = normalizedFingerprint;
+        applyEligibility(eligibility);
+        applyEarlyCareer(earlyCareer);
         this.fetchedAt = now;
         this.firstSeenAt = now;
         this.lastSeenAt = now;
@@ -110,7 +154,58 @@ public class Job {
         this.rawPayloadHash = updated.rawPayloadHash;
         this.descriptionHash = updated.descriptionHash;
         this.normalizedFingerprint = updated.normalizedFingerprint;
+        this.locationEligibility = updated.locationEligibility;
+        this.remoteScope = updated.remoteScope;
+        this.normalizedCity = updated.normalizedCity;
+        this.normalizedCountry = updated.normalizedCountry;
+        this.eligibleFromRomania = updated.eligibleFromRomania;
+        this.eligibilityReason = updated.eligibilityReason;
+        this.detectedLocationRestrictions = updated.detectedLocationRestrictions;
+        this.requiredTimezone = updated.requiredTimezone;
+        this.requiredWorkAuthorization = updated.requiredWorkAuthorization;
+        this.seniorityLevel = updated.seniorityLevel;
+        this.experienceMinimumYears = updated.experienceMinimumYears;
+        this.experienceMaximumYears = updated.experienceMaximumYears;
+        this.experienceMandatory = updated.experienceMandatory;
+        this.experienceRawText = updated.experienceRawText;
+        this.earlyCareerEligibility = updated.earlyCareerEligibility;
+        this.earlyCareerEligibilityReason = updated.earlyCareerEligibilityReason;
         seenAgain(now);
+    }
+
+    private void applyEligibility(LocationEligibilityDecision decision) {
+        if (decision == null) {
+            this.locationEligibility = LocationEligibility.REMOTE_ELIGIBILITY_UNKNOWN;
+            this.remoteScope = RemoteScope.UNKNOWN;
+            this.eligibleFromRomania = false;
+            this.eligibilityReason = "Eligibility was not evaluated";
+            return;
+        }
+        this.locationEligibility = decision.locationEligibility();
+        this.remoteScope = decision.remoteScope();
+        this.normalizedCity = decision.normalizedCity();
+        this.normalizedCountry = decision.normalizedCountry();
+        this.eligibleFromRomania = decision.eligibleFromRomania();
+        this.eligibilityReason = decision.eligibilityReason();
+        this.detectedLocationRestrictions = String.join("|", decision.detectedLocationRestrictions());
+        this.requiredTimezone = decision.requiredTimezone();
+        this.requiredWorkAuthorization = decision.requiredWorkAuthorization();
+    }
+
+    private void applyEarlyCareer(EarlyCareerDecision decision) {
+        if (decision == null) {
+            this.seniorityLevel = SeniorityLevel.UNKNOWN;
+            this.earlyCareerEligibility = EarlyCareerEligibility.UNKNOWN;
+            this.earlyCareerEligibilityReason = "No seniority or experience requirement could be determined";
+            return;
+        }
+        this.seniorityLevel = decision.seniorityLevel();
+        this.experienceMinimumYears = decision.experienceRequirement().minimumYears();
+        this.experienceMaximumYears = decision.experienceRequirement().maximumYears();
+        this.experienceMandatory = decision.experienceRequirement().mandatory();
+        this.experienceRawText = decision.experienceRequirement().rawText();
+        this.earlyCareerEligibility = decision.earlyCareerEligibility();
+        this.earlyCareerEligibilityReason = decision.eligibilityReason();
     }
 
     public void changeStatus(JobStatus next) {
@@ -125,6 +220,23 @@ public class Job {
     public String getCompany() { return company; }
     public String getLocation() { return location; }
     public RemoteType getRemoteType() { return remoteType; }
+    public WorkplaceType getWorkplaceType() { return WorkplaceType.valueOf(remoteType.name()); }
+    public LocationEligibility getLocationEligibility() { return locationEligibility; }
+    public RemoteScope getRemoteScope() { return remoteScope; }
+    public String getNormalizedCity() { return normalizedCity; }
+    public String getNormalizedCountry() { return normalizedCountry; }
+    public boolean isEligibleFromRomania() { return eligibleFromRomania; }
+    public String getEligibilityReason() { return eligibilityReason; }
+    public String getDetectedLocationRestrictions() { return detectedLocationRestrictions; }
+    public String getRequiredTimezone() { return requiredTimezone; }
+    public String getRequiredWorkAuthorization() { return requiredWorkAuthorization; }
+    public SeniorityLevel getSeniorityLevel() { return seniorityLevel; }
+    public Double getExperienceMinimumYears() { return experienceMinimumYears; }
+    public Double getExperienceMaximumYears() { return experienceMaximumYears; }
+    public boolean isExperienceMandatory() { return experienceMandatory; }
+    public String getExperienceRawText() { return experienceRawText; }
+    public EarlyCareerEligibility getEarlyCareerEligibility() { return earlyCareerEligibility; }
+    public String getEarlyCareerEligibilityReason() { return earlyCareerEligibilityReason; }
     public String getEmploymentType() { return employmentType; }
     public String getDescription() { return description; }
     public Double getRequiredExperienceYears() { return requiredExperienceYears; }

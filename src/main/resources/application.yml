@@ -52,6 +52,18 @@ jobpilot:
   sources:
     greenhouse-board-tokens: ${GREENHOUSE_BOARD_TOKENS:}
     lever-company-ids: ${LEVER_COMPANY_IDS:}
+    ashby-board-names: ${ASHBY_BOARD_NAMES:}
+    recruitee-company-ids: ${RECRUITEE_COMPANY_IDS:}
+  eligibility:
+    target-city: ${JOBPILOT_TARGET_CITY:Bucharest}
+    target-country: ${JOBPILOT_TARGET_COUNTRY:Romania}
+    include-ilfov: ${JOBPILOT_INCLUDE_ILFOV:false}
+    accept-bucharest-onsite: ${JOBPILOT_ACCEPT_BUCHAREST_ONSITE:true}
+    accept-bucharest-hybrid: ${JOBPILOT_ACCEPT_BUCHAREST_HYBRID:true}
+    accept-bucharest-remote: ${JOBPILOT_ACCEPT_BUCHAREST_REMOTE:true}
+    accept-remote-from-romania: ${JOBPILOT_ACCEPT_REMOTE_FROM_ROMANIA:true}
+    reject-unknown-remote-scope: ${JOBPILOT_REJECT_UNKNOWN_REMOTE_SCOPE:true}
+    accepted-remote-regions: ${JOBPILOT_ACCEPTED_REMOTE_REGIONS:ROMANIA,EU,EEA,EUROPE,EMEA,WORLDWIDE}
   candidate:
     home-country: Romania
     preferred-locations: [Bucharest, București, Romania, Remote Romania]
@@ -110,6 +122,14 @@ jobpilot:
     max-items-per-run: ${MAINTENANCE_MAX_ITEMS_PER_RUN:100}
     max-duration-per-run: ${MAINTENANCE_MAX_DURATION_PER_RUN:30s}
     orphan-grace-period: ${MAINTENANCE_ORPHAN_GRACE_PERIOD:1h}
+  scraper-worker:
+    enabled: ${SCRAPER_WORKER_ENABLED:false}
+    base-url: ${SCRAPER_WORKER_BASE_URL:http://scraper-worker:3000}
+    shared-secret: ${SCRAPER_WORKER_SHARED_SECRET:}
+    connect-timeout: ${SCRAPER_WORKER_CONNECT_TIMEOUT:5s}
+    response-timeout: ${SCRAPER_WORKER_RESPONSE_TIMEOUT:45s}
+    max-response-bytes: ${SCRAPER_WORKER_MAX_RESPONSE_BYTES:1048576}
+    max-description-characters: ${SCRAPER_WORKER_MAX_DESCRIPTION_CHARACTERS:50000}
   scheduling:
     fetch-cron: ${JOB_FETCH_CRON:0 0 */6 * * *}
     digest-cron: ${DAILY_DIGEST_CRON:0 0 9 * * *}

@@ -24,7 +24,8 @@ public final class TestProperties {
                                              JobPilotProperties.Llm llm) {
         return new JobPilotProperties(
                 telegram,
-                new JobPilotProperties.Sources(List.of(), List.of()),
+                new JobPilotProperties.Sources(List.of(), List.of(), List.of(), List.of()),
+                JobPilotProperties.Eligibility.defaults(),
                 new JobPilotProperties.Candidate("Romania",
                         List.of("Bucharest", "București", "Romania", "Remote Romania"),
                         List.of("Java", "Spring Boot", "REST", "SQL", "PostgreSQL", "JPA", "Maven", "JUnit"),

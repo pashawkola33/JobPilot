@@ -1,5 +1,6 @@
 package com.jobpilot.manualurl.application;
 
+import com.jobpilot.browser.application.BrowserFallbackService;
 import com.jobpilot.config.JobPilotProperties;
 import com.jobpilot.jobs.domain.RawJob;
 import com.jobpilot.jobs.service.JobProcessingResult;
@@ -25,16 +26,19 @@ public class ManualJobUrlService {
     private final SafeManualPageFetcher pageFetcher;
     private final DeterministicManualJobParser parser;
     private final ManualJobPersistenceService persistence;
+    private final BrowserFallbackService browserFallback;
     private final JobPilotProperties.ManualUrl settings;
 
     public ManualJobUrlService(ManualUrlPolicy urlPolicy, ManualAtsResolver atsResolver,
                                SafeManualPageFetcher pageFetcher, DeterministicManualJobParser parser,
-                               ManualJobPersistenceService persistence, JobPilotProperties properties) {
+                               ManualJobPersistenceService persistence,
+                               BrowserFallbackService browserFallback, JobPilotProperties properties) {
         this.urlPolicy = urlPolicy;
         this.atsResolver = atsResolver;
         this.pageFetcher = pageFetcher;
         this.parser = parser;
         this.persistence = persistence;
+        this.browserFallback = browserFallback;
         this.settings = properties.manualUrl();
     }
 
@@ -57,9 +61,16 @@ public class ManualJobUrlService {
                 var fetched = pageFetcher.fetch(validated);
                 ManualParseResult parsed = parser.parse(fetched);
                 if (parsed.status() != ManualParseStatus.SUCCESS) {
-                    return parseFailure(parsed.status());
+                    // Safe public JS-required fallback: render with the worker (no
+                    // DB transaction is open here) and re-enter the same pipeline.
+                    Optional<RawJob> rendered = browserFallback.attempt(validated, parsed.status());
+                    if (rendered.isEmpty()) {
+                        return parseFailure(parsed.status());
+                    }
+                    rawJob = rendered.get();
+                } else {
+                    rawJob = parsed.vacancy().toRawJob();
                 }
-                rawJob = parsed.vacancy().toRawJob();
             }
         } catch (ManualFetchException exception) {
             return fetchFailure(exception);
@@ -73,6 +84,21 @@ public class ManualJobUrlService {
     }
 
     private ManualJobSubmissionResult success(JobProcessingResult processed) {
+        if (!processed.accepted() || processed.job() == null) {
+            if (processed.eligibilityDecision() != null
+                    && !processed.eligibilityDecision().accepted()) {
+                return new ManualJobSubmissionResult(ManualJobStatus.LOCATION_INELIGIBLE,
+                        null, null, null, java.util.List.of(),
+                        java.util.List.of(processed.eligibilityDecision().eligibilityReason()),
+                        "The vacancy is not eligible for Bucharest or remote work from Romania.");
+            }
+            String reason = processed.earlyCareerDecision() == null
+                    ? "No seniority or experience requirement could be determined."
+                    : processed.earlyCareerDecision().eligibilityReason();
+            return new ManualJobSubmissionResult(ManualJobStatus.EARLY_CAREER_INELIGIBLE,
+                    null, null, null, java.util.List.of(), java.util.List.of(reason),
+                    "The vacancy is not confirmed as an early-career opportunity.");
+        }
         var score = processed.score();
         var risks = new ArrayList<String>();
         if (score != null) {

@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jobpilot.common.Hashing;
 import com.jobpilot.common.UrlCanonicalizer;
 import com.jobpilot.config.JobPilotProperties;
+import com.jobpilot.jobs.domain.RawCareerData;
+import com.jobpilot.jobs.domain.RawLocationData;
 import com.jobpilot.manualurl.domain.ManualSourceClassification;
 import com.jobpilot.manualurl.fetch.ManualFetchedResource;
 import java.net.URI;
@@ -116,11 +118,15 @@ public class DeterministicManualJobParser {
         String location = jobLocation(node);
         String employmentType = joinedText(node.path("employmentType"));
         String externalId = identifier(node.path("identifier"));
+        List<String> applicantLocations = locationValues(node.path("applicantLocationRequirements"));
         return new ParsedManualVacancy(sourceFor(baseUri), bounded(externalId, 255),
                 canonical.toString(), title.strip(), company.strip(), bounded(location, 300),
                 description, bounded(employmentType, 80), parseInstant(node.path("datePosted").asText(null)),
                 parseInstant(firstText(node, "validThrough", "expirationDate")),
-                ManualSourceClassification.SCHEMA_ORG_JOB_POSTING);
+                ManualSourceClassification.SCHEMA_ORG_JOB_POSTING,
+                new RawLocationData(null, locationValues(node.path("jobLocation")), List.of(),
+                        node.path("jobLocationType").asText(null), applicantLocations, null, null),
+                experienceData(node.path("experienceRequirements")));
     }
 
     private ParsedManualVacancy fromMetadata(Document document, URI baseUri) {
@@ -165,10 +171,38 @@ public class DeterministicManualJobParser {
                 attribute(document.selectFirst("time[itemprop=datePosted]"), "datetime"));
         String deadline = firstNonBlank(meta(document, "meta[name=job:deadline]"),
                 attribute(document.selectFirst("time[itemprop=validThrough]"), "datetime"));
+        String experience = firstNonBlank(meta(document, "meta[name=job:experience]"),
+                contentOrText(document.selectFirst("[itemprop=experienceRequirements]")));
         return new ParsedManualVacancy(sourceFor(baseUri), bounded(externalId, 255),
                 canonical.toString(), title.strip(), company.strip(), bounded(location, 300),
                 description, bounded(employmentType, 80), parseInstant(published), parseInstant(deadline),
-                ManualSourceClassification.SUPPORTED_HTML_METADATA);
+                ManualSourceClassification.SUPPORTED_HTML_METADATA, RawLocationData.empty(),
+                isBlank(experience) ? RawCareerData.empty()
+                        : new RawCareerData(null, null, null, true, bounded(experience, 500)));
+    }
+
+    private RawCareerData experienceData(JsonNode value) {
+        if (value == null || value.isMissingNode() || value.isNull()) return RawCareerData.empty();
+        if (value.isArray()) {
+            for (JsonNode item : value) {
+                RawCareerData parsed = experienceData(item);
+                if (parsed.hasExperienceRequirement()) return parsed;
+            }
+            return RawCareerData.empty();
+        }
+        if (value.isNumber()) {
+            double years = value.asDouble();
+            return new RawCareerData(null, years, years, true, value.asText() + " years");
+        }
+        if (value.isTextual()) {
+            return new RawCareerData(null, null, null, true, bounded(value.asText(), 500));
+        }
+        JsonNode months = value.path("monthsOfExperience");
+        Double minimumYears = months.isNumber() ? months.asDouble() / 12.0 : null;
+        String raw = firstNonBlank(firstText(value, "description", "name"),
+                months.isValueNode() ? months.asText(null) + " months" : null);
+        return minimumYears == null && isBlank(raw) ? RawCareerData.empty()
+                : new RawCareerData(null, minimumYears, null, true, bounded(raw, 500));
     }
 
     private List<JsonNode> topLevelObjects(JsonNode root) {
@@ -237,6 +271,13 @@ public class DeterministicManualJobParser {
         JsonNode country = address.path("addressCountry");
         addNonBlank(parts, country.isTextual() ? country.asText() : country.path("name").asText(null));
         addNonBlank(locations, String.join(", ", parts));
+    }
+
+    private List<String> locationValues(JsonNode value) {
+        List<String> locations = new ArrayList<>();
+        if (value.isArray()) value.forEach(location -> addLocation(locations, location));
+        else addLocation(locations, value);
+        return List.copyOf(locations);
     }
 
     private String joinedText(JsonNode value) {

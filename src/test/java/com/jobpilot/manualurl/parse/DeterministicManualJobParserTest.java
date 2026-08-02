@@ -42,6 +42,19 @@ class DeterministicManualJobParserTest {
     }
 
     @Test
+    void preservesStructuredJsonLdExperienceForTheCentralCareerGate() {
+        String json = jobPosting("\"experienceRequirements\":{"
+                + "\"@type\":\"OccupationalExperienceRequirements\","
+                + "\"monthsOfExperience\":24},");
+
+        ManualParseResult result = parser.parse(html(script(json)));
+
+        assertThat(result.status()).isEqualTo(ManualParseStatus.SUCCESS);
+        assertThat(result.vacancy().careerData().minimumYears()).isEqualTo(2.0);
+        assertThat(result.vacancy().toRawJob().careerData().mandatory()).isTrue();
+    }
+
+    @Test
     void parsesJsonLdArray() {
         String json = "[{\"@type\":\"Organization\",\"name\":\"Other\"},"
                 + jobPosting("") + "]";

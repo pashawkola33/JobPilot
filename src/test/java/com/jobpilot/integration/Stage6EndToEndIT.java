@@ -210,8 +210,11 @@ class Stage6EndToEndIT {
                 "Synthetic Stage 6 public fixture");
         when(policy.validate(publicUrl.toString())).thenReturn(validated);
         when(ats.fetch(publicUrl)).thenReturn(Optional.of(synthetic));
+        var browserFallback = new com.jobpilot.browser.application.BrowserFallbackService(
+                com.jobpilot.browser.config.ScraperWorkerProperties.disabled(),
+                request -> com.jobpilot.browser.api.BrowserExtractionResponse.unavailable());
         ManualJobUrlService manual = new ManualJobUrlService(policy, ats, fetcher, parser,
-                manualPersistence, properties);
+                manualPersistence, browserFallback, properties);
 
         var created = manual.submit(publicUrl.toString());
         var duplicate = manual.submit(publicUrl.toString());
@@ -324,7 +327,7 @@ class Stage6EndToEndIT {
         assertThat(health.health().getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(jdbc.queryForObject(
                 "select count(*) from flyway_schema_history where success", Integer.class))
-                .isEqualTo(5);
+                .isEqualTo(7);
     }
 
     private TelegramUpdatePoller poller(FakeTelegramClient client) {

@@ -1,0 +1,29 @@
+# Dependencies and build output are never committed.
+node_modules/
+dist/
+
+# Crawlee runtime storage, browser data, and any downloaded engine must never be committed.
+storage/
+crawlee_storage/
+.crawlee/
+browsers/
+.cache/
+.cloakbrowser/
+*.har
+*.trace
+*.zip
+screenshots/
+videos/
+traces/
+auth.json
+*screenshot*.png
+.DS_Store
+src/login.ts
+
+# Secrets and local environment.
+.env
+.env.*
+!.env.example
+
+# Logs.
+*.log

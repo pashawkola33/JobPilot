@@ -3,6 +3,8 @@ package com.jobpilot.matching;
 import com.jobpilot.jobs.domain.ExtractedRequirements;
 import com.jobpilot.jobs.domain.Job;
 import com.jobpilot.jobs.domain.JobStatus;
+import com.jobpilot.jobs.domain.LocationEligibility;
+import com.jobpilot.jobs.domain.WorkplaceType;
 import com.jobpilot.config.JobPilotProperties;
 import java.time.Clock;
 import java.time.Duration;
@@ -126,6 +128,15 @@ public class JobMatchingService {
     }
 
     private int locationScore(Job job, ExtractedRequirements r) {
+        if (job.getLocationEligibility() == LocationEligibility.REMOTE_ROMANIA_ELIGIBLE) return 10;
+        if (job.getLocationEligibility() == LocationEligibility.BUCHAREST_LOCAL) {
+            return switch (job.getWorkplaceType()) {
+                case REMOTE -> 9;
+                case HYBRID -> 8;
+                case ONSITE -> 7;
+                case UNKNOWN -> 0;
+            };
+        }
         String text = (String.valueOf(job.getLocation()) + " " + String.valueOf(r.remoteEligibility())).toLowerCase(Locale.ROOT);
         if (has(text, "bucharest", "bucurești")) return 10;
         if (text.contains("remote") && text.contains("romania")) return 10;
@@ -135,6 +146,8 @@ public class JobMatchingService {
     }
 
     private boolean romaniaEligible(Job job, ExtractedRequirements r) {
+        if (job.getLocationEligibility() == LocationEligibility.BUCHAREST_LOCAL
+                || job.getLocationEligibility() == LocationEligibility.REMOTE_ROMANIA_ELIGIBLE) return true;
         String remote = String.valueOf(r.remoteEligibility()).toLowerCase(Locale.ROOT);
         String location = String.valueOf(job.getLocation()).toLowerCase(Locale.ROOT);
         String home = candidate.homeCountry().toLowerCase(Locale.ROOT);

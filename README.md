@@ -2,7 +2,7 @@
 
 ![Java](https://img.shields.io/badge/Java-21-orange) ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3-brightgreen) ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg) ![Docker](https://img.shields.io/badge/Docker-ready-2496ED)
 
-JobPilot is a human-in-the-loop internship discovery service for entry-level software roles. Phase 1 fetches public Greenhouse and Lever job boards, normalizes and deduplicates vacancies, deterministically extracts requirements, scores them against a configurable candidate profile, and sends strong matches to a Telegram channel. Phase 2 Stage 1 adds the versioned candidate truth model, Stage 2 safely processes manually submitted public vacancy URLs, Stage 3 adds human-maintained application tracking, Stage 4 adds optional structured job analysis, Stage 5 creates truthful application documents for private human review, and Stage 6 integrates the complete workflow with maintenance, readiness, safe operational counters, PostgreSQL end-to-end verification, and production-like Docker defaults.
+JobPilot is a human-in-the-loop internship discovery service for entry-level software roles. It fetches public Greenhouse, Lever, Ashby, and Recruitee boards, applies hard location and early-career eligibility gates, normalizes and deduplicates vacancies, deterministically extracts requirements, scores them against a configurable candidate profile, and sends strong matches to a Telegram channel. Phase 2 Stage 1 adds the versioned candidate truth model, Stage 2 safely processes manually submitted public vacancy URLs, Stage 3 adds human-maintained application tracking, Stage 4 adds optional structured job analysis, Stage 5 creates truthful application documents for private human review, and Stage 6 integrates the complete workflow with maintenance, readiness, safe operational counters, PostgreSQL end-to-end verification, and production-like Docker defaults.
 
 JobPilot never submits applications, uploads documents to employers, answers screening questions, accepts agreements, or contacts recruiters. Stage 5 generates ATS-oriented DOCX/PDF résumés and optional cover notes, but attaching a completed version to an existing application remains a separate human-triggered internal operation. Protected-site browser automation remains out of scope.
 
@@ -10,7 +10,7 @@ JobPilot never submits applications, uploads documents to employers, answers scr
 
 - Java 21 and Spring Boot 3.3
 - PostgreSQL persistence with Flyway-managed `jobs`, `job_requirements`, `job_scores`, and `source_fetch_logs`
-- Greenhouse Job Board API and Lever Postings API adapters
+- Greenhouse, Lever, Ashby, and Recruitee public ATS adapters
 - Configurable search terms, locations, board tokens, and schedules
 - Exponential retry for transient network/5xx failures with response time and size limits
 - Per-source and per-vacancy failure isolation
@@ -26,8 +26,9 @@ JobPilot never submits applications, uploads documents to employers, answers scr
 The application uses a layered flow:
 
 ```text
-Greenhouse / Lever -> JobSource adapters -> relevance filter -> normalizer
-    -> deduplication -> deterministic extraction -> scoring -> PostgreSQL
+provider adapters -> RawJob -> fact normalization -> workplace/location/scope eligibility
+    -> seniority/experience/early-career eligibility -> canonicalization -> deduplication
+    -> deterministic extraction/scoring -> PostgreSQL
     -> excellent notification / daily good-match digest -> Telegram
 
 manual public URL -> URL/DNS/redirect safety policy -> known ATS API or bounded HTTP fetch
@@ -57,6 +58,28 @@ bounded scheduler -> expired reservation reconciliation + stale document recover
 
 Integrations implement `JobSource`; persistence is isolated behind Spring Data repositories. `JobProcessor` gives one vacancy a transaction, while `JobIngestionService` contains failures so one bad source or posting cannot abort the complete fetch. `JobSchedulingService` prevents overlapping fetches with an atomic guard.
 
+### Bucharest and remote-from-Romania eligibility
+
+Location is a hard gate before deduplication, scoring, persistence, or notification. Accepted jobs are either explicitly located in Bucharest (onsite, hybrid, or remote) or fully remote with an explicit Romania-compatible scope: Romania, EU, EEA, Europe, EMEA, or worldwide. A bare `Remote` label remains `REMOTE_ELIGIBILITY_UNKNOWN`; US/Canada/UK/single-country/APAC/Americas restrictions, incompatible timezones or work authorization, temporary remote work, and required non-Bucharest office attendance are rejected. `Bucuresti`, `București`, Romanian country spelling, and Bucharest Metropolitan Area normalize to Bucharest. Ilfov remains separate and is disabled by default.
+
+Typed settings live under `jobpilot.eligibility`. Core normalization and restriction rules remain in code rather than configurable regular expressions. Flyway migration `V6__location_eligibility.sql` stores the normalized decision and evidence on accepted jobs. The daily digest also queries only the two accepted eligibility categories, so legacy unknown rows cannot leak into notifications. A manually submitted out-of-market vacancy returns `LOCATION_INELIGIBLE` without being persisted.
+
+### Early-career eligibility
+
+Seniority and mandatory experience form a second hard gate. Accepted levels are internship, trainee/apprentice, working student, graduate, entry level, and junior. A role without an early-career title can still qualify when structured provider facts or its requirements explicitly say no prior experience, students/recent graduates accepted, or 0–2 years. Projects, coursework, internships, a GitHub portfolio, and basic familiarity are not treated as mandatory full-time commercial experience; experience described as preferred but not required does not disqualify an otherwise early-career role.
+
+Mid-level, senior, staff, principal, lead, architect, manager, head, director, VP, and executive roles are rejected. Mandatory experience above two years and primary people/team/department leadership, technical leadership, architecture ownership, mentoring, or senior-stakeholder management are also rejected. Description requirements override a junior title. Ambiguous vacancies remain `UNKNOWN` for diagnostics and never reach scoring, persistence, or automatic notification.
+
+Flyway migration `V7__early_career_eligibility.sql` stores `seniorityLevel`, the normalized experience range and mandatory flag, `earlyCareerEligibility`, and its reason. Provider adapters retain structured source facts but do not decide eligibility. The daily digest requires both an accepted location category and `earlyCareerEligibility=ELIGIBLE`; manual submissions return `EARLY_CAREER_INELIGIBLE` for both unknown and rejected career decisions.
+
+The opt-in `development` profile contains 46 public ATS tenants verified on 2026-07-21 across all four providers. Run the read-only live volume check with network access:
+
+```bash
+./mvnw test -q -DargLine=-Djobpilot.live-smoke=true -Dtest=LiveVacancySmokeTest
+```
+
+It reports fetched and unique raw totals; Bucharest-local, Romania-compatible remote, unknown remote, restricted remote, and outside-Bucharest onsite/hybrid counts; early-career eligible, unknown, and rejected counts after the location gate; final combined eligible volume; productive provider/tenant IDs; the original 500-raw/150-location-eligible volume targets; and the estimated additional-board shortfall. It never fabricates vacancies and does not persist or score the live results.
+
 ### Phase 2 Stage 1 persistence
 
 Flyway migration `V2__phase_2_persistence_and_candidate_profile.sql` adds normalized tables for:
@@ -84,7 +107,7 @@ See [Phase 2 architecture](docs/phase-2-architecture.md) and [resume truth sourc
 
 Successful vacancies enter the existing normalization, deduplication, deterministic requirement extraction, scoring, and persistence pipeline. Tracking parameters are removed without reordering the remaining query parameters. Generic manual sources are scoped by canonical hostname so common external IDs cannot collide across sites. Duplicate protection uses the existing application checks and database uniqueness constraints, including concurrent submissions.
 
-Response statuses are `CREATED`, `ALREADY_EXISTS`, `UNSUPPORTED_SOURCE`, `INVALID_URL`, `FETCH_FAILED`, `PARSE_FAILED`, or `BLOCKED_OR_PROTECTED`. Example:
+Response statuses are `CREATED`, `ALREADY_EXISTS`, `LOCATION_INELIGIBLE`, `EARLY_CAREER_INELIGIBLE`, `UNSUPPORTED_SOURCE`, `INVALID_URL`, `FETCH_FAILED`, `PARSE_FAILED`, or `BLOCKED_OR_PROTECTED`. Example:
 
 ```bash
 curl --request POST http://localhost:8080/internal/v1/jobs/manual-url \
@@ -95,6 +118,22 @@ curl --request POST http://localhost:8080/internal/v1/jobs/manual-url \
 The endpoint returns the canonical URL, persisted job ID, score, strengths, and risks when processing succeeds. It does not log submitted URLs or response content.
 
 This is an internal administrative endpoint. Keep it behind a trusted network boundary or an authentication layer; Docker Compose binds the application port to loopback by default.
+
+### Optional browser-rendering fallback (`scraper-worker`)
+
+Java extraction is always attempted first, in this order: (1) a known ATS/public API, (2) a safe Java HTTP fetch, (3) JSON-LD, (4) deterministic HTML parsing. Only when that reaches a page but cannot extract a vacancy from an **explicitly safe public JS-required** case does JobPilot optionally call the out-of-process **`scraper-worker`** (Crawlee + CloakBrowser via playwright-core). The worker renders one already-validated public URL and returns bounded typed JSON, which re-enters the **same** Java normalization, deduplication, scoring, and PostgreSQL pipeline. The worker's URL and any identifier are never trusted — the vacancy is persisted against the operator-submitted, SSRF-validated URL.
+
+The fallback is **disabled by default** and never invoked for an invalid/prohibited URL, an SSRF rejection, an authentication requirement, a CAPTCHA/Cloudflare challenge, an explicit block, a rate limit, a protected portal, an unsupported scheme, or when Java already has sufficient data. Public LinkedIn guest detail and bounded guest search extraction are supported, but login/session automation, challenge bypass, pagination queues, and protected LinkedIn pages are not. The worker holds no database, LLM, or Telegram access. See [`scraper-worker/README.md`](scraper-worker/README.md).
+
+Enabled mode fails startup closed unless a valid worker base URL and a shared secret of at least 32 bytes are present. Configuration: `SCRAPER_WORKER_ENABLED` (default `false`), `SCRAPER_WORKER_BASE_URL` (default `http://scraper-worker:3000`), `SCRAPER_WORKER_SHARED_SECRET` (runtime-only; never committed; distinct from Telegram/OpenAI/database/document-HMAC secrets), `SCRAPER_WORKER_CONNECT_TIMEOUT`, `SCRAPER_WORKER_RESPONSE_TIMEOUT`, `SCRAPER_WORKER_MAX_RESPONSE_BYTES`, `SCRAPER_WORKER_MAX_DESCRIPTION_CHARACTERS`. The Java client targets only the single configured worker endpoint with redirects disabled and a bounded, typed response.
+
+Run it with the optional Compose profile (no host port; internal network only):
+
+```bash
+docker compose --profile scraper up --build
+```
+
+The CloakBrowser stealth-Chromium binary is prepared during the image build and is never downloaded on a request path; the binary and browser cache are never committed. Chromium's process sandbox remains enabled and sandbox-disabling launch arguments are removed. Authenticated render requests are admitted into a fixed number of active slots with no waiting queue; excess work receives `503 BUSY`. Every main-frame redirect and every subresource origin is re-screened before network access. Compose keeps the worker off the PostgreSQL network and applies CPU, memory, PID, file-descriptor, shared-memory, and temporary-storage limits. As with the manual-URL path, application DNS validation cannot entirely remove the narrow time-of-check/time-of-use DNS-rebinding window, so infrastructure egress controls should also deny private and metadata ranges in production.
 
 ### Phase 2 Stage 3 Telegram application tracker
 
@@ -161,7 +200,7 @@ Maintenance is disabled by default. When enabled, one JVM uses a local atomic gu
 
 `GET /health` performs no provider or Telegram call. It reports only `READY`/`NOT_READY` or `ENABLED`/`DISABLED` for database, Flyway schema, Telegram commands, LLM, documents, artifact storage, and maintenance, plus configured build version/commit tokens. It never exposes credentials, paths, contacts, document hashes, candidate facts, vacancy text, prompts, or provider output. Readiness is `DOWN` when the database, schema, or enabled artifact storage is not ready.
 
-Flyway remains forward-only and Stage 6 adds no migration: V1 is the initial vacancy/application schema, V2 adds candidate truth and workflow persistence, V3 adds authorized Telegram/application history hardening, V4 adds structured analysis and budget accounting, and V5 adds truthful document artifacts and fact references. Published V1–V5 files are unchanged.
+Flyway remains forward-only: V1 is the initial vacancy/application schema, V2 adds candidate truth and workflow persistence, V3 adds authorized Telegram/application history hardening, V4 adds structured analysis and budget accounting, V5 adds truthful document artifacts and fact references, V6 adds location eligibility evidence, and V7 adds early-career eligibility evidence. Published V1–V5 files are unchanged.
 
 ## Requirements
 
@@ -341,7 +380,7 @@ If startup fails, check PostgreSQL health, Flyway validation, and fail-closed co
 - Only documented public Greenhouse and Lever APIs are queried.
 - Manual URL fetches allow only `http`/`https`, reject credentials, validate every original and redirected hostname through DNS, and block loopback, private, link-local, multicast, unspecified, reserved, benchmarking, and cloud-metadata destinations. IPv4 destinations embedded in 6to4, Teredo, NAT64, IPv4-compatible, or IPv4-mapped IPv6 addresses are decoded and checked by the same IPv4 policy.
 - Manual fetches send only fixed `Accept` and `User-Agent` headers—never cookies, authorization, provider tokens, or user-supplied headers—and accept only bounded HTML, XHTML, text, or JSON responses.
-- LinkedIn and protected portals are not scraped; CAPTCHAs, authentication, robots controls, and rate limits are never bypassed.
+- Only public LinkedIn guest detail/search markup is parsed; protected portals are not scraped, and CAPTCHAs, authentication, robots controls, and rate limits are never bypassed.
 - JobPilot discovers and ranks vacancies only. Every application remains a deliberate manual action.
 - Internal HTTP endpoints have no authentication and require loopback or a trusted network boundary.
 - The architecture is single-user; LLM budgets and runtime document contact configuration are global.
@@ -360,7 +399,9 @@ If startup fails, check PostgreSQL health, Flyway validation, and fail-closed co
 - Strict schemas and fact validation reduce unsupported LLM selections but cannot guarantee perfect hallucination prevention; human review remains mandatory.
 - Stage 6 never submits applications, uploads documents to employers, contacts recruiters, or answers screening questions.
 - No browser automation or fallback for JavaScript-only, authenticated, CAPTCHA, or otherwise protected vacancy pages.
-- Crawlee and CloakBrowser are intentionally absent and may be considered only after Phase 2 is merged.
+- The optional Crawlee + CloakBrowser browser-rendering fallback (`scraper-worker`) is disabled by default and is used only for an explicitly safe public JS-required case; deterministic Java extraction always runs first. It supports bounded public LinkedIn guest detail/search extraction but performs no CAPTCHA/challenge bypass, login automation, pagination queue, or protected-portal scraping.
+- CloakBrowser is an optional third-party stealth-Chromium dependency; its Chromium binary is downloaded from the vendor at image-build time and is never committed. Review CloakBrowser's license and Chromium redistribution terms before production use. The full `playwright` package is not installed (only `playwright-core`).
+- Romanian source adapters are not yet implemented on this branch; no Romanian-specific ingestion adapter has been added.
 - Multi-user support, ownership, authentication, and per-user contact/budget configuration remain future work.
 - The standard Java HTTP client performs its own connection-time DNS lookup after policy validation, leaving a narrow DNS-rebinding race; production deployments should also block private and metadata ranges at the network layer.
 - PostgreSQL Testcontainers integration tests require a working Docker environment.
