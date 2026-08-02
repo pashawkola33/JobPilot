@@ -42,8 +42,8 @@ public class ManualJobPersistenceService {
 
     private Optional<Job> findExisting(RawJob rawJob) {
         if (rawJob.externalId() != null && !rawJob.externalId().isBlank()) {
-            Optional<Job> byExternalId = jobs.findBySourceAndExternalId(
-                    rawJob.source(), rawJob.externalId());
+            Optional<Job> byExternalId = jobs.findBySourceAndProviderTenantAndExternalId(
+                    rawJob.source(), rawJob.providerTenant(), rawJob.externalId());
             if (byExternalId.isPresent()) {
                 return byExternalId;
             }

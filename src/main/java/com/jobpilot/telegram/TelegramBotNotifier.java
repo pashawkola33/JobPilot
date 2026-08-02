@@ -8,7 +8,6 @@ import com.jobpilot.matching.ScoreCard;
 import java.util.List;
 import java.util.Map;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClientException;
 import org.springframework.web.util.HtmlUtils;
 
 @Component
@@ -73,7 +72,7 @@ public class TelegramBotNotifier implements TelegramNotifier {
                         "reply_markup", Map.of("inline_keyboard", buttons));
         try {
             http.postJson("https://api.telegram.org/bot" + telegram.botToken() + "/sendMessage", body);
-        } catch (RestClientException exception) {
+        } catch (RuntimeException exception) {
             // Network exceptions embed the request URL, which contains the bot token.
             // Rethrow without the original message or cause so the token can never reach a log.
             throw new IllegalStateException(

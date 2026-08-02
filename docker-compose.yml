@@ -15,6 +15,8 @@ services:
       retries: 12
     stop_grace_period: 30s
     restart: unless-stopped
+    networks:
+      - database
 
   app:
     build:
@@ -84,6 +86,13 @@ services:
       MAINTENANCE_MAX_ITEMS_PER_RUN: ${MAINTENANCE_MAX_ITEMS_PER_RUN:-100}
       MAINTENANCE_MAX_DURATION_PER_RUN: ${MAINTENANCE_MAX_DURATION_PER_RUN:-30s}
       MAINTENANCE_ORPHAN_GRACE_PERIOD: ${MAINTENANCE_ORPHAN_GRACE_PERIOD:-1h}
+      SCRAPER_WORKER_ENABLED: ${SCRAPER_WORKER_ENABLED:-false}
+      SCRAPER_WORKER_BASE_URL: ${SCRAPER_WORKER_BASE_URL:-http://scraper-worker:3000}
+      SCRAPER_WORKER_SHARED_SECRET: ${SCRAPER_WORKER_SHARED_SECRET:-}
+      SCRAPER_WORKER_CONNECT_TIMEOUT: ${SCRAPER_WORKER_CONNECT_TIMEOUT:-5s}
+      SCRAPER_WORKER_RESPONSE_TIMEOUT: ${SCRAPER_WORKER_RESPONSE_TIMEOUT:-45s}
+      SCRAPER_WORKER_MAX_RESPONSE_BYTES: ${SCRAPER_WORKER_MAX_RESPONSE_BYTES:-1048576}
+      SCRAPER_WORKER_MAX_DESCRIPTION_CHARACTERS: ${SCRAPER_WORKER_MAX_DESCRIPTION_CHARACTERS:-50000}
     volumes:
       - jobpilot-documents:/var/lib/jobpilot/documents
     read_only: true
@@ -106,7 +115,69 @@ services:
       retries: 3
     stop_grace_period: 30s
     restart: unless-stopped
+    networks:
+      - database
+      - scraper-egress
+
+  # Optional JavaScript-rendering fallback worker. Started only with the
+  # "scraper" profile: `docker compose --profile scraper up`. It has no host
+  # port and is reachable only over the internal Compose network.
+  scraper-worker:
+    profiles: ["scraper"]
+    build:
+      context: ./scraper-worker
+      dockerfile: Dockerfile
+    environment:
+      PORT: "3000"
+      SCRAPER_WORKER_SHARED_SECRET: ${SCRAPER_WORKER_SHARED_SECRET:-}
+      WORKER_MAX_CONCURRENT_RENDERS: ${WORKER_MAX_CONCURRENT_RENDERS:-1}
+      WORKER_MAX_SEARCH_RESULTS: ${WORKER_MAX_SEARCH_RESULTS:-50}
+    expose:
+      - "3000"
+    init: true
+    cpus: "1.00"
+    mem_limit: 1073741824
+    mem_reservation: 268435456
+    pids_limit: 256
+    shm_size: 268435456
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 2048
+    read_only: true
+    tmpfs:
+      # Chromium writes its user-data dir and maps executable shared memory here,
+      # so this mount is nosuid but not noexec.
+      - /tmp:rw,nosuid,size=536870912,uid=10001,gid=10001,mode=0700
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./scraper-worker/seccomp_profile.json
+    cap_drop:
+      - ALL
+    cap_add:
+      # Required by Chromium's user-namespace sandbox after clone/unshare.
+      - SYS_CHROOT
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+    stop_grace_period: 20s
+    # A missing/weak secret exits with EX_CONFIG. Bound restarts so a
+    # misconfigured optional worker fails closed instead of crash-looping.
+    restart: "on-failure:3"
+    networks:
+      - scraper-egress
 
 volumes:
   jobpilot-postgres:
   jobpilot-documents:
+
+networks:
+  # The browser worker is never attached to the database network. It can reach
+  # the app and public vacancy sites through this separate egress network only.
+  scraper-egress:
+    driver: bridge
+  database:
+    driver: bridge

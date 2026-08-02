@@ -8,6 +8,7 @@
 .mvn/repository
 .mvn/wrapper/dists
 target
+scraper-worker
 data
 *.log
 *.pdf

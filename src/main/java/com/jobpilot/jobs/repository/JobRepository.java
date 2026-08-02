@@ -19,7 +19,8 @@ public interface JobRepository extends JpaRepository<Job, Long> {
 
     Optional<Job> findByCanonicalUrl(String canonicalUrl);
 
-    Optional<Job> findBySourceAndExternalId(String source, String externalId);
+    Optional<Job> findBySourceAndProviderTenantAndExternalId(
+            String source, String providerTenant, String externalId);
 
     Optional<Job> findFirstByNormalizedFingerprint(String normalizedFingerprint);
 

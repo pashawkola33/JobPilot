@@ -2,6 +2,7 @@ package com.jobpilot.manualurl.fetch;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.jobpilot.common.ExternalHttpClient;
+import com.jobpilot.common.ExternalHttpException;
 import com.jobpilot.jobs.domain.RawJob;
 import com.jobpilot.sources.greenhouse.GreenhouseJobSource;
 import com.jobpilot.sources.lever.LeverJobSource;
@@ -11,8 +12,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.ResourceAccessException;
-import org.springframework.web.client.RestClientResponseException;
 
 @Component
 public class ManualAtsResolver {
@@ -75,14 +74,15 @@ public class ManualAtsResolver {
     private JsonNode fetchJson(String apiUrl) {
         try {
             return http.getJson(apiUrl);
-        } catch (ResourceAccessException exception) {
-            throw new ManualFetchException(ManualFetchException.Category.CONNECTION_FAILED,
-                    "ATS API connection failed", exception);
-        } catch (RestClientResponseException exception) {
-            ManualFetchException.Category category = exception.getStatusCode().value() == 401
-                    || exception.getStatusCode().value() == 403
-                    || exception.getStatusCode().value() == 407
+        } catch (ExternalHttpException exception) {
+            ManualFetchException.Category category = exception.statusCode() != null
+                    && (exception.statusCode() == 401 || exception.statusCode() == 403
+                    || exception.statusCode() == 407)
                     ? ManualFetchException.Category.BLOCKED_OR_PROTECTED
+                    : exception.category() == ExternalHttpException.Category.TIMEOUT
+                    ? ManualFetchException.Category.TIMEOUT
+                    : exception.category() == ExternalHttpException.Category.RESPONSE_TOO_LARGE
+                    ? ManualFetchException.Category.RESPONSE_TOO_LARGE
                     : ManualFetchException.Category.HTTP_FAILURE;
             throw new ManualFetchException(category, "ATS API returned an unsuccessful status", exception);
         } catch (IllegalArgumentException exception) {
@@ -95,7 +95,7 @@ public class ManualAtsResolver {
         String url = job.url() == null || job.url().isBlank() ? submittedUrl.toString() : job.url();
         return new RawJob(job.source(), job.externalId(), url, job.title(), job.company(),
                 job.location(), job.description(), job.employmentType(), job.publishedAt(),
-                job.deadline(), job.rawPayload());
+                job.deadline(), job.rawPayload(), job.locationData(), job.providerTenant());
     }
 
     private List<String> pathSegments(URI uri) {

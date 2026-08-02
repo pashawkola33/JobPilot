@@ -1,5 +1,7 @@
 package com.jobpilot.llm.application;
 
+import com.jobpilot.common.Utf16;
+
 import com.jobpilot.jobs.domain.ExtractedRequirements;
 import com.jobpilot.llm.domain.CandidateMatchStrength;
 import com.jobpilot.llm.domain.CandidateStrength;
@@ -105,12 +107,12 @@ public class DeterministicJobAnalysisFallback {
 
     private String boundedExact(String value, int maximum) {
         if (value == null || value.isBlank()) return "unknown";
-        return value.length() <= maximum ? value : value.substring(0, maximum);
+        return Utf16.truncate(value, maximum);
     }
 
     private String bounded(String value, int maximum) {
         String normalized = value == null ? "Unknown role" : value.strip();
-        return normalized.length() <= maximum ? normalized : normalized.substring(0, maximum);
+        return Utf16.truncate(normalized, maximum);
     }
 
     private String meaningfulExcerpt(String source, String needle) {
@@ -118,7 +120,7 @@ public class DeterministicJobAnalysisFallback {
         if (index < 0) return null;
         int start = Math.max(0, index - 40);
         int end = Math.min(source.length(), index + needle.length() + 80);
-        String excerpt = boundedExact(source.substring(start, end).strip(), 300);
+        String excerpt = boundedExact(Utf16.slice(source, start, end).strip(), 300);
         return normalizedLength(excerpt) >= 8 && safeEvidence(excerpt) ? excerpt : null;
     }
 

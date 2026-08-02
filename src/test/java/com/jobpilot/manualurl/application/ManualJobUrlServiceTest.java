@@ -9,8 +9,16 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.jobpilot.jobs.domain.Job;
+import com.jobpilot.jobs.domain.EarlyCareerDecision;
+import com.jobpilot.jobs.domain.EarlyCareerEligibility;
+import com.jobpilot.jobs.domain.ExperienceRequirement;
+import com.jobpilot.jobs.domain.LocationEligibility;
+import com.jobpilot.jobs.domain.LocationEligibilityDecision;
 import com.jobpilot.jobs.domain.RawJob;
 import com.jobpilot.jobs.domain.RemoteType;
+import com.jobpilot.jobs.domain.RemoteScope;
+import com.jobpilot.jobs.domain.SeniorityLevel;
+import com.jobpilot.jobs.domain.WorkplaceType;
 import com.jobpilot.jobs.service.JobProcessingResult;
 import com.jobpilot.manualurl.domain.ManualJobStatus;
 import com.jobpilot.manualurl.fetch.ManualAtsResolver;
@@ -41,8 +49,12 @@ class ManualJobUrlServiceTest {
     private final SafeManualPageFetcher fetcher = mock(SafeManualPageFetcher.class);
     private final DeterministicManualJobParser parser = mock(DeterministicManualJobParser.class);
     private final ManualJobPersistenceService persistence = mock(ManualJobPersistenceService.class);
+    private final com.jobpilot.browser.application.BrowserFallbackService browserFallback =
+            new com.jobpilot.browser.application.BrowserFallbackService(
+                    com.jobpilot.browser.config.ScraperWorkerProperties.disabled(),
+                    request -> com.jobpilot.browser.api.BrowserExtractionResponse.unavailable());
     private final ManualJobUrlService service = new ManualJobUrlService(
-            policy, ats, fetcher, parser, persistence, TestProperties.create());
+            policy, ats, fetcher, parser, persistence, browserFallback, TestProperties.create());
 
     private ValidatedManualUrl validated;
 
@@ -147,6 +159,25 @@ class ManualJobUrlServiceTest {
         assertThatThrownBy(() -> service.submit(validated.uri().toString()))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("programming failure");
+    }
+
+    @Test
+    void returnsTypedEarlyCareerFailureForUnknownSeniority() {
+        RawJob raw = rawJob();
+        when(ats.fetch(validated.uri())).thenReturn(Optional.of(raw));
+        var location = new LocationEligibilityDecision(WorkplaceType.ONSITE,
+                LocationEligibility.BUCHAREST_LOCAL, RemoteScope.UNKNOWN, "Bucharest", "Romania",
+                true, "Bucharest vacancy", List.of(), null, null);
+        var career = new EarlyCareerDecision(SeniorityLevel.UNKNOWN,
+                ExperienceRequirement.unknown(), EarlyCareerEligibility.UNKNOWN,
+                "No seniority or experience requirement could be determined");
+        when(persistence.persist(raw)).thenReturn(
+                new JobProcessingResult(null, null, false, location, career));
+
+        var result = service.submit(validated.uri().toString());
+
+        assertThat(result.status()).isEqualTo(ManualJobStatus.EARLY_CAREER_INELIGIBLE);
+        assertThat(result.risks()).containsExactly(career.eligibilityReason());
     }
 
     private RawJob rawJob() {

@@ -1,0 +1,56 @@
+# Public ATS tenants verified against their unauthenticated endpoints on 2026-07-21.
+# This profile is intentionally opt-in: --spring.profiles.active=development
+jobpilot:
+  http:
+    max-response-bytes: 10485760
+  sources:
+    greenhouse-board-tokens:
+      - gitlab
+      - grafanalabs
+      - elastic
+      - cloudflare
+      - datadog
+      - canonical
+      - twilio
+      - yesenergy
+      - thepacgroup
+      - algolia
+    lever-company-ids:
+      - swissborg
+      - collabora
+      - swapcard
+      - whereby
+      - weloglobal
+      - veeva
+    ashby-board-names:
+      - Ashby
+      - langchain
+      - n8n
+      - enode
+      - linear
+      - supabase
+      - posthog
+      - gitbook
+      - deepgram
+      - temporal
+      - clickhouse
+      - airbyte
+      - render
+      - incident
+      - cursor
+      - notion
+      - cohere
+      - elevenlabs
+      - qonto
+      - attio
+      - pleo
+      - runway
+    recruitee-company-ids:
+      - transperfect
+      - tether
+      - xebiapoland
+      - auditdata
+      - moneyhash
+      - veocareers
+      - aidigital
+      - almavivadebelgique

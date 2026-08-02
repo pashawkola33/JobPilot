@@ -1,5 +1,7 @@
 package com.jobpilot.telegram.commands;
 
+import com.jobpilot.common.Utf16;
+
 import com.jobpilot.applications.application.ApplicationMutationResult;
 import com.jobpilot.applications.application.ApplicationView;
 import com.jobpilot.applications.application.ApplicationHistoryView;
@@ -244,7 +246,7 @@ public class TelegramMessageRenderer {
 
     private String limit(String value, int max) {
         if (value == null) return null;
-        return value.length() <= max ? value : value.substring(0, max - 1) + "…";
+        return value.length() <= max ? value : Utf16.truncate(value, max - 1) + "…";
     }
 
     private String escape(String value) {

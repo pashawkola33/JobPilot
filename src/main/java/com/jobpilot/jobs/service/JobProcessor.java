@@ -4,9 +4,11 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jobpilot.extraction.DeterministicRequirementExtractor;
 import com.jobpilot.jobs.domain.ExtractedRequirements;
+import com.jobpilot.jobs.domain.EarlyCareerDecision;
 import com.jobpilot.jobs.domain.Job;
 import com.jobpilot.jobs.domain.JobRequirement;
 import com.jobpilot.jobs.domain.JobScore;
+import com.jobpilot.jobs.domain.LocationEligibilityDecision;
 import com.jobpilot.jobs.domain.RawJob;
 import com.jobpilot.jobs.repository.JobRepository;
 import com.jobpilot.jobs.repository.JobRequirementRepository;
@@ -21,6 +23,8 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class JobProcessor {
     private final JobNormalizer normalizer;
+    private final LocationEligibilityService eligibility;
+    private final EarlyCareerEligibilityService earlyCareerEligibility;
     private final JobDeduplicationService deduplication;
     private final DeterministicRequirementExtractor extractor;
     private final JobMatchingService matching;
@@ -30,11 +34,15 @@ public class JobProcessor {
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
-    public JobProcessor(JobNormalizer normalizer, JobDeduplicationService deduplication,
+    public JobProcessor(JobNormalizer normalizer, LocationEligibilityService eligibility,
+                        EarlyCareerEligibilityService earlyCareerEligibility,
+                        JobDeduplicationService deduplication,
                         DeterministicRequirementExtractor extractor, JobMatchingService matching,
                         JobRepository jobs, JobRequirementRepository requirements,
                         JobScoreRepository scores, ObjectMapper objectMapper, Clock clock) {
         this.normalizer = normalizer;
+        this.eligibility = eligibility;
+        this.earlyCareerEligibility = earlyCareerEligibility;
         this.deduplication = deduplication;
         this.extractor = extractor;
         this.matching = matching;
@@ -47,25 +55,44 @@ public class JobProcessor {
 
     @Transactional
     public JobProcessingResult process(RawJob raw) {
-        Job normalized = normalizer.normalize(raw);
+        return process(raw, eligibility.evaluate(raw));
+    }
+
+    @Transactional
+    public JobProcessingResult process(RawJob raw, LocationEligibilityDecision decision) {
+        if (!decision.accepted()) return JobProcessingResult.locationIneligible(decision);
+        return process(raw, decision, earlyCareerEligibility.evaluate(raw));
+    }
+
+    @Transactional
+    public JobProcessingResult process(RawJob raw, LocationEligibilityDecision location,
+                                       EarlyCareerDecision earlyCareer) {
+        if (!location.accepted()) return JobProcessingResult.locationIneligible(location);
+        if (!earlyCareer.accepted()) {
+            return JobProcessingResult.earlyCareerIneligible(location, earlyCareer);
+        }
+        Job normalized = normalizer.normalize(raw, location, earlyCareer);
         Optional<Job> duplicate = deduplication.findDuplicate(normalized);
         if (duplicate.isEmpty()) {
-            return new JobProcessingResult(normalized, extractScoreAndSave(normalized), true);
+            return new JobProcessingResult(normalized, extractScoreAndSave(normalized), true,
+                    location, earlyCareer);
         }
         Job existing = duplicate.get();
         if (existing.getDescriptionHash().equals(normalized.getDescriptionHash())) {
             deduplication.recordSeen(existing);
             ScoreCard existingScore = scores.findByJobId(existing.getId())
                     .map(JobScore::toValue).orElse(null);
-            return new JobProcessingResult(existing, existingScore, false);
+            return new JobProcessingResult(existing, existingScore, false, location, earlyCareer);
         }
         existing.refreshContent(normalized, clock.instant());
-        return new JobProcessingResult(existing, extractScoreAndSave(existing), false);
+        return new JobProcessingResult(existing, extractScoreAndSave(existing), false,
+                location, earlyCareer);
     }
 
     private ScoreCard extractScoreAndSave(Job job) {
         ExtractedRequirements extracted = extractor.extract(job);
         job.applyRequirements(extracted, join(extracted.technologies()), join(extracted.spokenLanguages()));
+        ScoreCard card = matching.score(job, extracted);
         Job saved = jobs.save(job);
         requirements.findByJobId(saved.getId()).ifPresent(outdated -> {
             requirements.delete(outdated);
@@ -74,7 +101,6 @@ public class JobProcessor {
         requirements.save(new JobRequirement(saved, extracted, join(extracted.technologies()),
                 join(extracted.programmingLanguages()), join(extracted.spokenLanguages()),
                 join(extracted.mentorshipSignals()), json(extracted)));
-        ScoreCard card = matching.score(saved, extracted);
         scores.findByJobId(saved.getId()).ifPresent(outdated -> {
             scores.delete(outdated);
             scores.flush();

@@ -6,12 +6,14 @@ import java.math.RoundingMode;
 import java.net.URI;
 import java.util.List;
 import java.util.Locale;
+import com.jobpilot.jobs.domain.RemoteScope;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties("jobpilot")
 public record JobPilotProperties(
         Telegram telegram,
         Sources sources,
+        Eligibility eligibility,
         Candidate candidate,
         Http http,
         ManualUrl manualUrl,
@@ -22,6 +24,8 @@ public record JobPilotProperties(
 
     public JobPilotProperties {
         telegram = telegram == null ? new Telegram("", "") : telegram;
+        sources = sources == null ? Sources.empty() : sources;
+        eligibility = eligibility == null ? Eligibility.defaults() : eligibility;
         llm = llm == null ? Llm.disabled() : llm;
     }
 
@@ -100,7 +104,69 @@ public record JobPilotProperties(
 
     public record Sources(
             List<String> greenhouseBoardTokens,
-            List<String> leverCompanyIds) {
+            List<String> leverCompanyIds,
+            List<String> ashbyBoardNames,
+            List<String> recruiteeCompanyIds) {
+
+        public Sources {
+            greenhouseBoardTokens = copyAndValidate("Greenhouse", greenhouseBoardTokens);
+            leverCompanyIds = copyAndValidate("Lever", leverCompanyIds);
+            ashbyBoardNames = copyAndValidate("Ashby", ashbyBoardNames);
+            recruiteeCompanyIds = copyAndValidate("Recruitee", recruiteeCompanyIds);
+        }
+
+        public static Sources empty() {
+            return new Sources(List.of(), List.of(), List.of(), List.of());
+        }
+
+        private static List<String> copyAndValidate(String provider, List<String> values) {
+            if (values == null) return List.of();
+            for (String value : values) {
+                if (value == null || !value.matches("[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}")) {
+                    throw new IllegalArgumentException(provider
+                            + " tenant must match [a-zA-Z0-9][a-zA-Z0-9._-]{0,62}");
+                }
+            }
+            return List.copyOf(values);
+        }
+    }
+
+    public record Eligibility(
+            String targetCity,
+            String targetCountry,
+            boolean includeIlfov,
+            boolean acceptBucharestOnsite,
+            boolean acceptBucharestHybrid,
+            boolean acceptBucharestRemote,
+            boolean acceptRemoteFromRomania,
+            boolean rejectUnknownRemoteScope,
+            List<RemoteScope> acceptedRemoteRegions) {
+
+        public Eligibility {
+            targetCity = normalizeOrDefault(targetCity, "Bucharest");
+            targetCountry = normalizeOrDefault(targetCountry, "Romania");
+            acceptedRemoteRegions = acceptedRemoteRegions == null || acceptedRemoteRegions.isEmpty()
+                    ? defaultRegions() : List.copyOf(acceptedRemoteRegions);
+            if (acceptedRemoteRegions.stream().anyMatch(scope -> scope == null
+                    || scope == RemoteScope.UNKNOWN || scope == RemoteScope.COUNTRY_RESTRICTED
+                    || scope == RemoteScope.REGION_RESTRICTED)) {
+                throw new IllegalArgumentException("Accepted remote regions must include Romania-compatible scopes only");
+            }
+        }
+
+        public static Eligibility defaults() {
+            return new Eligibility("Bucharest", "Romania", false,
+                    true, true, true, true, true, defaultRegions());
+        }
+
+        private static List<RemoteScope> defaultRegions() {
+            return List.of(RemoteScope.ROMANIA, RemoteScope.EU, RemoteScope.EEA,
+                    RemoteScope.EUROPE, RemoteScope.EMEA, RemoteScope.WORLDWIDE);
+        }
+
+        private static String normalizeOrDefault(String value, String fallback) {
+            return value == null || value.isBlank() ? fallback : value.strip();
+        }
     }
 
     public record Candidate(
@@ -114,6 +180,16 @@ public record JobPilotProperties(
     }
 
     public record Http(Duration connectTimeout, Duration responseTimeout, int maxResponseBytes) {
+        public Http {
+            if (connectTimeout == null || connectTimeout.isZero() || connectTimeout.isNegative()
+                    || connectTimeout.compareTo(Duration.ofSeconds(30)) > 0
+                    || responseTimeout == null || responseTimeout.isZero() || responseTimeout.isNegative()
+                    || responseTimeout.compareTo(Duration.ofSeconds(90)) > 0
+                    || responseTimeout.compareTo(connectTimeout) <= 0
+                    || maxResponseBytes < 1_024 || maxResponseBytes > 10 * 1_024 * 1_024) {
+                throw new IllegalArgumentException("External HTTP limits are outside their safe bounds");
+            }
+        }
     }
 
     public record ManualUrl(
