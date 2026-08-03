@@ -95,7 +95,23 @@ The verified profile source is `src/main/resources/candidate-profile.yml`. Typed
 
 The database enforces one active profile, stable-key uniqueness within each parent, one application per job, resume-to-fact foreign keys, and explicit cascade/restrict behavior. No personal contact details are stored in the profile tables.
 
-See [Phase 2 architecture](docs/phase-2-architecture.md) and [resume truth source](docs/resume-truthfulness.md).
+See [roadmap](docs/roadmap.md), [Phase 2 architecture](docs/phase-2-architecture.md) and [resume truth source](docs/resume-truthfulness.md).
+
+### Per-tenant source health
+
+Every Greenhouse, Lever, Ashby, and Recruitee tenant fetch is recorded as one immutable attempt row plus a current roll-up, so a failing board is diagnosable instead of appearing as a bare `ExternalHttpException`. Failures are classified into a closed taxonomy — `INVALID_TENANT`, `AUTHORIZATION_ERROR`, `RATE_LIMITED`, `CLIENT_ERROR`, `SERVER_ERROR`, `TIMEOUT`, `NETWORK_ERROR`, `RESPONSE_PARSE_ERROR`, `CONFIGURATION_ERROR`, `UNKNOWN_ERROR` — from structured exception metadata and nested causes, never from message-string matching. Each ingestion run gets one UUID that correlates the aggregate source logs, every tenant attempt, and the summary log lines.
+
+Flyway migration `V10__source_tenant_health.sql` adds `source_tenant_fetch_logs` (immutable history), `source_tenant_health` (current roll-up, unique on `provider + tenant`), and a nullable `ingestion_run_id` on the existing `source_fetch_logs` so legacy rows stay valid.
+
+### Bounded external HTTP responses
+
+`jobpilot.http.max-response-bytes` defaults to **10485760 (10 MiB)** and is overridable with `JOBPILOT_HTTP_MAX_RESPONSE_BYTES`. The accepted range is **1048576 (1 MiB) to 33554432 (32 MiB)**; a value outside it fails startup with a message naming the property and the range rather than being silently clamped.
+
+Raising the limit does not disable the size protection. A declared `Content-Length` above the limit is refused from the response header before the body is consumed; chunked responses and responses that declare no length are bounded by the same streaming cap, which reads at most one byte past the limit purely to detect overflow. On breach the partial buffer is discarded, the stream is closed, and nothing from the body reaches an exception, a log, or the database.
+
+An oversized response is classified `RESPONSE_TOO_LARGE`, deliberately distinct from `RESPONSE_PARSE_ERROR` (malformed JSON, unexpected content type, mapping failure): the board is reachable and answering, only the local bound was exceeded. The distinction comes from structured exception state, never from message text, and the failure is deterministic and never retried.
+
+`GET /api/sources/health` returns read-only per-tenant diagnostics ordered by provider then tenant, filterable with `provider` and `onlyUnhealthy`. A tenant is `healthy` when its latest attempt was `SUCCESS` or `EMPTY_SUCCESS`, and `degraded` after three consecutive failures. Persisted error text is bounded, control-character free, and stripped of query strings, credentials, response bodies, and stack traces. No tenant is ever disabled or removed automatically, and a failing external tenant never makes the application-wide `/health` endpoint report `DOWN`.
 
 ### Phase 2 Stage 2 manual vacancy URLs
 

@@ -7,23 +7,30 @@ import com.jobpilot.jobs.domain.RawJob;
 import com.jobpilot.jobs.domain.RawCareerData;
 import com.jobpilot.jobs.domain.RawLocationData;
 import com.jobpilot.sources.JobSource;
+import com.jobpilot.sources.health.TenantFetchMonitor;
+import org.springframework.beans.factory.annotation.Autowired;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.HtmlUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 @Component
 public class LeverJobSource implements JobSource {
-    private static final Logger LOGGER = LoggerFactory.getLogger(LeverJobSource.class);
     private final ExternalHttpClient http;
     private final List<String> companies;
+    private final TenantFetchMonitor monitor;
 
-    public LeverJobSource(ExternalHttpClient http, JobPilotProperties properties) {
+    @Autowired
+    public LeverJobSource(ExternalHttpClient http, JobPilotProperties properties,
+                          TenantFetchMonitor monitor) {
         this.http = http;
         this.companies = properties.sources().leverCompanyIds();
+        this.monitor = monitor;
+    }
+
+    public LeverJobSource(ExternalHttpClient http, JobPilotProperties properties) {
+        this(http, properties, TenantFetchMonitor.disabled());
     }
 
     @Override
@@ -34,13 +41,11 @@ public class LeverJobSource implements JobSource {
     @Override
     public List<RawJob> fetchJobs() {
         List<RawJob> jobs = new ArrayList<>();
+        // One monitored attempt per tenant: a failure is classified, recorded, and
+        // isolated to that tenant so the remaining companies are still fetched.
         for (String company : companies) {
-            try {
-                jobs.addAll(parse(company, http.getJson(
-                        "https://api.lever.co/v0/postings/" + company + "?mode=json")));
-            } catch (RuntimeException failure) {
-                LOGGER.warn("Lever tenant {} failed: {}", company, failure.getClass().getSimpleName());
-            }
+            jobs.addAll(monitor.fetch(getSourceName(), company, () -> parse(company, http.getJson(
+                    "https://api.lever.co/v0/postings/" + company + "?mode=json"))));
         }
         return jobs;
     }

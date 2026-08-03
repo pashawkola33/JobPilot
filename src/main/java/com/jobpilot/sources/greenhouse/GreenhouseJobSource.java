@@ -7,24 +7,31 @@ import com.jobpilot.jobs.domain.RawJob;
 import com.jobpilot.jobs.domain.RawCareerData;
 import com.jobpilot.jobs.domain.RawLocationData;
 import com.jobpilot.sources.JobSource;
+import com.jobpilot.sources.health.TenantFetchMonitor;
+import org.springframework.beans.factory.annotation.Autowired;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.HtmlUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 @Component
 public class GreenhouseJobSource implements JobSource {
-    private static final Logger LOGGER = LoggerFactory.getLogger(GreenhouseJobSource.class);
     private final ExternalHttpClient http;
     private final List<String> boardTokens;
+    private final TenantFetchMonitor monitor;
 
-    public GreenhouseJobSource(ExternalHttpClient http, JobPilotProperties properties) {
+    @Autowired
+    public GreenhouseJobSource(ExternalHttpClient http, JobPilotProperties properties,
+                               TenantFetchMonitor monitor) {
         this.http = http;
         this.boardTokens = properties.sources().greenhouseBoardTokens();
+        this.monitor = monitor;
+    }
+
+    public GreenhouseJobSource(ExternalHttpClient http, JobPilotProperties properties) {
+        this(http, properties, TenantFetchMonitor.disabled());
     }
 
     @Override
@@ -35,14 +42,12 @@ public class GreenhouseJobSource implements JobSource {
     @Override
     public List<RawJob> fetchJobs() {
         List<RawJob> jobs = new ArrayList<>();
+        // One monitored attempt per tenant: a failure is classified, recorded, and
+        // isolated to that tenant so the remaining boards are still fetched.
         for (String token : boardTokens) {
-            try {
-                JsonNode payload = http.getJson("https://boards-api.greenhouse.io/v1/boards/"
-                        + token + "/jobs?content=true");
-                jobs.addAll(parse(token, payload));
-            } catch (RuntimeException failure) {
-                LOGGER.warn("Greenhouse tenant {} failed: {}", token, failure.getClass().getSimpleName());
-            }
+            jobs.addAll(monitor.fetch(getSourceName(), token, () -> parse(token,
+                    http.getJson("https://boards-api.greenhouse.io/v1/boards/"
+                            + token + "/jobs?content=true"))));
         }
         return jobs;
     }

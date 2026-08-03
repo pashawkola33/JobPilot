@@ -7,24 +7,31 @@ import com.jobpilot.jobs.domain.RawJob;
 import com.jobpilot.jobs.domain.RawCareerData;
 import com.jobpilot.jobs.domain.RawLocationData;
 import com.jobpilot.sources.JobSource;
+import com.jobpilot.sources.health.TenantFetchMonitor;
+import org.springframework.beans.factory.annotation.Autowired;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.HtmlUtils;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 @Component
 public class AshbyJobSource implements JobSource {
-    private static final Logger LOGGER = LoggerFactory.getLogger(AshbyJobSource.class);
     private final ExternalHttpClient http;
     private final List<String> boards;
+    private final TenantFetchMonitor monitor;
 
-    public AshbyJobSource(ExternalHttpClient http, JobPilotProperties properties) {
+    @Autowired
+    public AshbyJobSource(ExternalHttpClient http, JobPilotProperties properties,
+                          TenantFetchMonitor monitor) {
         this.http = http;
         this.boards = properties.sources().ashbyBoardNames();
+        this.monitor = monitor;
+    }
+
+    public AshbyJobSource(ExternalHttpClient http, JobPilotProperties properties) {
+        this(http, properties, TenantFetchMonitor.disabled());
     }
 
     @Override
@@ -35,14 +42,11 @@ public class AshbyJobSource implements JobSource {
     @Override
     public List<RawJob> fetchJobs() {
         List<RawJob> jobs = new ArrayList<>();
+        // One monitored attempt per tenant: a failure is classified, recorded, and
+        // isolated to that tenant so the remaining boards are still fetched.
         for (String board : boards) {
-            try {
-                JsonNode payload = http.getJson(
-                        "https://api.ashbyhq.com/posting-api/job-board/" + board);
-                jobs.addAll(parse(board, payload));
-            } catch (RuntimeException failure) {
-                LOGGER.warn("Ashby tenant {} failed: {}", board, failure.getClass().getSimpleName());
-            }
+            jobs.addAll(monitor.fetch(getSourceName(), board, () -> parse(board, http.getJson(
+                    "https://api.ashbyhq.com/posting-api/job-board/" + board))));
         }
         return jobs;
     }

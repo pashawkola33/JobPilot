@@ -1,8 +1,20 @@
 # Public ATS tenants verified against their unauthenticated endpoints on 2026-07-21.
+# Phase 3.2 audit (2026-08-03, ingestion run f4020aec) re-verified every tenant against
+# its public endpoint. One entry was removed: recruitee/xebiapoland returned a
+# deterministic HTTP 404 both during ingestion and on direct verification, and no
+# replacement board could be verified.
+#
+# Thirteen tenants (greenhouse gitlab/grafanalabs/elastic/cloudflare/datadog/canonical/
+# twilio, lever weloglobal/veeva, ashby cohere/elevenlabs, recruitee transperfect/tether)
+# failed with RESPONSE_PARSE_ERROR "response exceeded the configured size limit". Those
+# boards are live and reachable; they exceed `jobpilot.http.max-response-bytes`, which
+# this profile raises to 10 MiB while the default in application.yml is 2 MiB. They are
+# deliberately retained: the limit is a client-side setting, not a dead tenant.
+#
 # This profile is intentionally opt-in: --spring.profiles.active=development
 jobpilot:
-  http:
-    max-response-bytes: 10485760
+  # No http override: application.yml now defaults to the same 10 MiB bound, so this
+  # profile no longer needs to raise it for the large boards listed below.
   sources:
     greenhouse-board-tokens:
       - gitlab
@@ -48,7 +60,6 @@ jobpilot:
     recruitee-company-ids:
       - transperfect
       - tether
-      - xebiapoland
       - auditdata
       - moneyhash
       - veocareers

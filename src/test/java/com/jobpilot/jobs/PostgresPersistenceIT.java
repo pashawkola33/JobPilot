@@ -169,11 +169,12 @@ class PostgresPersistenceIT {
     void flywayMigratesTheSchemaOnRealPostgres() {
         Integer applied = jdbcTemplate.queryForObject(
                 "select count(*) from flyway_schema_history where success", Integer.class);
-        assertThat(applied).isEqualTo(9);
+        assertThat(applied).isEqualTo(11);
         assertThat(jdbcTemplate.queryForList(
                 "select table_name from information_schema.tables where table_schema = 'public'",
                 String.class))
                 .contains("jobs", "job_requirements", "job_scores", "source_fetch_logs",
+                        "source_tenant_fetch_logs", "source_tenant_health",
                         "candidate_profiles", "candidate_skills", "candidate_languages",
                         "candidate_projects", "candidate_project_bullets", "applications",
                         "resume_versions", "resume_version_skills", "resume_version_projects",

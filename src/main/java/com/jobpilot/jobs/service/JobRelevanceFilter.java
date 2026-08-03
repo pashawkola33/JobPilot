@@ -231,15 +231,20 @@ public class JobRelevanceFilter {
         String regex = "(?<![\\p{L}\\p{N}])" + Pattern.quote(phrase)
                 .replace("\\Q \\E", "\\E\\s+\\Q")
                 + "(?![\\p{L}\\p{N}])";
-        return Pattern.compile(regex, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE)
-                .matcher(text).find();
+        // `phrase` comes from candidate-profile configuration, never from vacancy text.
+        return ScreeningPatterns.caseInsensitive(regex).matcher(text).find();
     }
+
+    private static final Pattern RELEVANCE_MARKS = Pattern.compile("\\p{M}+");
+    private static final Pattern RELEVANCE_NON_TOKEN = Pattern.compile("[^\\p{L}\\p{N}]+");
+    private static final Pattern RELEVANCE_WHITESPACE = Pattern.compile("\\s+");
 
     private String normalize(String value) {
         if (value == null) return "";
-        String decomposed = Normalizer.normalize(value, Normalizer.Form.NFKD)
-                .replaceAll("\\p{M}+", "");
-        return decomposed.toLowerCase(Locale.ROOT)
-                .replaceAll("[^\\p{L}\\p{N}]+", " ").replaceAll("\\s+", " ").strip();
+        String decomposed = RELEVANCE_MARKS
+                .matcher(Normalizer.normalize(value, Normalizer.Form.NFKD)).replaceAll("");
+        String collapsed = RELEVANCE_NON_TOKEN
+                .matcher(decomposed.toLowerCase(Locale.ROOT)).replaceAll(" ");
+        return RELEVANCE_WHITESPACE.matcher(collapsed).replaceAll(" ").strip();
     }
 }

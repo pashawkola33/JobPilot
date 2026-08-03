@@ -41,11 +41,26 @@ public class ExternalHttpClient {
     }
 
     ExternalHttpClient(ObjectMapper objectMapper, JobPilotProperties.Http settings, URI testOrigin) {
+        this(objectMapper, settings.connectTimeout(), settings.responseTimeout(),
+                settings.maxResponseBytes(), testOrigin);
+    }
+
+    /**
+     * Explicit-bound seam. The operator-facing range check lives in
+     * {@link JobPilotProperties.Http}, which guards configuration binding; the transport
+     * itself simply honours whatever bound it is handed. That lets boundary tests drive a
+     * few kilobytes without weakening the production configuration validation.
+     */
+    ExternalHttpClient(ObjectMapper objectMapper, Duration connectTimeout,
+                       Duration responseTimeout, int maxResponseBytes, URI testOrigin) {
+        if (maxResponseBytes < 1) {
+            throw new IllegalArgumentException("maxResponseBytes must be positive");
+        }
         this.objectMapper = objectMapper;
-        this.maxResponseBytes = settings.maxResponseBytes();
-        this.responseTimeout = settings.responseTimeout();
+        this.maxResponseBytes = maxResponseBytes;
+        this.responseTimeout = responseTimeout;
         this.client = HttpClient.newBuilder()
-                .connectTimeout(settings.connectTimeout())
+                .connectTimeout(connectTimeout)
                 .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
         this.testOrigin = testOrigin;
@@ -70,6 +85,7 @@ public class ExternalHttpClient {
         try (InputStream body = response.body()) {
             requireSuccess(response);
             requireContentType(response, false);
+            requireDeclaredSizeWithinLimit(response);
             return new String(readBounded(body), StandardCharsets.UTF_8);
         } catch (IOException failure) {
             throw new ExternalHttpException(ExternalHttpException.Category.IO, null);
@@ -96,6 +112,7 @@ public class ExternalHttpClient {
         try (InputStream body = response.body()) {
             requireSuccess(response);
             requireContentType(response, true);
+            requireDeclaredSizeWithinLimit(response);
             byte[] bytes = readBounded(body);
             try {
                 JsonNode parsed = objectMapper.readTree(bytes);
@@ -231,12 +248,37 @@ public class ExternalHttpClient {
         }
     }
 
+    /**
+     * Rejects a response whose declared length already exceeds the limit, before any
+     * body byte is consumed. Absent, malformed, or chunked-encoding responses declare
+     * nothing and fall through to the streaming bound in {@link #readBounded}.
+     */
+    private void requireDeclaredSizeWithinLimit(HttpResponse<?> response) {
+        response.headers().firstValueAsLong("content-length").ifPresent(declared -> {
+            if (declared > maxResponseBytes) throw oversized();
+        });
+    }
+
+    /**
+     * Reads at most {@code maxResponseBytes + 1} bytes. The extra byte only detects
+     * overflow; it is never returned, and the partial buffer is dropped unreferenced so
+     * no fragment can reach an exception, a log, or the database. The caller's
+     * try-with-resources closes the stream on both paths, abandoning the remainder.
+     */
     private byte[] readBounded(InputStream input) throws IOException {
         byte[] bytes = input.readNBytes(maxResponseBytes + 1);
-        if (bytes.length == 0 || bytes.length > maxResponseBytes) {
-            throw new ExternalHttpException(ExternalHttpException.Category.RESPONSE_TOO_LARGE, null);
+        if (bytes.length > maxResponseBytes) throw oversized();
+        if (bytes.length == 0) {
+            // An empty body is a malformed payload, not an oversized one.
+            throw new ExternalHttpException(ExternalHttpException.Category.MALFORMED_JSON, null);
         }
         return bytes;
+    }
+
+    /** Carries the configured limit structurally; callers never parse a message. */
+    private ExternalHttpException oversized() {
+        return new ExternalHttpException(ExternalHttpException.Category.RESPONSE_TOO_LARGE, null)
+                .limitBytes(maxResponseBytes);
     }
 
     private void requireSuccess(HttpResponse<?> response) {

@@ -414,7 +414,9 @@ public class EarlyCareerEligibilityService {
     }
 
     private boolean matches(String text, String regex) {
-        return Pattern.compile(regex, Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE).matcher(text).find();
+        // The regex argument is always a compile-time literal, so the cache keys are
+        // fixed vocabulary and the expression is compiled once for the process.
+        return ScreeningPatterns.caseInsensitive(regex).matcher(text).find();
     }
 
     private int clauseStart(String text, int position) {

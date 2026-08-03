@@ -14,3 +14,4 @@ data/documents/
 dependency-check-report.*
 .mvn/repository/
 .mvn/wrapper/dists/
+backups/

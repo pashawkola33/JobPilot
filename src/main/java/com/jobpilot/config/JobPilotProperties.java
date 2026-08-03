@@ -180,14 +180,24 @@ public record JobPilotProperties(
     }
 
     public record Http(Duration connectTimeout, Duration responseTimeout, int maxResponseBytes) {
+        /** Smallest useful ATS payload bound. */
+        public static final int MIN_RESPONSE_BYTES = 1_048_576;
+        /** Hard ceiling: one bounded buffer per in-flight fetch must stay affordable. */
+        public static final int MAX_RESPONSE_BYTES = 33_554_432;
+
         public Http {
             if (connectTimeout == null || connectTimeout.isZero() || connectTimeout.isNegative()
                     || connectTimeout.compareTo(Duration.ofSeconds(30)) > 0
                     || responseTimeout == null || responseTimeout.isZero() || responseTimeout.isNegative()
                     || responseTimeout.compareTo(Duration.ofSeconds(90)) > 0
-                    || responseTimeout.compareTo(connectTimeout) <= 0
-                    || maxResponseBytes < 1_024 || maxResponseBytes > 10 * 1_024 * 1_024) {
-                throw new IllegalArgumentException("External HTTP limits are outside their safe bounds");
+                    || responseTimeout.compareTo(connectTimeout) <= 0) {
+                throw new IllegalArgumentException("External HTTP timeouts are outside their safe bounds");
+            }
+            // Fail closed and name the range: an out-of-range limit is never clamped.
+            if (maxResponseBytes < MIN_RESPONSE_BYTES || maxResponseBytes > MAX_RESPONSE_BYTES) {
+                throw new IllegalArgumentException(
+                        "jobpilot.http.max-response-bytes must be between " + MIN_RESPONSE_BYTES
+                                + " and " + MAX_RESPONSE_BYTES + " bytes, but was " + maxResponseBytes);
             }
         }
     }

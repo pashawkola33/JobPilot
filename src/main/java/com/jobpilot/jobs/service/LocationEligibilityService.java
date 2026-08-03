@@ -48,6 +48,8 @@ public class LocationEligibilityService {
     private static final Pattern TIMEZONE_VALUE = Pattern.compile(
             "(?i)\\b(?:PST|PDT|EST|EDT|CST|MST|Pacific(?: Time)?|Eastern(?: Time)?|"
                     + "UTC\\s*[-−]\\s*(?:4|5|6|7|8|9|10|11|12))\\b");
+    private static final Pattern WORK_AUTHORIZATION = Pattern.compile(
+            "(?i)(?:work authori[sz]ation|right to work)[^.!?]{0,80}");
     private static final Pattern US_STATE_CODE = Pattern.compile(
             "(?i)(?:[,|/()]|\\s[-–—]\\s)\\s*(?:" + US_STATE_CODES + ")(?:\\b|\\))");
     private static final Pattern TITLE_PARENTHESIZED_LOCATION = Pattern.compile(
@@ -79,7 +81,30 @@ public class LocationEligibilityService {
             "South Carolina", "South Dakota", "Tennessee", "Texas", "Utah", "Vermont",
             "Virginia", "Washington", "West Virginia", "Wisconsin", "Wyoming");
 
+    /**
+     * Country restriction phrases, pre-normalized once at class initialisation. The list
+     * preserves the exact iteration order of {@link #NON_ROMANIA_COUNTRIES} so first-match
+     * wins identically to the previous nested loop.
+     */
+    private static final List<CountryPhrases> COUNTRY_PHRASES = countryPhrases();
+    /** Pre-normalized vocabulary, so no fixed term is normalized per vacancy. */
+    private static final List<String> NORMALIZED_INCOMPATIBLE_CITIES =
+            normalizedAll(INCOMPATIBLE_CITIES);
+    private static final List<String> NORMALIZED_US_STATES = normalizedAll(US_STATES);
+    private static final List<String> NORMALIZED_COUNTRY_TERMS =
+            normalizedAll(List.copyOf(NON_ROMANIA_COUNTRIES));
+    private static final List<String> COUNTRY_TERMS = List.copyOf(NON_ROMANIA_COUNTRIES);
+    private static final List<String> NORMALIZED_CITY_LABELS = normalizedAll(List.of(
+            "Cluj-Napoca", "San Francisco", "Seattle", "Boston", "Austin",
+            "Berlin", "London", "Paris", "Munich", "Warsaw", "Amsterdam", "Toronto",
+            "New York"));
+    private static final List<String> CITY_LABELS = List.of(
+            "Cluj-Napoca", "San Francisco", "Seattle", "Boston", "Austin",
+            "Berlin", "London", "Paris", "Munich", "Warsaw", "Amsterdam", "Toronto",
+            "New York");
+
     private final JobPilotProperties.Eligibility settings;
+    private final LocationTextNormalizer normalizer;
 
     @Autowired
     public LocationEligibilityService(JobPilotProperties properties) {
@@ -87,7 +112,55 @@ public class LocationEligibilityService {
     }
 
     public LocationEligibilityService(JobPilotProperties.Eligibility settings) {
+        this(settings, LocationTextNormalizer.standard());
+    }
+
+    /** Test seam: lets a counting normalizer prove the bounded call count. */
+    LocationEligibilityService(JobPilotProperties.Eligibility settings,
+                               LocationTextNormalizer normalizer) {
         this.settings = settings == null ? JobPilotProperties.Eligibility.defaults() : settings;
+        this.normalizer = normalizer == null ? LocationTextNormalizer.standard() : normalizer;
+    }
+
+    private static List<String> normalizedAll(List<String> values) {
+        List<String> result = new ArrayList<>(values.size());
+        for (String value : values) result.add(LocationTextNormalizer.standard().normalize(value));
+        return List.copyOf(result);
+    }
+
+    /** The seven fixed restriction templates, pre-built per country. */
+    private static List<CountryPhrases> countryPhrases() {
+        LocationTextNormalizer base = LocationTextNormalizer.standard();
+        List<CountryPhrases> phrases = new ArrayList<>(NON_ROMANIA_COUNTRIES.size());
+        for (String country : NON_ROMANIA_COUNTRIES) {
+            String normalized = base.normalize(country);
+            phrases.add(new CountryPhrases(country,
+                    List.of(LocationTextNormalizer.SPACE.split(normalized)), List.of(
+                    normalized + " only",
+                    normalized + " residents only",
+                    "remote in " + normalized,
+                    "remote within " + normalized,
+                    "must be based in " + normalized,
+                    "must be located in " + normalized,
+                    "must reside in " + normalized)));
+        }
+        return List.copyOf(phrases);
+    }
+
+    private record CountryPhrases(String country, List<String> countryTokens,
+                                  List<String> normalizedPhrases) {
+    }
+
+    /**
+     * Immutable per-vacancy normalization results.
+     *
+     * <p>Created once at the top of {@link #evaluate(RawJob)} and threaded into the
+     * restriction helpers so no helper re-normalizes a field or rebuilds the concatenated
+     * restriction string. Holds no mutable state and is never cached across vacancies.
+     */
+    private record LocationEvaluationContext(
+            String restrictionText,
+            LocationTextNormalizer.NormalizedText normalizedRestriction) {
     }
 
     public LocationEligibilityDecision evaluate(RawJob raw) {
@@ -108,23 +181,31 @@ public class LocationEligibilityService {
             workplace = WorkplaceType.ONSITE;
         }
 
-        boolean temporaryRemote = containsAny(normalize(description),
+        String normalizedDescriptionForFlags = normalize(description);
+        boolean temporaryRemote = containsAny(normalizedDescriptionForFlags,
                 "remote until further notice", "temporarily remote", "remote temporarily");
         boolean officeAttendance = OFFICE_ATTENDANCE.matcher(description).find()
-                || containsAny(normalize(description), "within commuting distance", "must commute");
+                || containsAny(normalizedDescriptionForFlags,
+                "within commuting distance", "must commute");
         boolean structuredContradiction = providerType != WorkplaceType.UNKNOWN
                 && ((jsonLdType != WorkplaceType.UNKNOWN && jsonLdType != providerType)
                 || (descriptionType != WorkplaceType.UNKNOWN && descriptionType != providerType));
 
-        String normalizedLocations = normalize(locations);
-        String normalizedDescription = normalize(description);
-        boolean structuredBucharest = containsBucharest(normalizedLocations);
+        // Each field is normalized exactly once here; every downstream check reuses these.
+        LocationTextNormalizer.NormalizedText normalizedLocationsText = normalized(locations);
+        LocationTextNormalizer.NormalizedText normalizedDescriptionText = normalized(description);
+        String normalizedLocations = normalizedLocationsText.value();
+        String normalizedDescription = normalizedDescriptionText.value();
+        String restrictionText = restrictionText(raw);
+        LocationEvaluationContext context = new LocationEvaluationContext(
+                restrictionText, normalized(restrictionText));
+        boolean structuredBucharest = containsBucharest(normalizedLocationsText);
         boolean descriptionBucharest = explicitBucharestDescription(normalizedDescription);
         boolean bucharest = structuredBucharest || descriptionBucharest;
-        boolean ilfov = word(normalizedLocations, "ilfov");
-        String city = normalizedCity(normalizedLocations);
-        String country = normalizedCountry(normalizedLocations);
-        List<String> restrictions = restrictions(raw, officeAttendance);
+        boolean ilfov = wordIn(normalizedLocationsText, "ilfov");
+        String city = normalizedCity(normalizedLocationsText);
+        String country = normalizedCountry(normalizedLocationsText);
+        List<String> restrictions = restrictions(raw, officeAttendance, context);
         String requiredTimezone = firstNonBlank(data.requiredTimezone(), detectedTimezone(description));
         String requiredAuthorization = firstNonBlank(data.requiredWorkAuthorization(),
                 detectedWorkAuthorization(description));
@@ -201,14 +282,14 @@ public class LocationEligibilityService {
         }
 
         RemoteScope scope = remoteScope(raw);
-        String countryRestriction = countryRestriction(raw);
+        String countryRestriction = countryRestriction(raw, context);
         if (countryRestriction != null) {
             restrictions = append(restrictions, countryRestriction);
             return rejected(workplace, RemoteScope.COUNTRY_RESTRICTED, city, country,
                     "Remote role restricted to " + countryRestriction + " residents", restrictions,
                     requiredTimezone, requiredAuthorization);
         }
-        String regionRestriction = regionRestriction(raw);
+        String regionRestriction = regionRestriction(context);
         if (regionRestriction != null) {
             restrictions = append(restrictions, regionRestriction);
             return rejected(workplace, RemoteScope.REGION_RESTRICTED, city, country,
@@ -347,7 +428,8 @@ public class LocationEligibilityService {
     }
 
     private RemoteScope scope(String candidate, boolean structured) {
-        String value = normalize(candidate);
+        LocationTextNormalizer.NormalizedText normalizedCandidate = normalized(candidate);
+        String value = normalizedCandidate.value();
         if (containsAny(value, "timezone", "time zone")
                 && !containsAny(value, "open to", "applicants", "candidates", "hiring in",
                 "based in", "located in")) {
@@ -375,30 +457,42 @@ public class LocationEligibilityService {
             }
             return RemoteScope.UNKNOWN;
         }
-        if (word(value, "romania") || word(value, "romanian")) return RemoteScope.ROMANIA;
-        if (word(value, "emea") || value.contains("europe middle east and africa")) return RemoteScope.EMEA;
-        if (word(value, "eea") || value.contains("european economic area")) return RemoteScope.EEA;
-        if (word(value, "eu") || value.contains("european union")) return RemoteScope.EU;
-        if (word(value, "europe") || word(value, "european")) return RemoteScope.EUROPE;
+        if (normalizedCandidate.containsPhrase("romania")
+                || normalizedCandidate.containsPhrase("romanian")) return RemoteScope.ROMANIA;
+        if (normalizedCandidate.containsPhrase("emea")
+                || value.contains("europe middle east and africa")) return RemoteScope.EMEA;
+        if (normalizedCandidate.containsPhrase("eea")
+                || value.contains("european economic area")) return RemoteScope.EEA;
+        if (normalizedCandidate.containsPhrase("eu")
+                || value.contains("european union")) return RemoteScope.EU;
+        if (normalizedCandidate.containsPhrase("europe")
+                || normalizedCandidate.containsPhrase("european")) return RemoteScope.EUROPE;
         if (containsAny(value, "worldwide remote", "remote worldwide", "global remote",
                 "remote globally", "work from anywhere", "anywhere in the world")
-                || word(value, "worldwide") || word(value, "global")
-                || standaloneAnywhere(value)) return RemoteScope.WORLDWIDE;
+                || normalizedCandidate.containsPhrase("worldwide")
+                || normalizedCandidate.containsPhrase("global")
+                || standaloneAnywhere(normalizedCandidate)) return RemoteScope.WORLDWIDE;
         return RemoteScope.UNKNOWN;
     }
 
     private String explicitIncompatibleLocation(String locations) {
-        String text = normalize(locations);
+        LocationTextNormalizer.NormalizedText text = normalized(locations);
         if (text.isBlank()) return null;
-        for (String city : INCOMPATIBLE_CITIES) {
-            if (word(text, city)) return city;
+        for (int index = 0; index < INCOMPATIBLE_CITIES.size(); index++) {
+            if (text.containsPhrase(NORMALIZED_INCOMPATIBLE_CITIES.get(index))) {
+                return INCOMPATIBLE_CITIES.get(index);
+            }
         }
-        for (String state : US_STATES) {
-            if (word(text, state)) return state + ", United States";
+        for (int index = 0; index < US_STATES.size(); index++) {
+            if (text.containsPhrase(NORMALIZED_US_STATES.get(index))) {
+                return US_STATES.get(index) + ", United States";
+            }
         }
         if (US_STATE_CODE.matcher(locations).find()) return "United States";
-        for (String country : NON_ROMANIA_COUNTRIES) {
-            if (word(text, country)) return displayCountry(country);
+        for (int index = 0; index < COUNTRY_TERMS.size(); index++) {
+            if (text.containsPhrase(NORMALIZED_COUNTRY_TERMS.get(index))) {
+                return displayCountry(COUNTRY_TERMS.get(index));
+            }
         }
         return null;
     }
@@ -424,19 +518,20 @@ public class LocationEligibilityService {
             String suffix = value.substring(comma + 1).strip();
             String country = exactIncompatibleCountry(suffix);
             if (country != null) return country;
-            for (String state : US_STATES) {
-                if (normalize(suffix).equals(normalize(state))) {
-                    return state + ", United States";
+            String normalizedSuffix = normalize(suffix);
+            for (int index = 0; index < US_STATES.size(); index++) {
+                if (normalizedSuffix.equals(NORMALIZED_US_STATES.get(index))) {
+                    return US_STATES.get(index) + ", United States";
                 }
             }
         }
 
         String normalizedTitle = normalize(value);
-        for (String country : NON_ROMANIA_COUNTRIES) {
-            String normalizedCountry = normalize(country);
+        for (int index = 0; index < COUNTRY_TERMS.size(); index++) {
+            String normalizedCountry = NORMALIZED_COUNTRY_TERMS.get(index);
             if (normalizedTitle.equals(normalizedCountry + " only")
                     || normalizedTitle.endsWith(" " + normalizedCountry + " only")) {
-                return displayCountry(country) + " only";
+                return displayCountry(COUNTRY_TERMS.get(index)) + " only";
             }
         }
         return null;
@@ -448,14 +543,18 @@ public class LocationEligibilityService {
         if (normalized.isBlank() || normalized.equals("remote")) return null;
 
         if (US_CITY_STATE.matcher(value).matches()) return value;
-        for (String state : US_STATES) {
-            if (normalized.equals(normalize(state))) return state + ", United States";
+        for (int index = 0; index < US_STATES.size(); index++) {
+            if (normalized.equals(NORMALIZED_US_STATES.get(index))) {
+                return US_STATES.get(index) + ", United States";
+            }
         }
         if (normalized.matches("(?i)^(?:" + US_STATE_CODES + ")$")) {
             return value.toUpperCase(Locale.ROOT) + ", United States";
         }
-        for (String city : INCOMPATIBLE_CITIES) {
-            if (normalized.equals(normalize(city))) return city;
+        for (int index = 0; index < INCOMPATIBLE_CITIES.size(); index++) {
+            if (normalized.equals(NORMALIZED_INCOMPATIBLE_CITIES.get(index))) {
+                return INCOMPATIBLE_CITIES.get(index);
+            }
         }
 
         int comma = value.lastIndexOf(',');
@@ -476,28 +575,29 @@ public class LocationEligibilityService {
 
     private String exactIncompatibleCountry(String value) {
         String normalized = normalize(value);
-        for (String country : NON_ROMANIA_COUNTRIES) {
-            if (normalized.equals(normalize(country))) return displayCountry(country);
+        for (int index = 0; index < COUNTRY_TERMS.size(); index++) {
+            if (normalized.equals(NORMALIZED_COUNTRY_TERMS.get(index))) {
+                return displayCountry(COUNTRY_TERMS.get(index));
+            }
         }
         return null;
     }
 
-    private String countryRestriction(RawJob raw) {
-        String text = restrictionText(raw);
+    private String countryRestriction(RawJob raw, LocationEvaluationContext context) {
         for (Pattern pattern : List.of(COUNTRY_ONLY, REMOTE_WITHIN_COUNTRY, COUNTRY_RESIDENCE)) {
-            Matcher matcher = pattern.matcher(text);
+            Matcher matcher = pattern.matcher(context.restrictionText());
             if (matcher.find()) return displayCountry(matcher.group(1));
         }
-        String normalizedText = normalize(text);
-        for (String country : NON_ROMANIA_COUNTRIES) {
-            if (word(normalizedText, country + " only")
-                    || word(normalizedText, country + " residents only")
-                    || word(normalizedText, "remote in " + country)
-                    || word(normalizedText, "remote within " + country)
-                    || word(normalizedText, "must be based in " + country)
-                    || word(normalizedText, "must be located in " + country)
-                    || word(normalizedText, "must reside in " + country)) {
-                return displayCountry(country);
+        // The restriction text is normalized once per evaluation; each of the seven
+        // templates per country is a pre-built normalized needle, so this loop performs
+        // no normalization and compiles no expression.
+        LocationTextNormalizer.NormalizedText restriction = context.normalizedRestriction();
+        for (CountryPhrases phrases : COUNTRY_PHRASES) {
+            // Skip all seven templates unless every token of the country name occurs;
+            // each template embeds the country, so this cannot hide a match.
+            if (!restriction.containsAllTokens(phrases.countryTokens())) continue;
+            for (String phrase : phrases.normalizedPhrases()) {
+                if (restriction.containsPhrase(phrase)) return displayCountry(phrases.country());
             }
         }
         List<String> structuredRestrictions = new ArrayList<>();
@@ -505,13 +605,15 @@ public class LocationEligibilityService {
         structuredRestrictions.addAll(raw.locationData().remoteRegions());
         addNonBlank(structuredRestrictions, raw.location());
         for (String value : structuredRestrictions) {
-            String normalized = normalize(value);
-            if (word(normalized, "romania") || word(normalized, "europe")
-                    || word(normalized, "eu") || word(normalized, "eea") || word(normalized, "emea")) {
+            LocationTextNormalizer.NormalizedText normalized = normalized(value);
+            if (normalized.containsPhrase("romania") || normalized.containsPhrase("europe")
+                    || normalized.containsPhrase("eu") || normalized.containsPhrase("eea")
+                    || normalized.containsPhrase("emea")) {
                 continue;
             }
-            for (String country : NON_ROMANIA_COUNTRIES) {
-                if (normalized.equals(country) || normalized.equals("remote " + country)) {
+            for (String country : COUNTRY_TERMS) {
+                if (normalized.value().equals(country)
+                        || normalized.value().equals("remote " + country)) {
                     return displayCountry(country);
                 }
             }
@@ -519,8 +621,8 @@ public class LocationEligibilityService {
         return null;
     }
 
-    private String regionRestriction(RawJob raw) {
-        String text = normalize(restrictionText(raw));
+    private String regionRestriction(LocationEvaluationContext context) {
+        String text = context.normalizedRestriction().value();
         if (containsAny(text, "apac only", "asia pacific only", "remote within apac",
                 "must be based in apac")) return "APAC";
         if (containsAny(text, "americas only", "north america only", "latin america only",
@@ -528,13 +630,14 @@ public class LocationEligibilityService {
         return null;
     }
 
-    private List<String> restrictions(RawJob raw, boolean officeAttendance) {
+    private List<String> restrictions(RawJob raw, boolean officeAttendance,
+                                      LocationEvaluationContext context) {
         LinkedHashSet<String> values = new LinkedHashSet<>();
         values.addAll(raw.locationData().applicantLocationRequirements());
         if (officeAttendance) values.add("Office attendance required");
-        String country = countryRestriction(raw);
+        String country = countryRestriction(raw, context);
         if (country != null) values.add(country);
-        String region = regionRestriction(raw);
+        String region = regionRestriction(context);
         if (region != null) values.add(region);
         return List.copyOf(values);
     }
@@ -547,14 +650,16 @@ public class LocationEligibilityService {
     }
 
     private WorkplaceType workplace(String value) {
-        String text = normalize(value);
+        LocationTextNormalizer.NormalizedText normalizedValue = normalized(value);
+        String text = normalizedValue.value();
         if (text.isBlank()) return WorkplaceType.UNKNOWN;
         if (containsAny(text, "hybrid", "remote until", "partly remote", "partially remote")) {
             return WorkplaceType.HYBRID;
         }
         if (containsAny(text, "telecommute", "fully remote", "100 remote", "work from anywhere",
                 "worldwide remote", "remote europe", "remote eu", "remote emea", "romania remote")
-                || word(text, "remote") || containsAny(text, "home based", "work from home")) {
+                || normalizedValue.containsPhrase("remote")
+                || containsAny(text, "home based", "work from home")) {
             return WorkplaceType.REMOTE;
         }
         if (containsAny(text, "on site", "onsite", "office based", "in office")) {
@@ -583,8 +688,8 @@ public class LocationEligibilityService {
         return WorkplaceType.UNKNOWN;
     }
 
-    private boolean containsBucharest(String text) {
-        return word(text, "bucharest") || word(text, "bucuresti")
+    private boolean containsBucharest(LocationTextNormalizer.NormalizedText text) {
+        return text.containsPhrase("bucharest") || text.containsPhrase("bucuresti")
                 || text.contains("bucharest metropolitan area");
     }
 
@@ -593,22 +698,23 @@ public class LocationEligibilityService {
                 "bucharest based", "located in bucuresti", "based in bucuresti", "office in bucuresti");
     }
 
-    private String normalizedCity(String locations) {
+    private String normalizedCity(LocationTextNormalizer.NormalizedText locations) {
         if (containsBucharest(locations)) return settings.targetCity();
-        if (word(locations, "ilfov")) return "Ilfov";
-        for (String city : List.of("Cluj-Napoca", "San Francisco", "Seattle", "Boston", "Austin",
-                "Berlin", "London", "Paris", "Munich", "Warsaw", "Amsterdam", "Toronto",
-                "New York")) {
-            if (normalize(locations).contains(normalize(city))) return city;
+        if (locations.containsPhrase("ilfov")) return "Ilfov";
+        for (int index = 0; index < CITY_LABELS.size(); index++) {
+            if (locations.contains(NORMALIZED_CITY_LABELS.get(index))) {
+                return CITY_LABELS.get(index);
+            }
         }
         return null;
     }
 
-    private String normalizedCountry(String locations) {
-        String text = normalize(locations);
-        if (word(text, "romania") || word(text, "romania")) return settings.targetCountry();
-        for (String country : NON_ROMANIA_COUNTRIES) {
-            if (word(text, country)) return displayCountry(country);
+    private String normalizedCountry(LocationTextNormalizer.NormalizedText locations) {
+        if (locations.containsPhrase("romania")) return settings.targetCountry();
+        for (int index = 0; index < COUNTRY_TERMS.size(); index++) {
+            if (locations.containsPhrase(NORMALIZED_COUNTRY_TERMS.get(index))) {
+                return displayCountry(COUNTRY_TERMS.get(index));
+            }
         }
         return null;
     }
@@ -619,8 +725,7 @@ public class LocationEligibilityService {
     }
 
     private String detectedWorkAuthorization(String description) {
-        Matcher matcher = Pattern.compile("(?i)(?:work authori[sz]ation|right to work)[^.!?]{0,80}")
-                .matcher(description);
+        Matcher matcher = WORK_AUTHORIZATION.matcher(description);
         return matcher.find() ? matcher.group().strip() : null;
     }
 
@@ -629,11 +734,13 @@ public class LocationEligibilityService {
     }
 
     private String authorizationCountry(String authorization) {
-        String text = normalize(authorization);
-        if (text.isBlank() || word(text, "romania") || word(text, "europe")
-                || word(text, "eu") || word(text, "emea")) return null;
-        for (String country : NON_ROMANIA_COUNTRIES) {
-            if (word(text, country)) return displayCountry(country);
+        LocationTextNormalizer.NormalizedText text = normalized(authorization);
+        if (text.isBlank() || text.containsPhrase("romania") || text.containsPhrase("europe")
+                || text.containsPhrase("eu") || text.containsPhrase("emea")) return null;
+        for (int index = 0; index < COUNTRY_TERMS.size(); index++) {
+            if (text.containsPhrase(NORMALIZED_COUNTRY_TERMS.get(index))) {
+                return displayCountry(COUNTRY_TERMS.get(index));
+            }
         }
         return null;
     }
@@ -649,8 +756,9 @@ public class LocationEligibilityService {
         return REMOTE_NOISE.stream().anyMatch(text::contains);
     }
 
-    private boolean standaloneAnywhere(String text) {
-        return word(text, "anywhere") && !containsAny(text,
+    private boolean standaloneAnywhere(LocationTextNormalizer.NormalizedText normalizedText) {
+        String text = normalizedText.value();
+        return normalizedText.containsPhrase("anywhere") && !containsAny(text,
                 "anywhere in the us", "anywhere in canada", "anywhere in the uk",
                 "anywhere in germany", "anywhere in apac", "anywhere in the americas");
     }
@@ -688,16 +796,26 @@ public class LocationEligibilityService {
     }
 
     private String normalize(String value) {
-        String decomposed = Normalizer.normalize(safe(value), Normalizer.Form.NFD)
-                .replaceAll("\\p{M}+", "");
-        return decomposed.toLowerCase(Locale.ROOT).replaceAll("[^\\p{L}\\p{N}+-]+", " ")
-                .replaceAll("\\s+", " ").trim();
+        return normalizer.normalize(value);
+    }
+
+    /** Normalizes once and keeps the padded form and tokens for repeated phrase checks. */
+    private LocationTextNormalizer.NormalizedText normalized(String value) {
+        return LocationTextNormalizer.NormalizedText.of(normalizer.normalize(value));
+    }
+
+    /** Wraps text that is already normalized; performs no further normalization. */
+    private LocationTextNormalizer.NormalizedText alreadyNormalized(String normalizedValue) {
+        return LocationTextNormalizer.NormalizedText.of(normalizedValue);
     }
 
     private boolean word(String text, String value) {
-        String normalizedText = " " + normalize(text) + " ";
-        String normalizedValue = " " + normalize(value) + " ";
-        return normalizedText.contains(normalizedValue);
+        return normalized(text).containsPhrase(normalizer.normalize(value));
+    }
+
+    /** Phrase check against pre-normalized text and a pre-normalized needle. */
+    private boolean wordIn(LocationTextNormalizer.NormalizedText text, String normalizedNeedle) {
+        return text.containsPhrase(normalizedNeedle);
     }
 
     private boolean containsAny(String value, String... candidates) {

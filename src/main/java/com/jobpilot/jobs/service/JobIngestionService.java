@@ -12,6 +12,8 @@ import com.jobpilot.matching.ScoreBand;
 import com.jobpilot.sources.JobSource;
 import com.jobpilot.sources.SourceFetchLog;
 import com.jobpilot.sources.SourceFetchLogRepository;
+import com.jobpilot.sources.health.IngestionRunContext;
+import com.jobpilot.sources.health.TenantAttemptStatus;
 import com.jobpilot.telegram.TelegramNotifier;
 import java.time.Clock;
 import java.util.LinkedHashMap;
@@ -66,15 +68,25 @@ public class JobIngestionService {
 
     public JobIngestionReport fetchAllSources() {
         ReportAccumulator report = new ReportAccumulator();
-        for (JobSource source : sources) fetchOneSource(source, report);
-        JobIngestionReport completed = report.toReport();
-        LOGGER.info("Vacancy ingestion report: fetched={}, uniqueRaw={}, bucharest={}, "
+        // One run id correlates the aggregate source logs, every tenant attempt row,
+        // and the summary lines below. It is diagnostic only and never a job identity.
+        IngestionRunContext run = IngestionRunContext.open();
+        JobIngestionReport completed;
+        try {
+            for (JobSource source : sources) fetchOneSource(source, report);
+            completed = report.toReport();
+            logSourceHealthSummary(run);
+        } finally {
+            IngestionRunContext.clear();
+        }
+        LOGGER.info("Vacancy ingestion report: runId={}, fetched={}, uniqueRaw={}, bucharest={}, "
                         + "remoteRomania={}, remoteUnknown={}, rejectedRemote={}, "
                         + "rejectedOnsiteHybrid={}, earlyCareerEligible={}, earlyCareerUnknown={}, "
                         + "rejectedSeniority={}, locationCareerEligible={}, relevanceMatch={}, "
                         + "relevanceReview={}, rejectedByRelevance={}, finalMatch={}, finalReview={}, "
                         + "finalReject={}, duplicateRaw={}, existingUnchanged={}, persistedNew={}, "
                         + "updated={}, matchTenants={}, reviewTenants={}",
+                run.runId(),
                 completed.totalVacanciesFetched(),
                 completed.totalUniqueVacanciesBeforeEligibilityFiltering(),
                 completed.bucharestLocalVacancies(),
@@ -95,14 +107,27 @@ public class JobIngestionService {
         return completed;
     }
 
+    /** Compact per-tenant reliability roll-up for the run that just finished. */
+    private void logSourceHealthSummary(IngestionRunContext run) {
+        LOGGER.info("Source health summary: runId={}, tenantAttempts={}, success={}, "
+                        + "emptySuccess={}, failed={}, failuresByCategory={}",
+                run.runId(), run.totalAttempts(),
+                run.count(TenantAttemptStatus.SUCCESS),
+                run.count(TenantAttemptStatus.EMPTY_SUCCESS),
+                run.count(TenantAttemptStatus.FAILURE),
+                run.failuresByCategory());
+    }
+
     void fetchOneSource(JobSource source) {
         fetchOneSource(source, new ReportAccumulator());
     }
 
     private void fetchOneSource(JobSource source, ReportAccumulator report) {
-        SourceFetchLog log = logs.save(new SourceFetchLog(source.getSourceName(), clock.instant()));
+        SourceFetchLog log = logs.save(new SourceFetchLog(source.getSourceName(), clock.instant(),
+                IngestionRunContext.currentRunId()));
         int fetched = 0;
         int saved = 0;
+        long screeningStartedNanos = System.nanoTime();
         try {
             List<RawJob> rawJobs = source.fetchJobs();
             fetched = rawJobs.size();
@@ -162,6 +187,13 @@ public class JobIngestionService {
                 }
             }
             log.succeed(fetched, saved, clock.instant());
+            // Bounded: run id, source, job count and elapsed milliseconds only. No title,
+            // description, URL, candidate data, or any secret-bearing field.
+            if (LOGGER.isDebugEnabled()) {
+                LOGGER.debug("Source screening timing: runId={}, source={}, jobs={}, elapsedMs={}",
+                        IngestionRunContext.currentRunId(), source.getSourceName(), fetched,
+                        (System.nanoTime() - screeningStartedNanos) / 1_000_000L);
+            }
         } catch (RuntimeException exception) {
             log.fail(exception, clock.instant());
             LOGGER.warn("Job source {} failed; remaining sources will continue: {}",
