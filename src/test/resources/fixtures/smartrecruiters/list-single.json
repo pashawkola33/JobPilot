@@ -1,0 +1,19 @@
+{
+  "limit": 100,
+  "offset": 0,
+  "totalFound": 1,
+  "content": [
+    {
+      "id": "post-1",
+      "uuid": "uuid-1",
+      "name": "Junior Java Engineer",
+      "company": {"identifier": "SyntheticCo", "name": "Synthetic Company"},
+      "releasedDate": "2026-07-30T09:15:00Z",
+      "location": {"city": "Bucharest", "region": "Bucuresti", "country": "ro", "remote": true},
+      "department": {"id": "engineering", "label": "Engineering"},
+      "function": {"id": "software", "label": "Software Development"},
+      "typeOfEmployment": {"id": "full-time", "label": "Full-time"},
+      "experienceLevel": {"id": "entry", "label": "Entry level"}
+    }
+  ]
+}

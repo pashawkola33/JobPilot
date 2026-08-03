@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URI;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import com.jobpilot.jobs.domain.RemoteScope;
@@ -106,17 +107,31 @@ public record JobPilotProperties(
             List<String> greenhouseBoardTokens,
             List<String> leverCompanyIds,
             List<String> ashbyBoardNames,
-            List<String> recruiteeCompanyIds) {
+            List<String> recruiteeCompanyIds,
+            List<String> smartrecruitersCompanyIdentifiers) {
+
+        private static final int MAX_SMARTRECRUITERS_COMPANIES = 100;
 
         public Sources {
             greenhouseBoardTokens = copyAndValidate("Greenhouse", greenhouseBoardTokens);
             leverCompanyIds = copyAndValidate("Lever", leverCompanyIds);
             ashbyBoardNames = copyAndValidate("Ashby", ashbyBoardNames);
             recruiteeCompanyIds = copyAndValidate("Recruitee", recruiteeCompanyIds);
+            smartrecruitersCompanyIdentifiers = copyAndValidate(
+                    "SmartRecruiters", smartrecruitersCompanyIdentifiers);
+            if (smartrecruitersCompanyIdentifiers.size() > MAX_SMARTRECRUITERS_COMPANIES) {
+                throw new IllegalArgumentException(
+                        "SmartRecruiters supports at most 100 configured companies");
+            }
+            if (new HashSet<>(smartrecruitersCompanyIdentifiers).size()
+                    != smartrecruitersCompanyIdentifiers.size()) {
+                throw new IllegalArgumentException(
+                        "SmartRecruiters company identifiers must not contain duplicates");
+            }
         }
 
         public static Sources empty() {
-            return new Sources(List.of(), List.of(), List.of(), List.of());
+            return new Sources(List.of(), List.of(), List.of(), List.of(), List.of());
         }
 
         private static List<String> copyAndValidate(String provider, List<String> values) {

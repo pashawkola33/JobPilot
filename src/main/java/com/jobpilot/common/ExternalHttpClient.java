@@ -215,12 +215,13 @@ public class ExternalHttpClient {
         validateAddresses(host);
     }
 
-    private DestinationFamily family(String host) {
+    private static DestinationFamily family(String host) {
         if (host.equals("boards-api.greenhouse.io") || host.equals("boards-api.eu.greenhouse.io")) {
             return DestinationFamily.GREENHOUSE;
         }
         if (host.equals("api.lever.co") || host.equals("api.eu.lever.co")) return DestinationFamily.LEVER;
         if (host.equals("api.ashbyhq.com")) return DestinationFamily.ASHBY;
+        if (host.equals("api.smartrecruiters.com")) return DestinationFamily.SMARTRECRUITERS;
         if (host.endsWith(".recruitee.com")) {
             String tenant = host.substring(0, host.length() - ".recruitee.com".length());
             if (tenant.matches("[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}")) {
@@ -350,7 +351,13 @@ public class ExternalHttpClient {
         }
     }
 
-    private enum DestinationFamily { GREENHOUSE, LEVER, ASHBY, RECRUITEE, TELEGRAM, TEST }
+    static boolean isAllowedProductionHost(String host) {
+        return host != null && family(host.toLowerCase(Locale.ROOT)) != null;
+    }
+
+    private enum DestinationFamily {
+        GREENHOUSE, LEVER, ASHBY, RECRUITEE, SMARTRECRUITERS, TELEGRAM, TEST
+    }
 
     private record Destination(DestinationFamily family, String initialHost) {
     }

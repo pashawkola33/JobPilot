@@ -17,9 +17,10 @@ class SourceTenantConfigurationTest {
     void acceptsTheExactTenantGrammarForEveryProvider() {
         var sources = new JobPilotProperties.Sources(
                 List.of("greenhouse_1"), List.of("lever.one"),
-                List.of("ashby-board"), List.of("recruitee_1"));
+                List.of("ashby-board"), List.of("recruitee_1"), List.of("SmartCo"));
 
         assertThat(sources.recruiteeCompanyIds()).containsExactly("recruitee_1");
+        assertThat(sources.smartrecruitersCompanyIdentifiers()).containsExactly("SmartCo");
     }
 
     @Test
@@ -28,13 +29,20 @@ class SourceTenantConfigurationTest {
                 "a#b", "a%2fb", "x".repeat(64));
         for (String value : invalid) {
             assertThatThrownBy(() -> new JobPilotProperties.Sources(
-                    List.of(value), List.of(), List.of(), List.of())).isInstanceOf(IllegalArgumentException.class);
+                    List.of(value), List.of(), List.of(), List.of(), List.of()))
+                    .isInstanceOf(IllegalArgumentException.class);
             assertThatThrownBy(() -> new JobPilotProperties.Sources(
-                    List.of(), List.of(value), List.of(), List.of())).isInstanceOf(IllegalArgumentException.class);
+                    List.of(), List.of(value), List.of(), List.of(), List.of()))
+                    .isInstanceOf(IllegalArgumentException.class);
             assertThatThrownBy(() -> new JobPilotProperties.Sources(
-                    List.of(), List.of(), List.of(value), List.of())).isInstanceOf(IllegalArgumentException.class);
+                    List.of(), List.of(), List.of(value), List.of(), List.of()))
+                    .isInstanceOf(IllegalArgumentException.class);
             assertThatThrownBy(() -> new JobPilotProperties.Sources(
-                    List.of(), List.of(), List.of(), List.of(value))).isInstanceOf(IllegalArgumentException.class);
+                    List.of(), List.of(), List.of(), List.of(value), List.of()))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> new JobPilotProperties.Sources(
+                    List.of(), List.of(), List.of(), List.of(), List.of(value)))
+                    .isInstanceOf(IllegalArgumentException.class);
         }
     }
 
@@ -44,7 +52,8 @@ class SourceTenantConfigurationTest {
                 "jobpilot.sources.greenhouse-board-tokens[0]",
                 "jobpilot.sources.lever-company-ids[0]",
                 "jobpilot.sources.ashby-board-names[0]",
-                "jobpilot.sources.recruitee-company-ids[0]");
+                "jobpilot.sources.recruitee-company-ids[0]",
+                "jobpilot.sources.smartrecruiters-company-identifiers[0]");
 
         for (String property : properties) {
             contextRunner.withPropertyValues(property + "=tenant/path")

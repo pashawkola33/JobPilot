@@ -139,6 +139,16 @@ class ExternalHttpClientTest {
     }
 
     @Test
+    void smartRecruitersDestinationIsExactRatherThanWildcarded() {
+        assertThat(ExternalHttpClient.isAllowedProductionHost("api.smartrecruiters.com")).isTrue();
+        assertThat(ExternalHttpClient.isAllowedProductionHost("API.SMARTRECRUITERS.COM")).isTrue();
+        assertThat(ExternalHttpClient.isAllowedProductionHost("evil.smartrecruiters.com")).isFalse();
+        assertThat(ExternalHttpClient.isAllowedProductionHost("api.smartrecruiters.com.example"))
+                .isFalse();
+        assertThat(ExternalHttpClient.isAllowedProductionHost("127.0.0.1")).isFalse();
+    }
+
+    @Test
     void rejectsInvalidContentTypeAndMalformedJson() {
         assertCategory("/wrong-type", ExternalHttpException.Category.INVALID_CONTENT_TYPE);
         assertCategory("/malformed", ExternalHttpException.Category.MALFORMED_JSON);

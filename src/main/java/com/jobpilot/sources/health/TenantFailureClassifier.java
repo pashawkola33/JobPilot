@@ -1,6 +1,7 @@
 package com.jobpilot.sources.health;
 
 import com.jobpilot.common.ExternalHttpException;
+import com.jobpilot.sources.smartrecruiters.SmartRecruitersLimitException;
 import java.io.IOException;
 import java.net.ConnectException;
 import java.net.NoRouteToHostException;
@@ -48,6 +49,14 @@ public class TenantFailureClassifier {
     }
 
     private TenantFailure classifyOne(String provider, String tenant, Throwable error) {
+        if (error instanceof SmartRecruitersLimitException limit) {
+            String kind = limit.limit() == SmartRecruitersLimitException.Limit.LIST_PAGES
+                    ? "list-page" : "unique-posting";
+            return new TenantFailure(TenantFailureCategory.RESPONSE_TOO_LARGE, null,
+                    error.getClass().getName(),
+                    "SmartRecruiters " + kind + " cap of " + limit.configuredMaximum()
+                            + " was exceeded for " + provider + " tenant " + tenant);
+        }
         if (error instanceof ExternalHttpException transport) {
             return fromTransport(provider, tenant, transport);
         }

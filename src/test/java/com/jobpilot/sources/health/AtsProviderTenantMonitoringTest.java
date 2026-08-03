@@ -9,6 +9,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jobpilot.common.ExternalHttpClient;
 import com.jobpilot.common.ExternalHttpException;
+import com.jobpilot.common.UrlCanonicalizer;
 import com.jobpilot.config.JobPilotProperties;
 import com.jobpilot.jobs.domain.RawJob;
 import com.jobpilot.sources.JobSource;
@@ -16,6 +17,7 @@ import com.jobpilot.sources.ashby.AshbyJobSource;
 import com.jobpilot.sources.greenhouse.GreenhouseJobSource;
 import com.jobpilot.sources.lever.LeverJobSource;
 import com.jobpilot.sources.recruitee.RecruiteeJobSource;
+import com.jobpilot.sources.smartrecruiters.SmartRecruitersJobSource;
 import com.jobpilot.support.TestProperties;
 import java.time.Clock;
 import java.time.Instant;
@@ -54,7 +56,9 @@ class AtsProviderTenantMonitoringTest {
                 org.junit.jupiter.params.provider.Arguments.of("ashby",
                         payload("ashby"), factory("ashby")),
                 org.junit.jupiter.params.provider.Arguments.of("recruitee",
-                        payload("recruitee"), factory("recruitee")));
+                        payload("recruitee"), factory("recruitee")),
+                org.junit.jupiter.params.provider.Arguments.of("smartrecruiters",
+                        payload("smartrecruiters"), factory("smartrecruiters")));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -68,6 +72,10 @@ class AtsProviderTenantMonitoringTest {
             String url = invocation.getArgument(0, String.class);
             if (url.contains(BROKEN)) {
                 throw new ExternalHttpException(ExternalHttpException.Category.HTTP_STATUS, 404);
+            }
+            if (provider.equals("smartrecruiters")
+                    && url.matches(".*/postings/[^/?]+$")) {
+                return MAPPER.readTree(payload("smartrecruiters-detail"));
             }
             return body;
         });
@@ -117,6 +125,25 @@ class AtsProviderTenantMonitoringTest {
                 .isEqualTo(TenantAttemptStatus.SUCCESS);
     }
 
+    @Test
+    void failingSmartRecruitersProviderDoesNotStopAnExistingProvider() throws Exception {
+        ExternalHttpClient failing = mock(ExternalHttpClient.class);
+        when(failing.getJson(anyString())).thenThrow(
+                new ExternalHttpException(ExternalHttpException.Category.IO, null));
+        ExternalHttpClient working = mock(ExternalHttpClient.class);
+        when(working.getJson(anyString())).thenReturn(MAPPER.readTree(payload("ashby")));
+
+        List<RawJob> collected = new ArrayList<>();
+        collected.addAll(factory("smartrecruiters").apply(failing, monitor).fetchJobs());
+        collected.addAll(factory("ashby").apply(working, monitor).fetchJobs());
+
+        assertThat(collected).hasSize(2);
+        assertThat(recorder.byProvider("smartrecruiters"))
+                .allSatisfy(call -> assertThat(call.status).isEqualTo(TenantAttemptStatus.FAILURE));
+        assertThat(recorder.byProvider("ashby"))
+                .allSatisfy(call -> assertThat(call.status).isEqualTo(TenantAttemptStatus.SUCCESS));
+    }
+
     private static BiFunction<ExternalHttpClient, TenantFetchMonitor, JobSource> factory(
             String provider) {
         return (http, monitor) -> {
@@ -125,7 +152,9 @@ class AtsProviderTenantMonitoringTest {
                 case "greenhouse" -> new GreenhouseJobSource(http, properties, monitor);
                 case "lever" -> new LeverJobSource(http, properties, monitor);
                 case "ashby" -> new AshbyJobSource(http, properties, monitor);
-                default -> new RecruiteeJobSource(http, properties, monitor);
+                case "recruitee" -> new RecruiteeJobSource(http, properties, monitor);
+                default -> new SmartRecruitersJobSource(http, MAPPER,
+                        new UrlCanonicalizer(), properties, monitor);
             };
         };
     }
@@ -139,7 +168,8 @@ class AtsProviderTenantMonitoringTest {
                 provider.equals("greenhouse") ? configured : none,
                 provider.equals("lever") ? configured : none,
                 provider.equals("ashby") ? configured : none,
-                provider.equals("recruitee") ? configured : none);
+                provider.equals("recruitee") ? configured : none,
+                provider.equals("smartrecruiters") ? configured : none);
         return new JobPilotProperties(base.telegram(), sources, base.eligibility(), base.candidate(),
                 base.http(), base.manualUrl(), base.llm(), base.scheduling(), base.searchTerms(),
                 base.locations());
@@ -159,6 +189,19 @@ class AtsProviderTenantMonitoringTest {
             case "ashby" -> """
                     {"jobs":[{"id":"b2","title":"Java Intern","jobUrl":"https://x.example/b2",
                     "location":"Bucharest","isListed":true,"descriptionPlain":"Java internship"}]}
+                    """;
+            case "smartrecruiters" -> """
+                    {"limit":100,"offset":0,"totalFound":1,"content":[{
+                    "id":"sr1","uuid":"sr-uuid-1","name":"Java Intern",
+                    "company":{"identifier":"healthytenant","name":"Example"},
+                    "location":{"city":"Bucharest","country":"ro","remote":false}}]}
+                    """;
+            case "smartrecruiters-detail" -> """
+                    {"id":"sr1","uuid":"sr-uuid-1","name":"Java Intern",
+                    "company":{"identifier":"healthytenant","name":"Example"},
+                    "location":{"city":"Bucharest","country":"ro","remote":false},
+                    "postingUrl":"https://jobs.example.test/sr1",
+                    "jobAd":{"sections":{"jobDescription":{"text":"Java internship"}}}}
                     """;
             default -> """
                     {"offers":[{"id":3,"guid":"g3","title":"Java Intern",

@@ -62,8 +62,18 @@ class SourceRegistryValidationTest {
             "ashby", List.of("uipath"),
             "recruitee", List.of());
 
-    /** 45 retained plus 3 added. Guards against a silent drop during a later edit. */
-    private static final int AUDITED_TENANT_COUNT = 48;
+    /**
+     * SmartRecruiters companies proved by the Phase 3.3D controlled live run
+     * c7643227: both returned parseable postings over the public Posting API and each
+     * contributed a REVIEW role, AECOM2 a Bucharest-local entry-level one. The three
+     * remaining candidates from that run are recorded in
+     * {@code docs/smartrecruiters-live-validation.md} and were not activated.
+     */
+    private static final List<String> PHASE_3_3D_VERIFIED_SMARTRECRUITERS =
+            List.of("BoschGroup", "AECOM2");
+
+    /** 45 retained, 3 added in 3.3A, 2 activated in 3.3D. Guards a silent drop. */
+    private static final int AUDITED_TENANT_COUNT = 50;
 
     /**
      * Loads the real {@code application.yml} plus the {@code development} profile through
@@ -77,6 +87,10 @@ class SourceRegistryValidationTest {
 
     static List<String> providers() {
         return List.of("greenhouse", "lever", "ashby", "recruitee");
+    }
+
+    static List<String> allProviders() {
+        return List.of("greenhouse", "lever", "ashby", "recruitee", "smartrecruiters");
     }
 
     @ParameterizedTest(name = "{0}")
@@ -106,7 +120,8 @@ class SourceRegistryValidationTest {
                     "greenhouse", sources.greenhouseBoardTokens(),
                     "lever", sources.leverCompanyIds(),
                     "ashby", sources.ashbyBoardNames(),
-                    "recruitee", sources.recruiteeCompanyIds())));
+                    "recruitee", sources.recruiteeCompanyIds(),
+                    "smartrecruiters", sources.smartrecruitersCompanyIdentifiers())));
         }
 
         assertThat(bindings).hasSize(3);
@@ -150,10 +165,29 @@ class SourceRegistryValidationTest {
         // has always meant a copy/paste slip rather than an intended pair.
         withRegistry(sources -> {
             List<String> all = new ArrayList<>();
-            providers().forEach(provider -> all.addAll(tenantsOf(sources, provider)));
+            allProviders().forEach(provider -> all.addAll(tenantsOf(sources, provider)));
             assertThat(all).as("identifier configured under two providers").doesNotHaveDuplicates();
             assertThat(all).as("audited registry size").hasSize(AUDITED_TENANT_COUNT);
         });
+    }
+
+    @Test
+    void smartRecruitersCarriesExactlyTheTwoTenantsTheLiveValidationProved() {
+        // Phase 3.3D activated only the companies that actually answered the public
+        // Posting API in run c7643227 and produced a usable posting. Order and case are
+        // asserted literally: the provider path is case-sensitive and the registry must
+        // stay deterministic.
+        withRegistry(sources -> assertThat(sources.smartrecruitersCompanyIdentifiers())
+                .containsExactly(PHASE_3_3D_VERIFIED_SMARTRECRUITERS.toArray(String[]::new)));
+    }
+
+    @Test
+    void smartRecruitersTenantsThatFailedToParseWereNotActivated() {
+        // Ubisoft2, Endava, and Gameloft each returned a deterministic
+        // RESPONSE_PARSE_ERROR in run c7643227. They are on hold pending investigation;
+        // activating them would add three guaranteed failures per cycle for no vacancies.
+        withRegistry(sources -> assertThat(sources.smartrecruitersCompanyIdentifiers())
+                .doesNotContain("Ubisoft2", "Endava", "Gameloft"));
     }
 
     @Test
@@ -199,6 +233,7 @@ class SourceRegistryValidationTest {
             case "lever" -> sources.leverCompanyIds();
             case "ashby" -> sources.ashbyBoardNames();
             case "recruitee" -> sources.recruiteeCompanyIds();
+            case "smartrecruiters" -> sources.smartrecruitersCompanyIdentifiers();
             default -> throw new IllegalArgumentException("Unknown provider " + provider);
         };
     }

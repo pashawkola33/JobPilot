@@ -1,6 +1,16 @@
 # Phase 3.3C specification: SmartRecruiters provider adapter
 
-Status: **implementation-ready design; implementation has not started**.
+Status: **implemented in Phase 3.3C, verified offline, and validated live in Phase 3.3D**. Two companies (`BoschGroup`, `AECOM2`) are tracked; three candidates are held after deterministic parse failures. See [smartrecruiters-live-validation.md](smartrecruiters-live-validation.md).
+
+## Phase 3.3C implementation result
+
+The generic adapter, configuration binding, exact destination-family support,
+all-or-nothing monitoring, minimized synthetic fixtures, and PostgreSQL integration
+coverage now implement this contract. Both base and development SmartRecruiters
+registries remain empty. The implementation made no live Posting API request, added
+no migration, kept the 10 MiB response bound, and did not change `RawJob`, screening,
+scoring, reconciliation, or stale-job behavior. The five evidence-backed employers
+remain Phase 3.3D candidates rather than hard-coded or active tenants.
 
 ## Selection and scope
 

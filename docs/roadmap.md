@@ -24,11 +24,11 @@ a single MATCH / REVIEW / REJECT disposition. Rejected vacancies are reconciled
 rather than silently dropped. Tenant-aware job identity
 (`source + provider_tenant + external_id`). Migrations V6–V9.
 
-## Phase 3 — Source reliability and coverage: IN PROGRESS (3.1-3.3B complete, 3.3C next)
+## Phase 3 — Source reliability and coverage: IN PROGRESS (3.1-3.3D complete, 3.3E next)
 
 ### 3.1 Per-tenant source health — COMPLETE
 
-Every Greenhouse, Lever, Ashby, and Recruitee tenant fetch is recorded as one
+Every Greenhouse, Lever, Ashby, Recruitee, and SmartRecruiters tenant fetch is recorded as one
 immutable attempt row plus a current health roll-up, with a closed failure
 taxonomy instead of a bare `ExternalHttpException`. Adds migration V10
 (`source_tenant_fetch_logs`, `source_tenant_health`, and a nullable
@@ -206,21 +206,57 @@ documentation: implementation remains unstarted, no tenant was added or
 removed, and no runtime, database, migration, screening, or scoring change
 occurred.
 
-### 3.3C SmartRecruiters provider implementation — NEXT
+### 3.3C SmartRecruiters provider implementation — COMPLETE (offline verified)
 
-Implement the generic public Posting API adapter, strict configuration and host
-validation, bounded country/remote query partitions, 100-item offset pagination,
-N+1 detail hydration, aggregate page/job caps, all-or-nothing tenant semantics,
-source-health integration, sanitized offline fixtures, and zero-network
-automated tests. Do not add production tenants in this phase.
+Implemented the generic public unauthenticated Posting API adapter with strict,
+case-preserving configuration and exact-host validation. Every tenant queries the
+Romania and remote partitions in fixed order, uses 100-item offset pagination,
+deduplicates before sequential detail hydration, and is bounded by ten aggregate
+list pages and 500 aggregate unique postings. A page, detail, schema, identity, or
+cap failure discards the whole tenant result and records one classified zero-count
+attempt; later tenants and providers continue.
 
-### 3.3D SmartRecruiters live validation and registry expansion — PLANNED
+Synthetic minimized fixtures and offline tests cover configuration, DTO validation,
+pagination termination, duplicate/conflict handling, URL canonicalization, location
+metadata, failure isolation, source health, and PostgreSQL tenant-aware persistence.
+The response limit remains 10 MiB and Flyway remains at V11; no RawJob or database
+shape changed. No live API validation occurred, and the SmartRecruiters registry is
+empty in both base and development configuration. BoschGroup, Ubisoft2, Endava,
+Gameloft, and AECOM2 remain candidates only for Phase 3.3D.
 
-After 3.3C is reviewed and green, validate a small evidence-backed initial
-registry in one authorized live run. Confirm one health attempt per company,
-bounded request volume, Romania/Bucharest discovery, and correct reconciliation
-before considering the two very large global boards. Registry additions and any
-runtime restart belong only to this separate phase.
+### 3.3D SmartRecruiters live validation and registry expansion — COMPLETE
+
+One controlled live cycle, run `c7643227-60fe-4fa6-8ea7-57ccd5e39e7a`, validated
+the 3.3C adapter against the public Posting API. 53 configured tenants, 49
+success, 4 failure, complete in 2 min 15 s. Full record in
+[smartrecruiters-live-validation.md](smartrecruiters-live-validation.md).
+
+Two companies were activated, taking the registry from 48 to 50:
+
+- `BoschGroup` — 103 postings, one REVIEW role;
+- `AECOM2` — 471 postings, one Bucharest-local `ENTRY_LEVEL` REVIEW role.
+
+`Ubisoft2`, `Endava`, and `Gameloft` each returned a deterministic
+`RESPONSE_PARSE_ERROR` in 250–400 ms with a null HTTP status, and were **not**
+activated. They were also not retired: the null status means the endpoint
+answered rather than rejecting the identifier, and the same adapter parsed the
+other two companies in the same run, so the cause is more likely one unhandled
+response shape than three invalid identifiers. Distinguishing the two needs a
+direct look at the response, which 3.3D prohibited.
+
+Provider mechanics held: one health attempt per company with no per-page or
+per-detail rows, both partitions executed, no pagination loop, neither the
+10-page nor the 500-posting cap reached, `duplicateRaw=0`, and zero rows
+retained for the three failed companies. Bucharest-located vacancies rose from
+57 to 134 against the same-day scheduled run — the strongest evidence that
+SmartRecruiters reaches Romanian employers the other four adapters miss.
+
+### 3.3E SmartRecruiters parse-failure investigation — next
+
+Resolve the three held companies. Capture the response shape for one of them
+under a phase that permits a single direct request, then either extend the
+parser or retire the identifier. Only after that consider the two very large
+global boards deferred from 3.3C.
 
 ## Phase 4 — REVIEW workflow and ranking calibration: PLANNED
 

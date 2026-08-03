@@ -54,6 +54,7 @@ jobpilot:
     lever-company-ids: ${LEVER_COMPANY_IDS:}
     ashby-board-names: ${ASHBY_BOARD_NAMES:}
     recruitee-company-ids: ${RECRUITEE_COMPANY_IDS:}
+    smartrecruiters-company-identifiers: ${SMARTRECRUITERS_COMPANY_IDENTIFIERS:}
   eligibility:
     target-city: ${JOBPILOT_TARGET_CITY:Bucharest}
     target-country: ${JOBPILOT_TARGET_COUNTRY:Romania}

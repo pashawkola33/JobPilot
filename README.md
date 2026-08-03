@@ -2,7 +2,7 @@
 
 ![Java](https://img.shields.io/badge/Java-21-orange) ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3-brightgreen) ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg) ![Docker](https://img.shields.io/badge/Docker-ready-2496ED)
 
-JobPilot is a human-in-the-loop internship discovery service for entry-level software roles. It fetches public Greenhouse, Lever, Ashby, and Recruitee boards, applies hard location and early-career eligibility gates, normalizes and deduplicates vacancies, deterministically extracts requirements, scores them against a configurable candidate profile, and sends strong matches to a Telegram channel. Phase 2 Stage 1 adds the versioned candidate truth model, Stage 2 safely processes manually submitted public vacancy URLs, Stage 3 adds human-maintained application tracking, Stage 4 adds optional structured job analysis, Stage 5 creates truthful application documents for private human review, and Stage 6 integrates the complete workflow with maintenance, readiness, safe operational counters, PostgreSQL end-to-end verification, and production-like Docker defaults.
+JobPilot is a human-in-the-loop internship discovery service for entry-level software roles. It fetches public Greenhouse, Lever, Ashby, Recruitee, and SmartRecruiters boards, applies hard location and early-career eligibility gates, normalizes and deduplicates vacancies, deterministically extracts requirements, scores them against a configurable candidate profile, and sends strong matches to a Telegram channel. Phase 2 Stage 1 adds the versioned candidate truth model, Stage 2 safely processes manually submitted public vacancy URLs, Stage 3 adds human-maintained application tracking, Stage 4 adds optional structured job analysis, Stage 5 creates truthful application documents for private human review, and Stage 6 integrates the complete workflow with maintenance, readiness, safe operational counters, PostgreSQL end-to-end verification, and production-like Docker defaults.
 
 JobPilot never submits applications, uploads documents to employers, answers screening questions, accepts agreements, or contacts recruiters. Stage 5 generates ATS-oriented DOCX/PDF résumés and optional cover notes, but attaching a completed version to an existing application remains a separate human-triggered internal operation. Protected-site browser automation remains out of scope.
 
@@ -10,7 +10,7 @@ JobPilot never submits applications, uploads documents to employers, answers scr
 
 - Java 21 and Spring Boot 3.3
 - PostgreSQL persistence with Flyway-managed `jobs`, `job_requirements`, `job_scores`, and `source_fetch_logs`
-- Greenhouse, Lever, Ashby, and Recruitee public ATS adapters
+- Greenhouse, Lever, Ashby, Recruitee, and SmartRecruiters public ATS adapters
 - Configurable search terms, locations, board tokens, and schedules
 - Exponential retry for transient network/5xx failures with response time and size limits
 - Per-source and per-vacancy failure isolation
@@ -72,7 +72,7 @@ Mid-level, senior, staff, principal, lead, architect, manager, head, director, V
 
 Flyway migration `V7__early_career_eligibility.sql` stores `seniorityLevel`, the normalized experience range and mandatory flag, `earlyCareerEligibility`, and its reason. Provider adapters retain structured source facts but do not decide eligibility. The daily digest requires both an accepted location category and `earlyCareerEligibility=ELIGIBLE`; manual submissions return `EARLY_CAREER_INELIGIBLE` for both unknown and rejected career decisions.
 
-The opt-in `development` profile contains 48 public ATS tenants across all four providers. The Phase 3.2 audit re-verified every tenant against its unauthenticated endpoint and removed one dead board, and Phase 3.3A added three Bucharest-relevant tenants — Ashby `uipath`, Greenhouse `scbitdefendersrl` (Bitdefender), and Greenhouse `showpad` — each confirmed from an official careers page or public ATS URL rather than a guessed identifier. See [docs/source-expansion-audit.md](docs/source-expansion-audit.md) for the per-candidate evidence, the rejected and deferred employers, and the remaining coverage gap. Run the read-only live volume check with network access:
+The opt-in `development` profile contains 50 public ATS tenants across five active providers. Phase 3.3D validated the SmartRecruiters adapter in one controlled live cycle and activated the two companies that returned parseable postings — `BoschGroup` and `AECOM2`; see [docs/smartrecruiters-live-validation.md](docs/smartrecruiters-live-validation.md). The Phase 3.2 audit re-verified every active tenant against its unauthenticated endpoint and removed one dead board, and Phase 3.3A added three Bucharest-relevant tenants — Ashby `uipath`, Greenhouse `scbitdefendersrl` (Bitdefender), and Greenhouse `showpad` — each confirmed from an official careers page or public ATS URL rather than a guessed identifier. See [docs/source-expansion-audit.md](docs/source-expansion-audit.md) for the per-candidate evidence, the rejected and deferred employers, and the remaining coverage gap. Run the read-only live volume check with network access:
 
 ```bash
 ./mvnw test -q -DargLine=-Djobpilot.live-smoke=true -Dtest=LiveVacancySmokeTest
@@ -99,7 +99,7 @@ See [roadmap](docs/roadmap.md), [Phase 2 architecture](docs/phase-2-architecture
 
 ### Per-tenant source health
 
-Every Greenhouse, Lever, Ashby, and Recruitee tenant fetch is recorded as one immutable attempt row plus a current roll-up, so a failing board is diagnosable instead of appearing as a bare `ExternalHttpException`. Failures are classified into a closed taxonomy — `INVALID_TENANT`, `AUTHORIZATION_ERROR`, `RATE_LIMITED`, `CLIENT_ERROR`, `SERVER_ERROR`, `TIMEOUT`, `NETWORK_ERROR`, `RESPONSE_PARSE_ERROR`, `CONFIGURATION_ERROR`, `UNKNOWN_ERROR` — from structured exception metadata and nested causes, never from message-string matching. Each ingestion run gets one UUID that correlates the aggregate source logs, every tenant attempt, and the summary log lines.
+Every configured Greenhouse, Lever, Ashby, Recruitee, and SmartRecruiters tenant fetch is recorded as one immutable attempt row plus a current roll-up, so a failing board is diagnosable instead of appearing as a bare `ExternalHttpException`. Failures are classified into a closed taxonomy — `INVALID_TENANT`, `AUTHORIZATION_ERROR`, `RATE_LIMITED`, `CLIENT_ERROR`, `SERVER_ERROR`, `TIMEOUT`, `NETWORK_ERROR`, `RESPONSE_PARSE_ERROR`, `RESPONSE_TOO_LARGE`, `CONFIGURATION_ERROR`, `UNKNOWN_ERROR` — from structured exception metadata and nested causes, never from message-string matching. Each ingestion run gets one UUID that correlates the aggregate source logs, every tenant attempt, and the summary log lines.
 
 Flyway migration `V10__source_tenant_health.sql` adds `source_tenant_fetch_logs` (immutable history), `source_tenant_health` (current roll-up, unique on `provider + tenant`), and a nullable `ingestion_run_id` on the existing `source_fetch_logs` so legacy rows stay valid.
 
@@ -246,6 +246,9 @@ Important variables:
 | `BUILD_COMMIT` | No | Safe health commit token; default `unknown` |
 | `GREENHOUSE_BOARD_TOKENS` | At least one source | Comma-separated Greenhouse board tokens |
 | `LEVER_COMPANY_IDS` | At least one source | Comma-separated Lever company identifiers |
+| `ASHBY_BOARD_NAMES` | At least one source | Comma-separated Ashby board names |
+| `RECRUITEE_COMPANY_IDS` | At least one source | Comma-separated Recruitee company identifiers |
+| `SMARTRECRUITERS_COMPANY_IDENTIFIERS` | No; empty unless set | Comma-separated SmartRecruiters company identifiers, maximum 100 |
 | `TELEGRAM_BOT_TOKEN` | Notifications only | BotFather token; never commit it |
 | `TELEGRAM_CHANNEL_ID` | Notifications only | Target channel ID, usually beginning with `-100` |
 | `TELEGRAM_BOT_USERNAME` | Commands: yes | Bot username, with or without leading `@`; used locally for command addressing |
@@ -322,7 +325,11 @@ For a postings URL such as `https://jobs.lever.co/acme`, the identifier is `acme
 LEVER_COMPANY_IDS=acme,another-company
 ```
 
-Greenhouse, Lever, Ashby, and Recruitee tenant values all use the startup-validated grammar `[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}`. Empty, whitespace-padded, oversized, path-like, percent-encoded, or hostname-manipulating values fail startup. Recruitee requests are always constructed as exactly `<tenant>.recruitee.com`.
+Greenhouse, Lever, Ashby, Recruitee, and SmartRecruiters tenant values all use the startup-validated grammar `[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}`. Empty, whitespace-padded, oversized, path-like, percent-encoded, or hostname-manipulating values fail startup. Recruitee requests are always constructed as exactly `<tenant>.recruitee.com`. SmartRecruiters preserves declaration order and case, rejects duplicates, and caps configuration at 100 companies. Its public Posting API adapter queries `country=ro` and `q=remote` in fixed order, allows at most ten list pages and 500 unique postings across the complete tenant attempt, hydrates each unique ID once, and discards the tenant's complete partial result if any page or detail fails. The existing 10 MiB per-response bound applies unchanged.
+
+### SmartRecruiters
+
+Phase 3.3C implements the public unauthenticated `api.smartrecruiters.com` Posting API using list pagination plus required detail hydration. Phase 3.3D validated it against the live provider in one controlled cycle: `BoschGroup` (103 postings) and `AECOM2` (471) parsed correctly and are now tracked, while `Ubisoft2`, `Endava`, and `Gameloft` each returned a deterministic `RESPONSE_PARSE_ERROR` and are held rather than activated or retired. Nothing about any company is hard-coded — all five went through the same generic adapter. No company is active in production until `SMARTRECRUITERS_COMPANY_IDENTIFIERS` is set. See [docs/smartrecruiters-live-validation.md](docs/smartrecruiters-live-validation.md).
 
 ## Telegram setup
 
@@ -395,7 +402,7 @@ If startup fails, check PostgreSQL health, Flyway validation, and fail-closed co
 - Runtime document contacts are injected only into private final artifacts; previews, audit content, hashes of canonical models, provider requests, and logs exclude them.
 - Private document paths are server-generated, relative, symlink-checked, size-bounded, structurally validated, and Git-ignored.
 - Remote calls have connection/read timeouts, manual bounded redirects, response content-type validation, streaming byte limits, and transient retries.
-- Only expected public Greenhouse, Lever, Ashby, Recruitee, and Telegram API hosts are queried; every redirect remains within its original provider family and is revalidated.
+- Only expected public Greenhouse, Lever, Ashby, Recruitee, SmartRecruiters, and Telegram API hosts are queried; every redirect remains within its original provider family and is revalidated. SmartRecruiters permits only the exact `api.smartrecruiters.com` request host, not a wildcard subdomain family.
 - Manual URL fetches allow only `http`/`https`, reject credentials, validate every original and redirected hostname through DNS, and block loopback, private, link-local, multicast, unspecified, reserved, benchmarking, and cloud-metadata destinations. IPv4 destinations embedded in 6to4, Teredo, NAT64, IPv4-compatible, or IPv4-mapped IPv6 addresses are decoded and checked by the same IPv4 policy.
 - Manual fetches send only fixed `Accept` and `User-Agent` headers—never cookies, authorization, provider tokens, or user-supplied headers—and accept only bounded HTML, XHTML, text, or JSON responses.
 - Only public LinkedIn guest detail/search markup is parsed; protected portals are not scraped, and CAPTCHAs, authentication, robots controls, and rate limits are never bypassed.
