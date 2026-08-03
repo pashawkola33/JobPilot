@@ -26,12 +26,14 @@ class SmartRecruitersConfigurationTest {
 
     @Test
     void developmentProfileCarriesOnlyTheLiveValidatedCompanies() {
-        // Phase 3.3D activated the two companies that returned parseable postings in
-        // controlled run c7643227; the three that failed to parse were left out.
+        // Phase 3.3D activated the first two; Phase 3.3F added the three the scalar
+        // reference fix cleared. Order is asserted literally to keep the registry
+        // deterministic, and the provider path is case-sensitive.
         runner.withPropertyValues("spring.profiles.active=development")
                 .run(context -> assertThat(context.getBean(JobPilotProperties.class).sources()
                         .smartrecruitersCompanyIdentifiers())
-                        .containsExactly("BoschGroup", "AECOM2"));
+                        .containsExactly("BoschGroup", "AECOM2", "Ubisoft2", "Endava",
+                                "Gameloft"));
     }
 
     @Test

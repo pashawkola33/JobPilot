@@ -1,6 +1,6 @@
 # Phase 3.3C specification: SmartRecruiters provider adapter
 
-Status: **implemented in Phase 3.3C, verified offline, and validated live in Phase 3.3D**. Two companies (`BoschGroup`, `AECOM2`) are tracked; three candidates are held after deterministic parse failures. See [smartrecruiters-live-validation.md](smartrecruiters-live-validation.md).
+Status: **complete**. Implemented in Phase 3.3C, validated live in 3.3D, made shape-compatible in 3.3E, and fully activated in 3.3F. All five companies (`BoschGroup`, `AECOM2`, `Ubisoft2`, `Endava`, `Gameloft`) are tracked and fetched cleanly in controlled run 4d1ddf9c. See [smartrecruiters-live-validation.md](smartrecruiters-live-validation.md) and [smartrecruiters-response-compatibility.md](smartrecruiters-response-compatibility.md).
 
 ## Phase 3.3C implementation result
 

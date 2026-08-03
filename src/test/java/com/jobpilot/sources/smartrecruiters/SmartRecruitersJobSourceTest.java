@@ -349,6 +349,80 @@ class SmartRecruitersJobSourceTest {
         return Integer.parseInt(end < 0 ? url.substring(start) : url.substring(start, end));
     }
 
+    @Test
+    void numericReferenceIdsMapIdenticallyToTheStringFormAndKeepStableIdentity()
+            throws Exception {
+        // Phase 3.3E root cause: SmartRecruiters serialises a reference object's `id` as a
+        // number for some companies. The standard fixture and the numeric-id fixture must
+        // produce the same identity, URL, and eligibility inputs.
+        JsonNode list = fixture("list-single.json");
+        var standard = mapOnly(list, fixture("detail-single.json"));
+        var numeric = mapOnly(list, fixture("detail-numeric-label-id.json"));
+
+        assertThat(numeric.source()).isEqualTo(standard.source());
+        assertThat(numeric.externalId()).isEqualTo(standard.externalId());
+        assertThat(numeric.providerTenant()).isEqualTo(standard.providerTenant());
+        assertThat(numeric.url()).isEqualTo(standard.url());
+        assertThat(numeric.title()).isEqualTo(standard.title());
+        assertThat(numeric.company()).isEqualTo(standard.company());
+        assertThat(numeric.location()).isEqualTo(standard.location());
+        assertThat(numeric.publishedAt()).isEqualTo(standard.publishedAt());
+        assertThat(numeric.locationData()).isEqualTo(standard.locationData());
+        // The numeric id is rendered as text rather than dropped, and a numeric label too.
+        assertThat(numeric.description()).contains("Department: Engineering", "Function: 1907");
+        assertThat(numeric.description()).contains("Build Java & Spring services.");
+    }
+
+    @Test
+    void aReferenceIdThatIsAContainerIsStillRejected() throws Exception {
+        // The fix widens scalars only. An object or array in the same position remains a
+        // schema violation, so validation was not blanket-loosened.
+        JsonNode list = fixture("list-single.json");
+        JsonNode detail = fixture("detail-object-label-id.json");
+        assertParseFailure(() -> mapOnly(list, detail));
+    }
+
+    @Test
+    void parseFailuresNameTheRejectingRuleWithoutCarryingAnyValue() throws Exception {
+        JsonNode list = fixture("list-single.json");
+        JsonNode detail = fixture("detail-object-label-id.json");
+
+        assertThatThrownBy(() -> mapOnly(list, detail))
+                .isInstanceOfSatisfying(ExternalHttpException.class, failure -> {
+                    assertThat(failure.parseDetail())
+                            .isEqualTo("detail.department.id: expected STRING, NUMBER, or BOOLEAN"
+                                    + " but was OBJECT");
+                    // Field path and JSON type names only: no value, URL, or fragment.
+                    assertThat(failure.parseDetail())
+                            .doesNotContain("not-a-scalar", "nested", "http", "SyntheticCo",
+                                    "Junior Java Engineer");
+                });
+    }
+
+    @Test
+    void mandatoryFieldsRemainStrictAfterTheScalarWidening() throws Exception {
+        JsonNode list = fixture("list-single.json");
+        for (String mandatory : List.of("id", "name", "postingUrl")) {
+            ObjectNode detail = (ObjectNode) fixture("detail-numeric-label-id.json");
+            detail.put(mandatory, 12345); // a scalar, but not permitted for a mandatory field
+            assertParseFailure(() -> mapOnly(list, detail));
+        }
+        // A blank mandatory string is still rejected.
+        ObjectNode blankTitle = (ObjectNode) fixture("detail-numeric-label-id.json");
+        blankTitle.put("name", "   ");
+        assertParseFailure(() -> mapOnly(list, blankTitle));
+    }
+
+    /** Runs one company through both partitions with a fixed list and detail response. */
+    private com.jobpilot.jobs.domain.RawJob mapOnly(JsonNode list, JsonNode detail) {
+        ExternalHttpClient http = mock(ExternalHttpClient.class);
+        when(http.getJson(anyString())).thenAnswer(invocation -> {
+            String url = invocation.getArgument(0);
+            return url.contains("/postings/") ? detail : list;
+        });
+        return source(http, List.of(COMPANY)).fetchCompany(COMPANY).get(0);
+    }
+
     private JsonNode fixture(String name) throws Exception {
         try (InputStream input = getClass().getResourceAsStream(
                 "/fixtures/smartrecruiters/" + name)) {

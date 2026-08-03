@@ -48,6 +48,16 @@ public class TenantFailureClassifier {
                         + " tenant " + tenantLabel);
     }
 
+    /**
+     * Names the schema rule that rejected the response when the adapter supplied one. The
+     * detail is provider-generic field-path and JSON-type text, so a vague "could not
+     * parse" becomes actionable without ever carrying a response value.
+     */
+    private static String parseMessage(String provider, String tenant, String parseDetail) {
+        String base = "Could not parse the " + provider + " jobs response for tenant " + tenant;
+        return parseDetail == null || parseDetail.isBlank() ? base : base + "; " + parseDetail;
+    }
+
     private TenantFailure classifyOne(String provider, String tenant, Throwable error) {
         if (error instanceof SmartRecruitersLimitException limit) {
             String kind = limit.limit() == SmartRecruitersLimitException.Limit.LIST_PAGES
@@ -104,8 +114,7 @@ public class TenantFailureClassifier {
             case REDIRECT_LIMIT -> new TenantFailure(TenantFailureCategory.NETWORK_ERROR, status,
                     typeOf(error), "Too many redirects for " + provider + " tenant " + tenant);
             case MALFORMED_JSON -> new TenantFailure(TenantFailureCategory.RESPONSE_PARSE_ERROR,
-                    status, typeOf(error),
-                    "Could not parse the " + provider + " jobs response for tenant " + tenant);
+                    status, typeOf(error), parseMessage(provider, tenant, error.parseDetail()));
             case INVALID_CONTENT_TYPE -> new TenantFailure(TenantFailureCategory.RESPONSE_PARSE_ERROR,
                     status, typeOf(error),
                     "Unexpected content type from " + provider + " for tenant " + tenant);

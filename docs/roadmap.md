@@ -24,7 +24,7 @@ a single MATCH / REVIEW / REJECT disposition. Rejected vacancies are reconciled
 rather than silently dropped. Tenant-aware job identity
 (`source + provider_tenant + external_id`). Migrations V6–V9.
 
-## Phase 3 — Source reliability and coverage: IN PROGRESS (3.1-3.3D complete, 3.3E next)
+## Phase 3 — Source reliability and coverage: COMPLETE (3.1-3.3F)
 
 ### 3.1 Per-tenant source health — COMPLETE
 
@@ -251,12 +251,68 @@ retained for the three failed companies. Bucharest-located vacancies rose from
 57 to 134 against the same-day scheduled run — the strongest evidence that
 SmartRecruiters reaches Romanian employers the other four adapters miss.
 
-### 3.3E SmartRecruiters parse-failure investigation — next
+### 3.3E SmartRecruiters parse-failure investigation — COMPLETE
 
-Resolve the three held companies. Capture the response shape for one of them
-under a phase that permits a single direct request, then either extend the
-parser or retire the identifier. Only after that consider the two very large
-global boards deferred from 3.3C.
+Root cause of the three 3.3D failures: SmartRecruiters serialises a reference
+object's `id` (and sometimes `label`) as a **JSON number** for some companies and
+a string for others. The adapter read every reference field through a strictly
+textual accessor, so a numeric `department.id` failed the whole tenant. The list
+responses for these boards carry string ids and the detail responses carry
+numbers, which is why both list partitions parsed cleanly and the failures were
+fast. Full analysis in
+[smartrecruiters-response-compatibility.md](smartrecruiters-response-compatibility.md).
+
+Two things changed, both provider-generic:
+
+- `optionalScalarText` accepts a string, number, or boolean for a reference
+  `id`/`label` only. Containers are still rejected, and every mandatory field
+  keeps the strict path. Reference values are display text and never touch
+  identity, canonical URL, or eligibility.
+- `ExternalHttpException` now carries a bounded `parseDetail` such as
+  `detail.department.id: expected STRING but was NUMBER`, built only from
+  compile-time field paths and JSON type names. Previously all ~15 validation
+  points threw the same contextless error, which is why 3.3D could not name the
+  stage.
+
+After the fix all three parse: Ubisoft2 4 postings, Endava 102, Gameloft 5 —
+each with a stable external ID, preserved tenant, https canonical URL, and a
+non-empty description. `BoschGroup` and `AECOM2` are unchanged, asserted by a
+characterization test against the original fixture.
+
+No ingestion cycle ran and the tracked registry was **not** changed: it remains
+`BoschGroup,AECOM2`.
+
+### 3.3F SmartRecruiters held-company activation — COMPLETE
+
+One controlled cycle, run `4d1ddf9c-07b0-488e-8bc1-23bc6b1c16c0`, fetched all 53
+configured tenants in 2 min 44 s: 52 success, 1 failure. The only failure is
+`lever/veeva` (`RESPONSE_TOO_LARGE`), unchanged and still not special-cased.
+**Zero parse errors of any kind** — the 3.3E scalar-reference fix held in
+production.
+
+All five SmartRecruiters companies succeeded, each with exactly one attempt:
+
+| Company | Fetched | Duration |
+|---|---|---|
+| `BoschGroup` | 103 | 16.7 s |
+| `AECOM2` | 470 | 69.6 s |
+| `Ubisoft2` | 4 | 0.7 s |
+| `Endava` | 102 | 15.2 s |
+| `Gameloft` | 5 | 0.9 s |
+
+`Ubisoft2`, `Endava`, and `Gameloft` were classified **ACTIVATE** and added to
+the tracked registry, taking it from 50 to **53 tenants**.
+
+Cycle totals: fetched 5,647, uniqueRaw 5,647, duplicateRaw 0, finalMatch 1,
+finalReview 73, finalReject 5,573, persistedNew 0, updated 1,
+existingUnchanged 96. Bucharest-located vacancies rose from 134 to **170**
+against the 3.3D run.
+
+The three newly activated boards contributed no MATCH or REVIEW this cycle:
+their 111 vacancies were all screened out. They are retained as valid boards
+with low current yield, the same basis used for comparable Greenhouse and Ashby
+tenants — a board is kept because it is live and correctly parsed, not because
+it happened to surface an eligible role on one particular day.
 
 ## Phase 4 — REVIEW workflow and ranking calibration: PLANNED
 

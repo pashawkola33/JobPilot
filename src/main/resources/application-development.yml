@@ -70,11 +70,13 @@ jobpilot:
       - veocareers
       - aidigital
       - almavivadebelgique
-    # Activated by the Phase 3.3D controlled live validation (run c7643227). Both
-    # companies answered the public Posting API and each contributed a REVIEW role;
-    # AECOM2 supplied a Bucharest-local ENTRY_LEVEL vacancy. Ubisoft2, Endava, and
-    # Gameloft are deliberately absent: each returned a deterministic
-    # RESPONSE_PARSE_ERROR and stays on hold pending investigation, not activation.
+    # Activated across two controlled live validations. BoschGroup and AECOM2 were
+    # proved in Phase 3.3D (run c7643227). Ubisoft2, Endava, and Gameloft failed there
+    # on a numeric reference id; Phase 3.3E fixed that generically and Phase 3.3F
+    # (run 4d1ddf9c) confirmed all five succeed in one cycle with no parse error.
     smartrecruiters-company-identifiers:
       - BoschGroup
       - AECOM2
+      - Ubisoft2
+      - Endava
+      - Gameloft

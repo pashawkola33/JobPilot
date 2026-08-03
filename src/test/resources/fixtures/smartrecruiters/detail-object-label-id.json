@@ -1,0 +1,17 @@
+{
+  "id": "post-1",
+  "uuid": "uuid-1",
+  "name": "Junior Java Engineer",
+  "company": {"identifier": "SyntheticCo", "name": "Synthetic Company"},
+  "releasedDate": "2026-07-30T09:15:00Z",
+  "location": {"city": "Bucharest", "region": "Bucuresti", "country": "ro", "remote": true},
+  "department": {"id": {"nested": "not-a-scalar"}, "label": "Engineering"},
+  "typeOfEmployment": {"id": "full-time", "label": "Full-time"},
+  "experienceLevel": {"id": "entry", "label": "Entry level"},
+  "postingUrl": "https://careers.example.test/jobs/post-1",
+  "jobAd": {
+    "sections": {
+      "jobDescription": {"text": "<p>Build Java &amp; Spring services.</p>"}
+    }
+  }
+}

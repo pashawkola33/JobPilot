@@ -17,6 +17,7 @@ public final class ExternalHttpException extends RuntimeException {
     private final Integer statusCode;
     private Long retryAfterSeconds;
     private Integer limitBytes;
+    private String parseDetail;
 
     public ExternalHttpException(Category category, Integer statusCode) {
         super(category.name());
@@ -36,6 +37,22 @@ public final class ExternalHttpException extends RuntimeException {
 
     public ExternalHttpException limitBytes(Integer value) {
         this.limitBytes = value;
+        return this;
+    }
+
+    /**
+     * Which schema rule rejected a {@code MALFORMED_JSON} response, as a bounded
+     * provider-generic phrase such as {@code "detail.jobAd: expected OBJECT but was
+     * MISSING"}. It is built only from compile-time field paths and JSON <em>type</em>
+     * names, never from a field value, response fragment, URL, or header, so it is safe to
+     * persist as operator-facing health text. Null when the caller supplied no context.
+     */
+    public String parseDetail() {
+        return parseDetail;
+    }
+
+    public ExternalHttpException parseDetail(String value) {
+        this.parseDetail = value;
         return this;
     }
 

@@ -63,17 +63,16 @@ class SourceRegistryValidationTest {
             "recruitee", List.of());
 
     /**
-     * SmartRecruiters companies proved by the Phase 3.3D controlled live run
-     * c7643227: both returned parseable postings over the public Posting API and each
-     * contributed a REVIEW role, AECOM2 a Bucharest-local entry-level one. The three
-     * remaining candidates from that run are recorded in
-     * {@code docs/smartrecruiters-live-validation.md} and were not activated.
+     * SmartRecruiters companies proved by controlled live runs. BoschGroup and AECOM2
+     * came from Phase 3.3D (run c7643227). Ubisoft2, Endava, and Gameloft failed there on
+     * a numeric reference id, which Phase 3.3E fixed generically; Phase 3.3F (run
+     * 4d1ddf9c) then fetched all five in one cycle with zero parse errors.
      */
     private static final List<String> PHASE_3_3D_VERIFIED_SMARTRECRUITERS =
-            List.of("BoschGroup", "AECOM2");
+            List.of("BoschGroup", "AECOM2", "Ubisoft2", "Endava", "Gameloft");
 
-    /** 45 retained, 3 added in 3.3A, 2 activated in 3.3D. Guards a silent drop. */
-    private static final int AUDITED_TENANT_COUNT = 50;
+    /** 45 retained, 3 added in 3.3A, 2 activated in 3.3D, 3 in 3.3F. Guards a drop. */
+    private static final int AUDITED_TENANT_COUNT = 53;
 
     /**
      * Loads the real {@code application.yml} plus the {@code development} profile through
@@ -182,12 +181,12 @@ class SourceRegistryValidationTest {
     }
 
     @Test
-    void smartRecruitersTenantsThatFailedToParseWereNotActivated() {
-        // Ubisoft2, Endava, and Gameloft each returned a deterministic
-        // RESPONSE_PARSE_ERROR in run c7643227. They are on hold pending investigation;
-        // activating them would add three guaranteed failures per cycle for no vacancies.
+    void smartRecruitersTenantsClearedByTheCompatibilityFixAreActivated() {
+        // These three failed in run c7643227 on a numeric reference id. Phase 3.3E made
+        // the parser accept scalar reference values generically, and run 4d1ddf9c
+        // fetched 4, 102, and 5 postings from them with no parse error.
         withRegistry(sources -> assertThat(sources.smartrecruitersCompanyIdentifiers())
-                .doesNotContain("Ubisoft2", "Endava", "Gameloft"));
+                .contains("Ubisoft2", "Endava", "Gameloft"));
     }
 
     @Test

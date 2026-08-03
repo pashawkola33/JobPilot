@@ -66,8 +66,13 @@ shape, and this phase prohibits manual probing of the five endpoints. They are t
 held, not removed, and not activated — activating them would add three guaranteed failures
 per cycle for zero vacancies.
 
-**Follow-up:** capture the response shape for one held company under a phase that permits a
-single direct request, then either fix the parser or retire the identifier.
+**Follow-up — resolved in Phase 3.3E and closed in Phase 3.3F.** The cause was a numeric
+`department.id` in the detail response, a legitimate Posting API variant the adapter's
+strictly textual accessor rejected. After a provider-generic fix, controlled run
+`4d1ddf9c-07b0-488e-8bc1-23bc6b1c16c0` fetched all five companies with **zero parse
+errors** — Ubisoft2 4 postings, Endava 102, Gameloft 5 — and all three were activated.
+The tracked registry is now `BoschGroup,AECOM2,Ubisoft2,Endava,Gameloft`. See
+[smartrecruiters-response-compatibility.md](smartrecruiters-response-compatibility.md).
 
 ## Pagination and detail behaviour
 
