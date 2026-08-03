@@ -24,7 +24,7 @@ a single MATCH / REVIEW / REJECT disposition. Rejected vacancies are reconciled
 rather than silently dropped. Tenant-aware job identity
 (`source + provider_tenant + external_id`). Migrations V6–V9.
 
-## Phase 3 — Source reliability and coverage: IN PROGRESS (3.1-3.3A complete, 3.3B next)
+## Phase 3 — Source reliability and coverage: IN PROGRESS (3.1-3.3B complete, 3.3C next)
 
 ### 3.1 Per-tenant source health — COMPLETE
 
@@ -180,15 +180,47 @@ Developer, iOS Developer, and ERP Developer). `greenhouse/showpad` fetched 30
 jobs successfully but produced no MATCH or REVIEW in this run; it remains a
 verified tenant with low current yield.
 
-### 3.3B Unsupported-ATS gap analysis — next
+### 3.3B Unsupported-ATS gap analysis — COMPLETE
 
-Decide whether to support a fifth ATS. Phase 3.3A deferred five employers with
-real Bucharest entry-level volume that no current adapter can reach — Paysafe,
-FintechOS, CrowdStrike, Deutsche Bank, and several enterprise employers. This
-phase should size that volume per platform and choose at most one provider to
-implement, rather than adding adapters opportunistically. It should also retry
-the 3.3A `HOLD_AMBIGUOUS` employers and continue candidate research toward the
-60-employer ceiling.
+Audited **24 employers** from official careers flows, including every
+unsupported/ambiguous Phase 3.3A lead. Six named unsupported provider families
+were confirmed — SmartRecruiters, Workday, SAP SuccessFactors Career Site
+Builder, Teamtailor, Avature, and Oracle Recruiting Cloud — alongside custom or
+still-ambiguous flows. The audit also corrected Sysdig to the already-supported
+Lever provider.
+
+**SmartRecruiters** is selected for Phase 3.3C with a weighted score of
+**4.75/5**. Five confirmed relevant employers (Bosch Group, Ubisoft, Endava,
+Gameloft, and AECOM) exposed 242 current Romania jobs, including 112 explicitly
+Bucharest, through a documented unauthenticated JSON Posting API with 100-item
+offset pagination, stable IDs, country filtering, and complete detail records.
+It outranked the strong Workday alternative because Workday's public CXS flow
+is undocumented, uses composite shard/tenant/site coordinates and smaller
+pages, and carries higher maintenance risk.
+
+Full evidence and rejected alternatives are in
+[unsupported-ats-gap-analysis.md](unsupported-ats-gap-analysis.md); the bounded,
+generic implementation contract is in
+[next-ats-provider-spec.md](next-ats-provider-spec.md). Phase 3.3B changed only
+documentation: implementation remains unstarted, no tenant was added or
+removed, and no runtime, database, migration, screening, or scoring change
+occurred.
+
+### 3.3C SmartRecruiters provider implementation — NEXT
+
+Implement the generic public Posting API adapter, strict configuration and host
+validation, bounded country/remote query partitions, 100-item offset pagination,
+N+1 detail hydration, aggregate page/job caps, all-or-nothing tenant semantics,
+source-health integration, sanitized offline fixtures, and zero-network
+automated tests. Do not add production tenants in this phase.
+
+### 3.3D SmartRecruiters live validation and registry expansion — PLANNED
+
+After 3.3C is reviewed and green, validate a small evidence-backed initial
+registry in one authorized live run. Confirm one health attempt per company,
+bounded request volume, Romania/Bucharest discovery, and correct reconciliation
+before considering the two very large global boards. Registry additions and any
+runtime restart belong only to this separate phase.
 
 ## Phase 4 — REVIEW workflow and ranking calibration: PLANNED
 
