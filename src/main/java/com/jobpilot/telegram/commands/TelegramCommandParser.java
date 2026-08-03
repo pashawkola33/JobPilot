@@ -3,6 +3,7 @@ package com.jobpilot.telegram.commands;
 import com.jobpilot.applications.application.ApplicationTrackerService;
 import com.jobpilot.applications.domain.ApplicationStatus;
 import com.jobpilot.config.JobPilotProperties;
+import com.jobpilot.jobreview.application.JobQueue;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeParseException;
@@ -15,9 +16,11 @@ import org.springframework.stereotype.Component;
 public class TelegramCommandParser {
     public static final int MAX_COMMAND_LENGTH = 4096;
     private final String botUsername;
+    private final int maxNoteLength;
 
     public TelegramCommandParser(JobPilotProperties properties) {
         this.botUsername = properties.telegram().botUsername();
+        this.maxNoteLength = properties.telegram().maxNoteLength();
     }
 
     public TelegramCommandParseResult parse(String raw) {
@@ -44,9 +47,20 @@ public class TelegramCommandParser {
         token = token.toLowerCase(Locale.ROOT);
         return switch (token) {
             case "/help" -> noArgs(args, TelegramCommand.Kind.HELP, "Usage: /help");
+            case "/start" -> TelegramCommandParseResult.success(
+                    TelegramCommand.simple(TelegramCommand.Kind.START));
+            case "/stats" -> noArgs(args, TelegramCommand.Kind.STATS, "Usage: /stats");
+            case "/matches" -> queue(args, JobQueue.MATCHES, "/matches");
+            case "/review" -> queue(args, JobQueue.REVIEW, "/review");
+            case "/saved" -> queue(args, JobQueue.SAVED, "/saved");
+            case "/job" -> jobOnly(args, TelegramCommand.Kind.JOB, "Usage: /job &lt;jobId&gt;");
+            case "/reset" -> jobOnly(args, TelegramCommand.Kind.RESET, "Usage: /reset &lt;jobId&gt;");
             case "/add" -> requiredText(args, TelegramCommand.Kind.ADD, "Usage: /add &lt;public vacancy URL&gt;");
             case "/save" -> jobOnly(args, TelegramCommand.Kind.SAVE, "Usage: /save &lt;jobId&gt;");
-            case "/applied" -> jobOnly(args, TelegramCommand.Kind.APPLIED, "Usage: /applied &lt;jobId&gt;");
+            // Bare /applied lists the applied queue; /applied <jobId> keeps the Phase 3
+            // application-tracking transition.
+            case "/applied" -> args.isEmpty() ? queue(args, JobQueue.APPLIED, "/applied")
+                    : jobOnly(args, TelegramCommand.Kind.APPLIED, "Usage: /applied [jobId]");
             case "/offer" -> jobOnly(args, TelegramCommand.Kind.OFFER, "Usage: /offer &lt;jobId&gt;");
             case "/withdraw" -> jobOnly(args, TelegramCommand.Kind.WITHDRAW, "Usage: /withdraw &lt;jobId&gt;");
             case "/status" -> jobOnly(args, TelegramCommand.Kind.STATUS, "Usage: /status &lt;jobId&gt;");
@@ -115,6 +129,16 @@ public class TelegramCommandParser {
         return TelegramCommandParseResult.success(new TelegramCommand(
                 TelegramCommand.Kind.SELECT_DOCUMENTS, jobId, resumeId, coverId,
                 null, Set.of(), null, null, null, null));
+    }
+
+    /** Optional 1-based page argument, bounded so a huge offset can never be requested. */
+    private TelegramCommandParseResult queue(String args, JobQueue queue, String command) {
+        if (args.isEmpty()) return TelegramCommandParseResult.success(TelegramCommand.queue(queue, 0));
+        if (!args.matches("[1-9]\\d{0,2}")) {
+            return TelegramCommandParseResult.failure("Usage: " + command + " [page]");
+        }
+        return TelegramCommandParseResult.success(
+                TelegramCommand.queue(queue, Integer.parseInt(args) - 1));
     }
 
     private TelegramCommandParseResult noArgs(String args, TelegramCommand.Kind kind, String usage) {
@@ -186,8 +210,9 @@ public class TelegramCommandParser {
         if (id == null) return TelegramCommandParseResult.failure(
                 "Usage: /note &lt;jobId&gt; &lt;text|clear&gt;");
         String note = parts[1].equalsIgnoreCase("clear") ? null : parts[1];
-        if (note != null && note.length() > ApplicationTrackerService.MAX_NOTES_LENGTH) {
-            return TelegramCommandParseResult.failure("Note is too long.");
+        if (note != null && note.length() > maxNoteLength) {
+            return TelegramCommandParseResult.failure(
+                    "Note must contain at most " + maxNoteLength + " characters.");
         }
         return TelegramCommandParseResult.success(new TelegramCommand(
                 TelegramCommand.Kind.NOTE, id, note, null, null, null));

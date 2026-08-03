@@ -86,7 +86,8 @@ public class TelegramBotNotifier implements TelegramNotifier {
     }
 
     private boolean enabled() {
-        return telegram.enabled() && telegram.channelId() != null && !telegram.channelId().isBlank();
+        // The broadcast channel is independent of the private review bot switch.
+        return telegram.channelConfigured();
     }
 
     private String lines(String prefix, List<String> values) {

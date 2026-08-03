@@ -40,7 +40,7 @@ class TelegramUpdateProcessorTest {
         dispatcher = org.mockito.Mockito.mock(TelegramCommandDispatcher.class);
         JobPilotProperties properties = properties();
         processor = new TelegramUpdateProcessor(client, new TelegramAuthorizationPolicy(properties),
-                new TelegramCommandParser(properties), dispatcher, new TelegramMessageRenderer(), properties);
+                new TelegramCommandParser(properties), dispatcher, new TelegramMessageRenderer());
         when(dispatcher.dispatch(any(), any())).thenReturn(new TelegramCommandResult("done", "Saved"));
     }
 

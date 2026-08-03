@@ -49,11 +49,11 @@ public class TelegramUpdatePoller {
 
     @Scheduled(fixedDelayString = "#{@telegramPollDelay}")
     public void scheduledPoll() {
-        if (settings.commandsEnabled()) pollOnce();
+        if (settings.pollingEnabled()) pollOnce();
     }
 
     public boolean pollOnce() {
-        if (!settings.commandsEnabled() || !lifecycle.acceptingWork()
+        if (!settings.pollingEnabled() || !lifecycle.acceptingWork()
                 || !polling.compareAndSet(false, true)) return false;
         try {
             var initial = state.load();

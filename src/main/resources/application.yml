@@ -44,11 +44,19 @@ jobpilot:
     commands-enabled: ${TELEGRAM_COMMANDS_ENABLED:false}
     allowed-chat-id: ${TELEGRAM_ALLOWED_CHAT_ID:}
     allowed-user-id: ${TELEGRAM_ALLOWED_USER_ID:}
-    poll-timeout: ${TELEGRAM_POLL_TIMEOUT:25s}
+    # TELEGRAM_POLL_TIMEOUT accepts a Duration ("25s"); TELEGRAM_POLLING_TIMEOUT_SECONDS
+    # is the whole-second form of the same single knob. There is no second timeout.
+    poll-timeout: ${TELEGRAM_POLL_TIMEOUT:PT${TELEGRAM_POLLING_TIMEOUT_SECONDS:25}S}
     poll-delay: ${TELEGRAM_POLL_DELAY:2s}
     poll-limit: ${TELEGRAM_POLL_LIMIT:50}
     max-update-failures: ${TELEGRAM_MAX_UPDATE_FAILURES:3}
     discard-pending-on-first-start: ${TELEGRAM_DISCARD_PENDING_ON_FIRST_START:true}
+    enabled: ${TELEGRAM_BOT_ENABLED:false}
+    allowed-chat-ids: ${TELEGRAM_ALLOWED_CHAT_IDS:}
+    match-notifications-enabled: ${TELEGRAM_MATCH_NOTIFICATIONS_ENABLED:true}
+    review-digest-enabled: ${TELEGRAM_REVIEW_DIGEST_ENABLED:true}
+    max-jobs-per-message: ${TELEGRAM_MAX_JOBS_PER_MESSAGE:5}
+    max-note-length: ${TELEGRAM_MAX_NOTE_LENGTH:500}
   sources:
     greenhouse-board-tokens: ${GREENHOUSE_BOARD_TOKENS:}
     lever-company-ids: ${LEVER_COMPANY_IDS:}

@@ -15,6 +15,7 @@ import com.jobpilot.sources.SourceFetchLogRepository;
 import com.jobpilot.sources.health.IngestionRunContext;
 import com.jobpilot.sources.health.TenantAttemptStatus;
 import com.jobpilot.telegram.TelegramNotifier;
+import com.jobpilot.telegram.review.TelegramReviewNotifier;
 import java.time.Clock;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -36,13 +37,15 @@ public class JobIngestionService {
     private final EarlyCareerEligibilityService earlyCareer;
     private final SourceFetchLogRepository logs;
     private final TelegramNotifier telegram;
+    private final TelegramReviewNotifier reviewNotifier;
     private final Clock clock;
 
     @Autowired
     public JobIngestionService(List<JobSource> sources, JobRelevanceFilter relevance,
                                JobProcessor processor, LocationEligibilityService eligibility,
                                EarlyCareerEligibilityService earlyCareer,
-                               SourceFetchLogRepository logs, TelegramNotifier telegram, Clock clock) {
+                               SourceFetchLogRepository logs, TelegramNotifier telegram,
+                               TelegramReviewNotifier reviewNotifier, Clock clock) {
         this.sources = List.copyOf(sources);
         this.relevance = relevance;
         this.processor = processor;
@@ -50,20 +53,28 @@ public class JobIngestionService {
         this.earlyCareer = earlyCareer;
         this.logs = logs;
         this.telegram = telegram;
+        this.reviewNotifier = reviewNotifier;
         this.clock = clock;
+    }
+
+    public JobIngestionService(List<JobSource> sources, JobRelevanceFilter relevance,
+                               JobProcessor processor, LocationEligibilityService eligibility,
+                               EarlyCareerEligibilityService earlyCareer,
+                               SourceFetchLogRepository logs, TelegramNotifier telegram, Clock clock) {
+        this(sources, relevance, processor, eligibility, earlyCareer, logs, telegram, null, clock);
     }
 
     public JobIngestionService(List<JobSource> sources, JobRelevanceFilter relevance,
                                JobProcessor processor, SourceFetchLogRepository logs,
                                TelegramNotifier telegram, Clock clock) {
-        this(sources, relevance, processor, null, null, logs, telegram, clock);
+        this(sources, relevance, processor, null, null, logs, telegram, null, clock);
     }
 
     public JobIngestionService(List<JobSource> sources, JobRelevanceFilter relevance,
                                JobProcessor processor, LocationEligibilityService eligibility,
                                SourceFetchLogRepository logs, TelegramNotifier telegram, Clock clock) {
         this(sources, relevance, processor, eligibility, new EarlyCareerEligibilityService(),
-                logs, telegram, clock);
+                logs, telegram, null, clock);
     }
 
     public JobIngestionReport fetchAllSources() {
@@ -76,6 +87,7 @@ public class JobIngestionService {
             for (JobSource source : sources) fetchOneSource(source, report);
             completed = report.toReport();
             logSourceHealthSummary(run);
+            notifyReviewQueue(report);
         } finally {
             IngestionRunContext.clear();
         }
@@ -202,6 +214,17 @@ public class JobIngestionService {
         logs.save(log);
     }
 
+    /** Best effort. The review push runs after persistence and can never fail the run. */
+    private void notifyReviewQueue(ReportAccumulator report) {
+        if (reviewNotifier == null) return;
+        try {
+            reviewNotifier.notifyIngestion(report.newMatchJobIds, report.newReviewJobIds);
+        } catch (RuntimeException notificationFailure) {
+            LOGGER.warn("Telegram review notification failed: {}",
+                    notificationFailure.getClass().getSimpleName());
+        }
+    }
+
     private void notifyExcellent(JobProcessingResult result) {
         try {
             telegram.notifyExcellent(result.job(), result.score());
@@ -236,6 +259,8 @@ public class JobIngestionService {
         private final Map<String, Set<String>> locationCareerTenants = new LinkedHashMap<>();
         private final Map<String, Set<String>> matchTenants = new LinkedHashMap<>();
         private final Map<String, Set<String>> reviewTenants = new LinkedHashMap<>();
+        private final Set<Long> newMatchJobIds = new LinkedHashSet<>();
+        private final Set<Long> newReviewJobIds = new LinkedHashSet<>();
 
         private boolean recordFetched(RawJob raw) {
             fetched++;
@@ -302,6 +327,20 @@ public class JobIngestionService {
                 case UPDATED -> updated++;
                 case UNCHANGED -> existingUnchanged++;
                 case NOT_PERSISTED -> { }
+            }
+            recordNotifiable(result);
+        }
+
+        /**
+         * Only vacancies created by this run are eligible for a Telegram push, so enabling
+         * the bot can never replay the existing backlog.
+         */
+        private void recordNotifiable(JobProcessingResult result) {
+            if (!result.newlyCreated() || result.job() == null || result.job().getId() == null) return;
+            switch (result.finalDisposition()) {
+                case MATCH -> newMatchJobIds.add(result.job().getId());
+                case REVIEW -> newReviewJobIds.add(result.job().getId());
+                case REJECT -> { }
             }
         }
 

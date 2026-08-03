@@ -55,10 +55,10 @@ class V11ResponseTooLargeCategoryMigrationIT {
 
         var result = Flyway.configure().dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(),
                 POSTGRES.getPassword()).load().migrate();
-        assertThat(result.targetSchemaVersion).isEqualTo("11");
+        assertThat(result.targetSchemaVersion).isEqualTo("12");
 
         try (Connection connection = connect(); Statement statement = connection.createStatement()) {
-            assertThat(successfulMigrations(statement)).isEqualTo(11);
+            assertThat(successfulMigrations(statement)).isEqualTo(12);
             assertThat(appliedCount(statement, "11")).isEqualTo(1);
 
             // Historical rows are preserved byte-for-byte, not rewritten to the new value.

@@ -216,7 +216,7 @@ Maintenance is disabled by default. When enabled, one JVM uses a local atomic gu
 
 `GET /health` performs no provider or Telegram call. It reports only `READY`/`NOT_READY` or `ENABLED`/`DISABLED` for database, Flyway schema, Telegram commands, LLM, documents, artifact storage, and maintenance, plus configured build version/commit tokens. It never exposes credentials, paths, contacts, document hashes, candidate facts, vacancy text, prompts, or provider output. Readiness is `DOWN` when the database, schema, or enabled artifact storage is not ready.
 
-Flyway remains forward-only: V1 is the initial vacancy/application schema, V2 adds candidate truth and workflow persistence, V3 adds authorized Telegram/application history hardening, V4 adds structured analysis and budget accounting, V5 adds truthful document artifacts and fact references, V6 adds location eligibility evidence, V7 adds early-career eligibility evidence, and V8 persists `provider_tenant`, migrates legacy rows to the safe `legacy` tenant, replaces `(source, external_id)` uniqueness with `(source, provider_tenant, external_id)`, and adds safe enum checks. Published V1–V7 files are unchanged.
+Flyway remains forward-only: V1 is the initial vacancy/application schema, V2 adds candidate truth and workflow persistence, V3 adds authorized Telegram/application history hardening, V4 adds structured analysis and budget accounting, V5 adds truthful document artifacts and fact references, V6 adds location eligibility evidence, V7 adds early-career eligibility evidence, and V8 persists `provider_tenant`, migrates legacy rows to the safe `legacy` tenant, replaces `(source, external_id)` uniqueness with `(source, provider_tenant, external_id)`, and adds safe enum checks. V9 records screening dispositions, V10 adds per-tenant source health, V11 adds the response-too-large category, and V12 adds the Telegram review workflow (`job_workflow_state`) and confirmed-delivery ledger (`telegram_job_delivery`). Published V1–V11 files are unchanged.
 
 ## Requirements
 
@@ -260,6 +260,13 @@ Important variables:
 | `TELEGRAM_POLL_LIMIT` | No | Updates per request, `1`–`100`; default `50` |
 | `TELEGRAM_MAX_UPDATE_FAILURES` | No | Attempts before dead-lettering; default `3` |
 | `TELEGRAM_DISCARD_PENDING_ON_FIRST_START` | No | Drain old backlog on first start; default `true` |
+| `TELEGRAM_BOT_ENABLED` | Review bot only | Enables the private review bot; default `false` |
+| `TELEGRAM_ALLOWED_CHAT_IDS` | Review bot: yes | Comma-separated numeric private chat IDs; no default |
+| `TELEGRAM_MATCH_NOTIFICATIONS_ENABLED` | No | Push new MATCH cards after ingestion; default `true` |
+| `TELEGRAM_REVIEW_DIGEST_ENABLED` | No | Push one REVIEW digest after ingestion; default `true` |
+| `TELEGRAM_MAX_JOBS_PER_MESSAGE` | No | Queue page size and notification cap, `1`-`10`; default `5` |
+| `TELEGRAM_MAX_NOTE_LENGTH` | No | Maximum review note length, `1`-`1000`; default `500` |
+| `TELEGRAM_POLLING_TIMEOUT_SECONDS` | No | Whole-second form of `TELEGRAM_POLL_TIMEOUT`; default `25` |
 | `JOB_FETCH_CRON` | No | Default `0 0 */6 * * *` |
 | `DAILY_DIGEST_CRON` | No | Default `0 0 9 * * *` |
 | `STALE_DAYS` | No | Default `30` |
@@ -342,6 +349,63 @@ Phase 3.3C implements the public unauthenticated `api.smartrecruiters.com` Posti
 To enable commands, obtain the numeric chat and user IDs through a trusted setup step, set `TELEGRAM_COMMANDS_ENABLED=true`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_ALLOWED_CHAT_ID`, and `TELEGRAM_ALLOWED_USER_ID`, then run only one polling application replica. Do not expose these IDs or the token in logs or committed files.
 
 If the token or channel ID is blank, Telegram delivery is safely disabled. Job ingestion and scoring continue.
+
+### Review bot setup with BotFather
+
+The review bot is the primary JobPilot interface. It is **disabled by default** and
+requires no token while disabled.
+
+1. Open the verified **`@BotFather`** in Telegram. Check the blue verification badge;
+   impostor accounts with similar names exist.
+2. Send `/newbot`.
+3. Choose a display name and a username ending in `bot`.
+4. Copy the token BotFather returns.
+5. **Never commit the token or paste it into documentation, an issue, or a log.**
+   It grants full control of the bot.
+6. Add the token manually to your local `.env` as `TELEGRAM_BOT_TOKEN`. `.env` is
+   git-ignored and is never written by tooling.
+7. Send any message to your new bot, then obtain your own numeric private chat ID
+   through a trusted setup step and set it as `TELEGRAM_ALLOWED_CHAT_IDS`. In a
+   private chat the chat ID equals your user ID.
+8. Set `TELEGRAM_BOT_ENABLED=true`.
+9. Recreate only the application container: `docker compose up -d --force-recreate app`.
+   Do not recreate the database and never use `docker compose down -v`.
+10. Send `/start` and then `/stats` in the private chat to confirm the bot answers.
+
+Authorization is numeric and explicit. A chat is authorized only when it is a private
+chat **and** its ID is listed in `TELEGRAM_ALLOWED_CHAT_IDS`; usernames are never used.
+Every command and every inline-button callback is authorized independently. An
+unauthorized chat receives no reply at all, so the bot never confirms whether a job,
+a queue, or a configured chat ID exists.
+
+### Review bot commands
+
+`/start`, `/help`, `/matches`, `/review`, `/saved`, `/applied`, `/stats`,
+`/job <id>`, `/note <id> <text|clear>`, and `/reset <id>`. Queue commands accept an
+optional 1-based page (`/review 2`). `/applied` with no argument lists the applied
+queue; `/applied <jobId>` keeps the Phase 2 Stage 3 application-tracking transition.
+
+Each vacancy card carries Open vacancy, Save, Applied, Dismiss, and Reset buttons, and
+each queue page carries Next while more pages remain. Callback payloads contain only an
+action letter and one numeric job or page value; no title, URL, note, token, or chat ID
+is ever placed in callback data. Only canonical `https://` vacancy URLs are linked.
+
+Triage state lives in `job_workflow_state`. A vacancy with no row is UNREVIEWED; rows
+hold SAVED, APPLIED, or DISMISSED plus an optional bounded note. Queues list active
+MATCH and REVIEW vacancies only, ordered UNREVIEWED first, then SAVED, then by score,
+then recency, then job ID. REJECT vacancies, expired vacancies, and dismissed vacancies
+never appear in the triage queues. `/note` on an untriaged vacancy also saves it,
+because a note needs a workflow row to live in.
+
+After each ingestion run the bot pushes cards for **newly persisted** MATCH vacancies
+(capped by `TELEGRAM_MAX_JOBS_PER_MESSAGE`, with a single summary message beyond the
+cap) and one compact REVIEW digest. Enabling the bot never replays the existing
+backlog. A delivery row in `telegram_job_delivery` is written only after Telegram
+confirms the send, so a successful delivery is never repeated and a failed one is
+retried on the next run. A Telegram outage can never fail or roll back ingestion.
+
+There is no web review interface. An accidental Thymeleaf queue UI was removed before
+release; JobPilot is Telegram-first and has no user-facing web frontend.
 
 ## Run with Docker Compose
 

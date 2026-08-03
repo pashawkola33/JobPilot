@@ -41,16 +41,33 @@ public record JobPilotProperties(
             Duration pollDelay,
             int pollLimit,
             int maxUpdateFailures,
-            boolean discardPendingOnFirstStart) {
+            boolean discardPendingOnFirstStart,
+            boolean enabled,
+            List<String> allowedChatIds,
+            boolean matchNotificationsEnabled,
+            boolean reviewDigestEnabled,
+            int maxJobsPerMessage,
+            int maxNoteLength) {
+
+        public static final int MAX_JOBS_PER_MESSAGE_CEILING = 10;
+        /** Matches the job_workflow_state note check constraint. */
+        public static final int NOTE_LENGTH_CEILING = 1000;
+
         public Telegram {
             botUsername = normalizeBotUsername(botUsername);
             pollTimeout = pollTimeout == null ? Duration.ofSeconds(25) : pollTimeout;
             pollDelay = pollDelay == null ? Duration.ofSeconds(2) : pollDelay;
+            allowedChatIds = normalizeChatIds(allowedChatIds);
             if (pollTimeout.isNegative() || pollTimeout.compareTo(Duration.ofSeconds(50)) > 0
                     || pollDelay.isNegative() || pollDelay.compareTo(Duration.ofMinutes(1)) > 0
                     || pollLimit < 1 || pollLimit > 100
                     || maxUpdateFailures < 1 || maxUpdateFailures > 20) {
                 throw new IllegalArgumentException("Telegram polling limits are outside their safe bounds");
+            }
+            if (maxJobsPerMessage < 1 || maxJobsPerMessage > MAX_JOBS_PER_MESSAGE_CEILING
+                    || maxNoteLength < 1 || maxNoteLength > NOTE_LENGTH_CEILING) {
+                throw new IllegalArgumentException(
+                        "Telegram review bounds are outside their safe range");
             }
             if (commandsEnabled && (blank(botToken) || !validBotUsername(botUsername)
                     || !validChatId(allowedChatId)
@@ -58,15 +75,88 @@ public record JobPilotProperties(
                 throw new IllegalArgumentException(
                         "Telegram commands require a bot token, bot username, and explicit chat and user authorization");
             }
+            if (enabled && blank(botToken)) {
+                throw new IllegalArgumentException("Telegram bot requires a bot token when enabled");
+            }
+            if (enabled && allowedChatIds.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Telegram bot requires at least one allowed numeric chat id when enabled");
+            }
         }
 
         public Telegram(String botToken, String channelId) {
             this(botToken, channelId, "", false, "", "", Duration.ofSeconds(25),
-                    Duration.ofSeconds(2), 50, 3, true);
+                    Duration.ofSeconds(2), 50, 3, true, false, List.of(), true, true, 5, 500);
         }
 
+        /** Legacy shape: everything before the review bot, with the review bot switched off. */
+        public Telegram(String botToken, String channelId, String botUsername,
+                        boolean commandsEnabled, String allowedChatId, String allowedUserId,
+                        Duration pollTimeout, Duration pollDelay, int pollLimit,
+                        int maxUpdateFailures, boolean discardPendingOnFirstStart) {
+            this(botToken, channelId, botUsername, commandsEnabled, allowedChatId, allowedUserId,
+                    pollTimeout, pollDelay, pollLimit, maxUpdateFailures,
+                    discardPendingOnFirstStart, false, List.of(), true, true, 5, 500);
+        }
+
+        /** Review bot shape: the six review settings on top of safe polling defaults. */
+        public Telegram(String botToken, boolean enabled, List<String> allowedChatIds,
+                        boolean matchNotificationsEnabled, boolean reviewDigestEnabled,
+                        int maxJobsPerMessage, int maxNoteLength) {
+            this(botToken, "", "", false, "", "", Duration.ofSeconds(25), Duration.ofSeconds(2),
+                    50, 3, true, enabled, allowedChatIds, matchNotificationsEnabled,
+                    reviewDigestEnabled, maxJobsPerMessage, maxNoteLength);
+        }
+
+        /** Explicit review-bot switch. Disabled by default; no token is required while off. */
         public boolean enabled() {
-            return !blank(botToken);
+            return enabled;
+        }
+
+        /** The legacy broadcast channel is driven purely by its own two settings. */
+        public boolean channelConfigured() {
+            return !blank(botToken) && !blank(channelId);
+        }
+
+        /** Long polling runs for either the legacy command surface or the review bot. */
+        public boolean pollingEnabled() {
+            return commandsEnabled || enabled;
+        }
+
+        public boolean allowsChat(long chatId) {
+            return allowedChatIds.contains(Long.toString(chatId));
+        }
+
+        /** Never let a bot token reach a log, a stack trace, or an actuator dump. */
+        @Override
+        public String toString() {
+            return "Telegram[enabled=" + enabled + ", botToken=" + (blank(botToken) ? "<empty>" : "<redacted>")
+                    + ", allowedChatIds=" + allowedChatIds.size() + " configured"
+                    + ", commandsEnabled=" + commandsEnabled
+                    + ", matchNotificationsEnabled=" + matchNotificationsEnabled
+                    + ", reviewDigestEnabled=" + reviewDigestEnabled
+                    + ", maxJobsPerMessage=" + maxJobsPerMessage
+                    + ", maxNoteLength=" + maxNoteLength
+                    + ", pollTimeout=" + pollTimeout + "]";
+        }
+
+        private static List<String> normalizeChatIds(List<String> values) {
+            if (values == null) return List.of();
+            List<String> normalized = new java.util.ArrayList<>();
+            for (String value : values) {
+                String candidate = value == null ? "" : value.strip();
+                if (candidate.isEmpty()) continue;
+                if (!validChatId(candidate)) {
+                    throw new IllegalArgumentException(
+                            "Telegram allowed chat ids must be numeric Telegram chat identifiers");
+                }
+                if (normalized.contains(candidate)) {
+                    throw new IllegalArgumentException(
+                            "Telegram allowed chat ids must not contain duplicates");
+                }
+                normalized.add(candidate);
+            }
+            return List.copyOf(normalized);
         }
 
         private static boolean blank(String value) {

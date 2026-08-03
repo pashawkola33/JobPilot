@@ -1,6 +1,7 @@
 package com.jobpilot.telegram.commands;
 
 import com.jobpilot.applications.domain.ApplicationStatus;
+import com.jobpilot.jobreview.application.JobQueue;
 import com.jobpilot.resume.domain.DocumentFormat;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -16,11 +17,14 @@ public record TelegramCommand(
         String text,
         Instant instant,
         LocalDate date,
-        ApplicationStatus statusFilter) {
+        ApplicationStatus statusFilter,
+        JobQueue queue,
+        int page) {
     public enum Kind {
         HELP, ADD, SAVE, APPLIED, INTERVIEW, REJECTED, OFFER, WITHDRAW,
         FOLLOWUP, NOTE, STATUS, APPLICATIONS, HISTORY,
-        ANALYZE, DOCUMENTS, RESUMES, COVER_NOTES, SELECT_DOCUMENTS
+        ANALYZE, DOCUMENTS, RESUMES, COVER_NOTES, SELECT_DOCUMENTS,
+        START, QUEUE, STATS, JOB, RESET
     }
 
     public enum DocumentScope {
@@ -30,11 +34,24 @@ public record TelegramCommand(
 
     public TelegramCommand(Kind kind, Long jobId, String text, Instant instant,
                            LocalDate date, ApplicationStatus statusFilter) {
-        this(kind, jobId, null, null, null, Set.of(), text, instant, date, statusFilter);
+        this(kind, jobId, null, null, null, Set.of(), text, instant, date, statusFilter, null, 0);
+    }
+
+    public TelegramCommand(Kind kind, Long jobId, Long resumeVersionId, Long coverNoteId,
+                           DocumentScope documentScope, Set<DocumentFormat> documentFormats,
+                           String text, Instant instant, LocalDate date,
+                           ApplicationStatus statusFilter) {
+        this(kind, jobId, resumeVersionId, coverNoteId, documentScope, documentFormats,
+                text, instant, date, statusFilter, null, 0);
     }
 
     public static TelegramCommand simple(Kind kind) {
         return new TelegramCommand(kind, null, null, null, null, Set.of(),
-                null, null, null, null);
+                null, null, null, null, null, 0);
+    }
+
+    public static TelegramCommand queue(JobQueue queue, int page) {
+        return new TelegramCommand(Kind.QUEUE, null, null, null, null, Set.of(),
+                null, null, null, null, queue, page);
     }
 }

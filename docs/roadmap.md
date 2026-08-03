@@ -314,10 +314,42 @@ with low current yield, the same basis used for comparable Greenhouse and Ashby
 tenants — a board is kept because it is live and correctly parsed, not because
 it happened to surface an eligible role on one particular day.
 
-## Phase 4 — REVIEW workflow and ranking calibration: PLANNED
+## Phase 4 — REVIEW workflow and ranking calibration
 
-Operator workflow for the REVIEW bucket, and calibration of scoring and ranking
-against reviewed outcomes.
+### 4A Telegram review queue MVP — COMPLETE
+
+Triage for the MATCH and REVIEW buckets, delivered in Telegram.
+
+- `V12` adds `job_workflow_state` (one row per job; SAVED, APPLIED, DISMISSED;
+  absence means UNREVIEWED; optional bounded note; nullable `applied_at`) and
+  `telegram_job_delivery` (confirmed sends only, unique per chat + job + type).
+- Private review bot behind `TELEGRAM_BOT_ENABLED`, disabled by default and
+  requiring no token while disabled. Authorization is numeric and explicit: a
+  private chat whose ID appears in `TELEGRAM_ALLOWED_CHAT_IDS`. Usernames are
+  never used, and every command and callback is authorized independently.
+- Commands `/start`, `/help`, `/matches`, `/review`, `/saved`, `/applied`,
+  `/stats`, `/job <id>`, `/note <id> <text>`, `/reset <id>`, with bounded
+  pagination and inline Open/Save/Applied/Dismiss/Reset/Next actions.
+- Queues cover active MATCH and REVIEW only; REJECT, expired, and dismissed
+  vacancies are excluded. Order is UNREVIEWED, then SAVED, then score, then
+  recency, then job ID.
+- After ingestion the bot pushes capped MATCH cards and one REVIEW digest for
+  vacancies **newly persisted by that run only**, so enabling it never replays
+  the backlog. Delivery rows are written only after Telegram confirms a send;
+  failures stay retryable and can never fail or roll back ingestion.
+- Reuses the existing project-owned `TelegramClient` and long-polling stack. No
+  Telegram SDK dependency was added.
+- **An accidental Thymeleaf web review interface (REST `/api/jobs`, MVC `/jobs`,
+  templates, CSS, and the `spring-boot-starter-thymeleaf` dependency) was removed
+  in the same change.** Its reusable backend parts — the workflow status enum,
+  workflow entity and repository, and the queue query and workflow services —
+  were refactored into delivery-neutral application services and kept. JobPilot
+  remains Telegram-first with no user-facing web frontend.
+
+### 4B Ranking calibration — NEXT
+
+Calibrate scoring and ranking against the triage outcomes now being recorded in
+`job_workflow_state`.
 
 ## Phase 5 — Browser-worker production hardening: HOLD
 

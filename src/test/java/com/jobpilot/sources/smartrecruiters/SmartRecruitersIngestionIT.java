@@ -102,7 +102,7 @@ class SmartRecruitersIngestionIT {
                         + "where j.screening_disposition = 'REJECT'", Integer.class)).isZero();
         assertThat(jdbc.queryForObject(
                 "select count(*) from flyway_schema_history where success", Integer.class))
-                .isEqualTo(11);
+                .isEqualTo(12);
     }
 
     private Object response(String url) {
