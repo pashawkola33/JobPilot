@@ -72,7 +72,7 @@ Mid-level, senior, staff, principal, lead, architect, manager, head, director, V
 
 Flyway migration `V7__early_career_eligibility.sql` stores `seniorityLevel`, the normalized experience range and mandatory flag, `earlyCareerEligibility`, and its reason. Provider adapters retain structured source facts but do not decide eligibility. The daily digest requires both an accepted location category and `earlyCareerEligibility=ELIGIBLE`; manual submissions return `EARLY_CAREER_INELIGIBLE` for both unknown and rejected career decisions.
 
-The opt-in `development` profile contains 46 public ATS tenants verified on 2026-07-21 across all four providers. Run the read-only live volume check with network access:
+The opt-in `development` profile contains 48 public ATS tenants across all four providers. The Phase 3.2 audit re-verified every tenant against its unauthenticated endpoint and removed one dead board, and Phase 3.3A added three Bucharest-relevant tenants — Ashby `uipath`, Greenhouse `scbitdefendersrl` (Bitdefender), and Greenhouse `showpad` — each confirmed from an official careers page or public ATS URL rather than a guessed identifier. See [docs/source-expansion-audit.md](docs/source-expansion-audit.md) for the per-candidate evidence, the rejected and deferred employers, and the remaining coverage gap. Run the read-only live volume check with network access:
 
 ```bash
 ./mvnw test -q -DargLine=-Djobpilot.live-smoke=true -Dtest=LiveVacancySmokeTest

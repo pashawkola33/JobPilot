@@ -27,6 +27,9 @@ jobpilot:
       - yesenergy
       - thepacgroup
       - algolia
+      # Phase 3.3A: Bucharest-relevant additions verified against their public boards.
+      - scbitdefendersrl
+      - showpad
     lever-company-ids:
       - swissborg
       - collabora
@@ -57,6 +60,8 @@ jobpilot:
       - attio
       - pleo
       - runway
+      # Phase 3.3A: Bucharest-founded, large Romanian engineering organisation.
+      - uipath
     recruitee-company-ids:
       - transperfect
       - tether

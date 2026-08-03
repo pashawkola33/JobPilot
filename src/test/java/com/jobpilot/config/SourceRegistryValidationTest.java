@@ -35,6 +35,37 @@ class SourceRegistryValidationTest {
     private static final Map<String, String> REMOVED_INVALID = Map.of("recruitee", "xebiapoland");
 
     /**
+     * The 45 tenants the Phase 3.2 audit left in place. Phase 3.3A was an expansion, not a
+     * re-audit: it was not permitted to remove any of these, so they are pinned literally.
+     * A future audit that legitimately retires one must update this list deliberately.
+     */
+    private static final Map<String, List<String>> BASELINE_AFTER_PHASE_3_2 = Map.of(
+            "greenhouse", List.of("gitlab", "grafanalabs", "elastic", "cloudflare", "datadog",
+                    "canonical", "twilio", "yesenergy", "thepacgroup", "algolia"),
+            "lever", List.of("swissborg", "collabora", "swapcard", "whereby", "weloglobal",
+                    "veeva"),
+            "ashby", List.of("Ashby", "langchain", "n8n", "enode", "linear", "supabase",
+                    "posthog", "gitbook", "deepgram", "temporal", "clickhouse", "airbyte",
+                    "render", "incident", "cursor", "notion", "cohere", "elevenlabs", "qonto",
+                    "attio", "pleo", "runway"),
+            "recruitee", List.of("transperfect", "tether", "auditdata", "moneyhash",
+                    "veocareers", "aidigital", "almavivadebelgique"));
+
+    /**
+     * Added by the Phase 3.3A expansion. Each identifier came from an official careers page
+     * or a public ATS URL and was confirmed with one request to the endpoint its adapter
+     * uses; see {@code docs/source-expansion-audit.md} for the per-candidate evidence.
+     */
+    private static final Map<String, List<String>> ADDED_IN_PHASE_3_3A = Map.of(
+            "greenhouse", List.of("scbitdefendersrl", "showpad"),
+            "lever", List.of(),
+            "ashby", List.of("uipath"),
+            "recruitee", List.of());
+
+    /** 45 retained plus 3 added. Guards against a silent drop during a later edit. */
+    private static final int AUDITED_TENANT_COUNT = 48;
+
+    /**
      * Loads the real {@code application.yml} plus the {@code development} profile through
      * Spring Boot's own config-data machinery, so the test binds exactly what production
      * binds rather than a copy.
@@ -90,6 +121,39 @@ class SourceRegistryValidationTest {
                         .as("%s/%s was removed as a deterministic 404 and must stay removed",
                                 provider, removed)
                         .doesNotContain(removed)));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("providers")
+    void phase33aExpansionRetainedEveryTenantTheAuditLeftInPlace(String provider) {
+        withRegistry(sources -> assertThat(tenantsOf(sources, provider))
+                .as("Phase 3.3A was permitted to add tenants only, never to remove one")
+                .containsAll(BASELINE_AFTER_PHASE_3_2.get(provider)));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("providers")
+    void phase33aAdditionsAppearExactlyOnce(String provider) {
+        withRegistry(sources -> {
+            List<String> tenants = tenantsOf(sources, provider);
+            for (String added : ADDED_IN_PHASE_3_3A.get(provider)) {
+                assertThat(tenants)
+                        .as("verified Phase 3.3A tenant %s/%s", provider, added)
+                        .containsOnlyOnce(added);
+            }
+        });
+    }
+
+    @Test
+    void noTenantIdentifierIsSharedAcrossProviders() {
+        // Two providers legitimately could use the same word, but in this registry a repeat
+        // has always meant a copy/paste slip rather than an intended pair.
+        withRegistry(sources -> {
+            List<String> all = new ArrayList<>();
+            providers().forEach(provider -> all.addAll(tenantsOf(sources, provider)));
+            assertThat(all).as("identifier configured under two providers").doesNotHaveDuplicates();
+            assertThat(all).as("audited registry size").hasSize(AUDITED_TENANT_COUNT);
+        });
     }
 
     @Test

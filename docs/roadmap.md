@@ -24,7 +24,7 @@ a single MATCH / REVIEW / REJECT disposition. Rejected vacancies are reconciled
 rather than silently dropped. Tenant-aware job identity
 (`source + provider_tenant + external_id`). Migrations V6–V9.
 
-## Phase 3 — Source reliability and coverage: IN PROGRESS (3.1-3.2.7 complete, 3.3 next)
+## Phase 3 — Source reliability and coverage: IN PROGRESS (3.1-3.3A complete, 3.3B next)
 
 ### 3.1 Per-tenant source health — COMPLETE
 
@@ -150,10 +150,45 @@ against tens of minutes before 3.2.6. Peak app usage was 158% CPU and 540 MiB of
 than special-cased; supporting it needs a pagination or streaming decision, not
 a further limit increase.
 
-### 3.3 Romania/Bucharest source expansion — next
+### 3.3A Supported ATS source expansion — COMPLETE
 
-Add Romania-focused public sources and additional ATS tenants with genuine
-Bucharest or Romania-compatible remote early-career volume.
+Expand the registry using only the four existing adapters, with every tenant
+identifier taken from an official careers page or a public ATS URL. Fourteen
+employers were researched and three tenants added — ashby `uipath`, greenhouse
+`scbitdefendersrl` (Bitdefender), and greenhouse `showpad` — taking the registry
+from 45 to 48. Full per-candidate evidence is in
+[source-expansion-audit.md](source-expansion-audit.md).
+
+This is below the 12–25 target for the phase. The limit was evidence
+acquisition, not the acceptance bar: most careers pages render their board
+client-side, several strong Bucharest employers run unsupported ATS platforms,
+and search results degraded to aggregators partway through. Guessing identifiers
+would have closed the gap and is prohibited, so the gap is carried forward
+rather than filled. Four employers remain `HOLD_AMBIGUOUS` and are the cheapest
+next wins.
+
+Expanded live run `d507d7c2-ca0d-413e-b694-644748db8822` completed all 48
+tenant attempts with 47 successes and the single expected
+`lever/veeva RESPONSE_TOO_LARGE` failure. It fetched 4,960 unique raw jobs and
+reconciled them to 1 MATCH, 71 REVIEW, and 4,888 REJECT, with no duplicate raw
+jobs and no rejected job retaining a score. `xebiapoland` was not attempted.
+
+The new sources delivered the first MATCH from `ashby/uipath` (Software
+Engineer, Bucharest) and five Bucharest REVIEW candidates from
+`greenhouse/scbitdefendersrl` (QA Engineer, QA Engineer Mobile, Node.js
+Developer, iOS Developer, and ERP Developer). `greenhouse/showpad` fetched 30
+jobs successfully but produced no MATCH or REVIEW in this run; it remains a
+verified tenant with low current yield.
+
+### 3.3B Unsupported-ATS gap analysis — next
+
+Decide whether to support a fifth ATS. Phase 3.3A deferred five employers with
+real Bucharest entry-level volume that no current adapter can reach — Paysafe,
+FintechOS, CrowdStrike, Deutsche Bank, and several enterprise employers. This
+phase should size that volume per platform and choose at most one provider to
+implement, rather than adding adapters opportunistically. It should also retry
+the 3.3A `HOLD_AMBIGUOUS` employers and continue candidate research toward the
+60-employer ceiling.
 
 ## Phase 4 — REVIEW workflow and ranking calibration: PLANNED
 
