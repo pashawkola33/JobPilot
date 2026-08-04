@@ -10,8 +10,11 @@ import com.jobpilot.jobs.domain.ScreeningDisposition;
 import com.jobpilot.jobs.domain.WorkplaceType;
 import com.jobpilot.matching.ScoreBand;
 import com.jobpilot.sources.JobSource;
-import com.jobpilot.sources.SourceFetchLog;
-import com.jobpilot.sources.SourceFetchLogRepository;
+import com.jobpilot.sources.SourceFetchFailureCategory;
+import com.jobpilot.sources.SourceFetchLogHandle;
+import com.jobpilot.sources.SourceFetchLogLifecycleService;
+import com.jobpilot.sources.SourceFetchLogTerminalOutcome;
+import com.jobpilot.sources.SourceFetchLogTerminalizationException;
 import com.jobpilot.sources.health.IngestionRunContext;
 import com.jobpilot.sources.health.TenantAttemptStatus;
 import com.jobpilot.telegram.TelegramNotifier;
@@ -35,7 +38,7 @@ public class JobIngestionService {
     private final JobProcessor processor;
     private final LocationEligibilityService eligibility;
     private final EarlyCareerEligibilityService earlyCareer;
-    private final SourceFetchLogRepository logs;
+    private final SourceFetchLogLifecycleService lifecycle;
     private final TelegramNotifier telegram;
     private final TelegramReviewNotifier reviewNotifier;
     private final Clock clock;
@@ -44,14 +47,14 @@ public class JobIngestionService {
     public JobIngestionService(List<JobSource> sources, JobRelevanceFilter relevance,
                                JobProcessor processor, LocationEligibilityService eligibility,
                                EarlyCareerEligibilityService earlyCareer,
-                               SourceFetchLogRepository logs, TelegramNotifier telegram,
+                               SourceFetchLogLifecycleService lifecycle, TelegramNotifier telegram,
                                TelegramReviewNotifier reviewNotifier, Clock clock) {
         this.sources = List.copyOf(sources);
         this.relevance = relevance;
         this.processor = processor;
         this.eligibility = eligibility;
         this.earlyCareer = earlyCareer;
-        this.logs = logs;
+        this.lifecycle = lifecycle;
         this.telegram = telegram;
         this.reviewNotifier = reviewNotifier;
         this.clock = clock;
@@ -60,21 +63,21 @@ public class JobIngestionService {
     public JobIngestionService(List<JobSource> sources, JobRelevanceFilter relevance,
                                JobProcessor processor, LocationEligibilityService eligibility,
                                EarlyCareerEligibilityService earlyCareer,
-                               SourceFetchLogRepository logs, TelegramNotifier telegram, Clock clock) {
-        this(sources, relevance, processor, eligibility, earlyCareer, logs, telegram, null, clock);
+                               SourceFetchLogLifecycleService lifecycle, TelegramNotifier telegram, Clock clock) {
+        this(sources, relevance, processor, eligibility, earlyCareer, lifecycle, telegram, null, clock);
     }
 
     public JobIngestionService(List<JobSource> sources, JobRelevanceFilter relevance,
-                               JobProcessor processor, SourceFetchLogRepository logs,
+                               JobProcessor processor, SourceFetchLogLifecycleService lifecycle,
                                TelegramNotifier telegram, Clock clock) {
-        this(sources, relevance, processor, null, null, logs, telegram, null, clock);
+        this(sources, relevance, processor, null, null, lifecycle, telegram, null, clock);
     }
 
     public JobIngestionService(List<JobSource> sources, JobRelevanceFilter relevance,
                                JobProcessor processor, LocationEligibilityService eligibility,
-                               SourceFetchLogRepository logs, TelegramNotifier telegram, Clock clock) {
+                               SourceFetchLogLifecycleService lifecycle, TelegramNotifier telegram, Clock clock) {
         this(sources, relevance, processor, eligibility, new EarlyCareerEligibilityService(),
-                logs, telegram, null, clock);
+                lifecycle, telegram, null, clock);
     }
 
     public JobIngestionReport fetchAllSources() {
@@ -134,22 +137,86 @@ public class JobIngestionService {
         fetchOneSource(source, new ReportAccumulator());
     }
 
+    /**
+     * Lifecycle boundary for one source: the row is opened before any work and is moved to a
+     * terminal status on every path the JVM can still observe. Throwable is caught here and
+     * only here, solely so an Error still gets a best-effort terminal write before it is
+     * rethrown untouched.
+     */
     private void fetchOneSource(JobSource source, ReportAccumulator report) {
-        SourceFetchLog log = logs.save(new SourceFetchLog(source.getSourceName(), clock.instant(),
-                IngestionRunContext.currentRunId()));
-        int fetched = 0;
-        int saved = 0;
-        long screeningStartedNanos = System.nanoTime();
+        SourceFetchLogHandle handle = lifecycle.begin(source.getSourceName(),
+                IngestionRunContext.currentRunId(), clock.instant());
+        SourceCounters counters = new SourceCounters();
         try {
+            runSource(source, report, counters);
+        } catch (RuntimeException failure) {
+            // An interrupt reaches us as a RuntimeException with the flag still set, because
+            // the HTTP client re-asserts it before translating.
+            boolean interrupted = Thread.currentThread().isInterrupted();
+            finalizeFailure(handle, interrupted
+                    ? SourceFetchFailureCategory.PROCESS_INTERRUPTED
+                    : SourceFetchFailureCategory.SOURCE_FAILURE, failure);
+            LOGGER.warn("Job source {} failed; remaining sources will continue: {}",
+                    source.getSourceName(), failure.getClass().getSimpleName());
+            return;
+        } catch (Error error) {
+            // Best effort only, and never swallowed.
+            try {
+                lifecycle.fail(handle, SourceFetchFailureCategory.UNCAUGHT_ERROR, error,
+                        clock.instant());
+            } catch (RuntimeException finalizationFailure) {
+                error.addSuppressed(finalizationFailure);
+            }
+            throw error;
+        }
+        requireFinalized(handle, lifecycle.succeed(handle, counters.fetched, counters.saved,
+                clock.instant()));
+    }
+
+    /**
+     * Moves a already-failing source to FAILED without ever masking why it failed: a
+     * finalization problem is attached to the original exception as suppressed.
+     */
+    private void finalizeFailure(SourceFetchLogHandle handle,
+                                 SourceFetchFailureCategory category, Throwable failure) {
+        SourceFetchLogTerminalOutcome outcome;
+        try {
+            outcome = lifecycle.fail(handle, category, failure, clock.instant());
+        } catch (RuntimeException finalizationFailure) {
+            failure.addSuppressed(finalizationFailure);
+            return;
+        }
+        if (!outcome.finalized()) {
+            failure.addSuppressed(new SourceFetchLogTerminalizationException(
+                    outcome, handle.id(), handle.sourceName()));
+        }
+    }
+
+    /** A source is only reported as finished when its row actually reached a terminal state. */
+    private void requireFinalized(SourceFetchLogHandle handle,
+                                  SourceFetchLogTerminalOutcome outcome) {
+        if (outcome.finalized()) return;
+        LOGGER.error("Source fetch log {} for source {} did not reach a terminal status: {}",
+                handle.id(), handle.sourceName(), outcome);
+        throw new SourceFetchLogTerminalizationException(outcome, handle.id(), handle.sourceName());
+    }
+
+    private void runSource(JobSource source, ReportAccumulator report, SourceCounters counters) {
+        long screeningStartedNanos = System.nanoTime();
+        {
             List<RawJob> rawJobs = source.fetchJobs();
-            fetched = rawJobs.size();
+            counters.fetched = rawJobs.size();
             for (RawJob raw : rawJobs) {
+                // Stop promptly on a graceful shutdown rather than working through the rest.
+                if (Thread.currentThread().isInterrupted()) {
+                    throw new SourceInterruptedException();
+                }
                 try {
                     if (!report.recordFetched(raw)) continue;
                     if (eligibility == null || earlyCareer == null) {
                         JobProcessingResult result = processor.process(raw);
                         report.recordPersistence(result);
-                        if (result.newlyCreated()) saved++;
+                        if (result.newlyCreated()) counters.saved++;
                         continue;
                     }
                     LocationEligibilityDecision locationDecision = eligibility.evaluate(raw);
@@ -186,7 +253,7 @@ public class JobIngestionService {
                             careerDecision, relevanceDecision);
                     report.recordPersistence(result);
                     if (result.newlyCreated()) {
-                        saved++;
+                        counters.saved++;
                         if (result.finalDisposition() == ScreeningDisposition.MATCH
                                 && result.score() != null
                                 && result.score().band() == ScoreBand.EXCELLENT_MATCH) {
@@ -194,24 +261,35 @@ public class JobIngestionService {
                         }
                     }
                 } catch (RuntimeException exception) {
+                    // Per-job isolation is unchanged, except that an interrupt is never
+                    // swallowed: it must reach the lifecycle boundary.
+                    if (Thread.currentThread().isInterrupted()) throw exception;
                     LOGGER.warn("Rejected one job from source {}: {}", source.getSourceName(),
                             exception.getClass().getSimpleName());
                 }
             }
-            log.succeed(fetched, saved, clock.instant());
             // Bounded: run id, source, job count and elapsed milliseconds only. No title,
             // description, URL, candidate data, or any secret-bearing field.
             if (LOGGER.isDebugEnabled()) {
                 LOGGER.debug("Source screening timing: runId={}, source={}, jobs={}, elapsedMs={}",
-                        IngestionRunContext.currentRunId(), source.getSourceName(), fetched,
+                        IngestionRunContext.currentRunId(), source.getSourceName(),
+                        counters.fetched,
                         (System.nanoTime() - screeningStartedNanos) / 1_000_000L);
             }
-        } catch (RuntimeException exception) {
-            log.fail(exception, clock.instant());
-            LOGGER.warn("Job source {} failed; remaining sources will continue: {}",
-                    source.getSourceName(), exception.getClass().getSimpleName());
         }
-        logs.save(log);
+    }
+
+    /** Mutable counters for one source, scoped to the lifecycle boundary. */
+    private static final class SourceCounters {
+        private int fetched;
+        private int saved;
+    }
+
+    /** Raised when a graceful shutdown interrupts a source part-way through its vacancies. */
+    static final class SourceInterruptedException extends RuntimeException {
+        SourceInterruptedException() {
+            super("Source processing was interrupted");
+        }
     }
 
     /** Best effort. The review push runs after persistence and can never fail the run. */

@@ -17,7 +17,13 @@ import com.jobpilot.jobs.domain.ScreeningDisposition;
 import com.jobpilot.matching.ScoreBand;
 import com.jobpilot.matching.ScoreCard;
 import com.jobpilot.sources.JobSource;
-import com.jobpilot.sources.SourceFetchLogRepository;
+import static org.mockito.ArgumentMatchers.anyString;
+
+import static org.mockito.ArgumentMatchers.anyInt;
+
+import com.jobpilot.sources.SourceFetchLogHandle;
+import com.jobpilot.sources.SourceFetchLogLifecycleService;
+import com.jobpilot.sources.SourceFetchLogTerminalOutcome;
 import com.jobpilot.telegram.TelegramNotifier;
 import java.time.Clock;
 import java.util.List;
@@ -31,9 +37,8 @@ class JobIngestionServiceTest {
         JobSource succeeding = new StubSource("succeeding", false);
         JobRelevanceFilter relevance = new JobRelevanceFilter(TestProperties.create());
         JobProcessor processor = mock(JobProcessor.class);
-        SourceFetchLogRepository logs = mock(SourceFetchLogRepository.class);
+        SourceFetchLogLifecycleService logs = lifecycle();
         TelegramNotifier telegram = mock(TelegramNotifier.class);
-        when(logs.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(processor.process(any())).thenReturn(new JobProcessingResult(mock(com.jobpilot.jobs.domain.Job.class), null, false));
         var service = new JobIngestionService(List.of(failing, succeeding), relevance, processor,
                 logs, telegram, Clock.systemUTC());
@@ -42,7 +47,11 @@ class JobIngestionServiceTest {
 
         verify(processor).process(any());
         verify(telegram, never()).notifyExcellent(any(), any());
-        verify(logs, org.mockito.Mockito.times(4)).save(any());
+        // Both sources open a row; the failing one is finalized FAILED, the other SUCCESS.
+        verify(logs, org.mockito.Mockito.times(2)).begin(anyString(), any(), any());
+        verify(logs).fail(any(), org.mockito.ArgumentMatchers.eq(
+                com.jobpilot.sources.SourceFetchFailureCategory.SOURCE_FAILURE), any(), any());
+        verify(logs).succeed(any(), anyInt(), anyInt(), any());
     }
 
     @Test
@@ -66,9 +75,8 @@ class JobIngestionServiceTest {
         };
         JobRelevanceFilter relevance = new JobRelevanceFilter(TestProperties.create());
         JobProcessor processor = mock(JobProcessor.class);
-        SourceFetchLogRepository logs = mock(SourceFetchLogRepository.class);
+        SourceFetchLogLifecycleService logs = lifecycle();
         TelegramNotifier telegram = mock(TelegramNotifier.class);
-        when(logs.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(processor.process(any(RawJob.class), any(LocationEligibilityDecision.class),
                 any(EarlyCareerDecision.class), any(RelevanceDecision.class)))
                 .thenAnswer(invocation -> {
@@ -128,9 +136,8 @@ class JobIngestionServiceTest {
         };
         JobRelevanceFilter relevance = new JobRelevanceFilter(TestProperties.create());
         JobProcessor processor = mock(JobProcessor.class);
-        SourceFetchLogRepository logs = mock(SourceFetchLogRepository.class);
+        SourceFetchLogLifecycleService logs = lifecycle();
         TelegramNotifier telegram = mock(TelegramNotifier.class);
-        when(logs.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(processor.process(any(RawJob.class), any(LocationEligibilityDecision.class),
                 any(EarlyCareerDecision.class), any(RelevanceDecision.class)))
                 .thenAnswer(invocation -> {
@@ -213,7 +220,7 @@ class JobIngestionServiceTest {
         EarlyCareerEligibilityService career = mock(EarlyCareerEligibilityService.class);
         JobRelevanceFilter relevance = mock(JobRelevanceFilter.class);
         JobProcessor processor = mock(JobProcessor.class);
-        SourceFetchLogRepository logs = successfulLogs();
+        SourceFetchLogLifecycleService logs = successfulLogs();
         LocationEligibilityDecision rejection =
                 new LocationEligibilityService(TestProperties.create()).evaluate(raw);
         when(location.evaluate(raw)).thenReturn(rejection);
@@ -354,9 +361,8 @@ class JobIngestionServiceTest {
         };
     }
 
-    private SourceFetchLogRepository successfulLogs() {
-        SourceFetchLogRepository logs = mock(SourceFetchLogRepository.class);
-        when(logs.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    private SourceFetchLogLifecycleService successfulLogs() {
+        SourceFetchLogLifecycleService logs = lifecycle();
         return logs;
     }
 
@@ -395,4 +401,19 @@ class JobIngestionServiceTest {
                     "Example", "Romania", "Java Internship", "Internship", null, null, "{}"));
         }
     }
+
+    /** A lifecycle mock that hands out handles and reports every terminal write as done. */
+    private static SourceFetchLogLifecycleService lifecycle() {
+        SourceFetchLogLifecycleService lifecycle = mock(SourceFetchLogLifecycleService.class);
+        java.util.concurrent.atomic.AtomicLong ids = new java.util.concurrent.atomic.AtomicLong();
+        when(lifecycle.begin(anyString(), any(), any())).thenAnswer(invocation ->
+                new SourceFetchLogHandle(ids.incrementAndGet(), invocation.getArgument(0),
+                        invocation.getArgument(1)));
+        when(lifecycle.succeed(any(), anyInt(), anyInt(), any()))
+                .thenReturn(SourceFetchLogTerminalOutcome.UPDATED);
+        when(lifecycle.fail(any(), any(), any(), any()))
+                .thenReturn(SourceFetchLogTerminalOutcome.UPDATED);
+        return lifecycle;
+    }
+
 }

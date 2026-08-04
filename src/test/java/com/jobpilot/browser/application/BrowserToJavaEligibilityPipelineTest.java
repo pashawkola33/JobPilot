@@ -23,7 +23,13 @@ import com.jobpilot.jobs.service.LocationEligibilityService;
 import com.jobpilot.manualurl.fetch.ValidatedManualUrl;
 import com.jobpilot.manualurl.parse.ManualParseStatus;
 import com.jobpilot.sources.JobSource;
-import com.jobpilot.sources.SourceFetchLogRepository;
+import static org.mockito.ArgumentMatchers.anyString;
+
+import static org.mockito.ArgumentMatchers.anyInt;
+
+import com.jobpilot.sources.SourceFetchLogHandle;
+import com.jobpilot.sources.SourceFetchLogLifecycleService;
+import com.jobpilot.sources.SourceFetchLogTerminalOutcome;
 import com.jobpilot.support.TestProperties;
 import com.jobpilot.telegram.TelegramNotifier;
 import java.net.InetAddress;
@@ -137,8 +143,7 @@ class BrowserToJavaEligibilityPipelineTest {
                             ScreeningDecision.of(location, career, relevanceDecision));
                 });
         JobRelevanceFilter relevance = new JobRelevanceFilter(TestProperties.create());
-        SourceFetchLogRepository logs = mock(SourceFetchLogRepository.class);
-        when(logs.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        SourceFetchLogLifecycleService logs = lifecycle();
         TelegramNotifier telegram = mock(TelegramNotifier.class);
         var properties = TestProperties.create();
         JobIngestionService service = new JobIngestionService(List.of(source), relevance, processor,
@@ -190,4 +195,19 @@ class BrowserToJavaEligibilityPipelineTest {
 
     private record Pipeline(JobIngestionReport report, JobProcessor processor, TelegramNotifier telegram) {
     }
+
+    /** A lifecycle mock that hands out handles and reports every terminal write as done. */
+    private static SourceFetchLogLifecycleService lifecycle() {
+        SourceFetchLogLifecycleService lifecycle = mock(SourceFetchLogLifecycleService.class);
+        java.util.concurrent.atomic.AtomicLong ids = new java.util.concurrent.atomic.AtomicLong();
+        when(lifecycle.begin(anyString(), any(), any())).thenAnswer(invocation ->
+                new SourceFetchLogHandle(ids.incrementAndGet(), invocation.getArgument(0),
+                        invocation.getArgument(1)));
+        when(lifecycle.succeed(any(), anyInt(), anyInt(), any()))
+                .thenReturn(SourceFetchLogTerminalOutcome.UPDATED);
+        when(lifecycle.fail(any(), any(), any(), any()))
+                .thenReturn(SourceFetchLogTerminalOutcome.UPDATED);
+        return lifecycle;
+    }
+
 }
