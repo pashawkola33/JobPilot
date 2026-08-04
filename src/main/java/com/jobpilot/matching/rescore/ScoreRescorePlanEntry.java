@@ -64,8 +64,7 @@ public record ScoreRescorePlanEntry(
     }
 
     public boolean changed() {
-        return !storedScore.equals(computedScore)
-                || !storedRequirements.equals(computedRequirements);
+        return !storedScore.equals(computedScore);
     }
 
     private static long requireId(Long id, String type) {

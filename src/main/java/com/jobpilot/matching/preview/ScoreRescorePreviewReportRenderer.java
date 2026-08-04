@@ -50,7 +50,7 @@ public class ScoreRescorePreviewReportRenderer {
         } else {
             lines.add(renderJob("SCORE_RESCORE_PREVIEW_TARGET", report.juniorJavaDeveloper()));
         }
-        lines.add("SCORE_RESCORE_PREVIEW_COMPLETE readOnly=true writeBackImplemented=false");
+        lines.add("SCORE_RESCORE_PREVIEW_COMPLETE readOnly=true writeBackExecuted=false");
         return List.copyOf(lines);
     }
 

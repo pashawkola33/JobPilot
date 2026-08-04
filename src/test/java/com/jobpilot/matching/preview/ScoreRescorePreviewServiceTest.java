@@ -32,6 +32,7 @@ import com.jobpilot.matching.JobScoreCalculator;
 import com.jobpilot.matching.ScoreCalculation;
 import com.jobpilot.matching.ScoreCard;
 import com.jobpilot.matching.ScoreBand;
+import com.jobpilot.matching.rescore.ScoreRescorePlanResult;
 import com.jobpilot.support.TestProperties;
 import java.time.Clock;
 import java.time.Instant;
@@ -123,6 +124,23 @@ class ScoreRescorePreviewServiceTest {
         assertThat(result.report().exactMatches()).isEqualTo(1);
         assertThat(result.report().changedJobs()).isEmpty();
         assertThat(result.report().changedScoreCount()).isZero();
+        assertNoRepositoryWrites();
+    }
+
+    @Test
+    void requirementsOnlyDifferenceDoesNotEnterScoreWritePlan() {
+        Job target = ordinaryMatch(10L);
+        ScoreCalculation current = calculator.calculate(target);
+        ExtractedRequirements stored = withSalary(current.requirements(), "legacy salary text");
+        stub(List.of(row(target, current.score())), List.of(requirement(target, stored)));
+
+        var result = service.plan(250);
+
+        assertThat(result.status())
+                .isEqualTo(ScoreRescorePlanResult.Status.SUCCESS);
+        assertThat(result.plan().report().exactMatches()).isEqualTo(1);
+        assertThat(result.plan().changedCount()).isZero();
+        assertThat(result.plan().entries()).isEmpty();
         assertNoRepositoryWrites();
     }
 
@@ -278,6 +296,15 @@ class ScoreRescorePreviewServiceTest {
                 value.finalYearMandatory(), value.technologies(), value.programmingLanguages(),
                 value.spokenLanguages(), value.location(), value.remoteEligibility(),
                 value.mentorshipSignals(), value.workAuthorization(), value.salary(),
+                value.applicationDeadline(), value.extractionMethod());
+    }
+
+    private ExtractedRequirements withSalary(ExtractedRequirements value, String salary) {
+        return new ExtractedRequirements(value.seniority(), value.internshipOrTrainee(),
+                value.requiredExperienceYears(), value.requiredEducation(),
+                value.finalYearMandatory(), value.technologies(), value.programmingLanguages(),
+                value.spokenLanguages(), value.location(), value.remoteEligibility(),
+                value.mentorshipSignals(), value.workAuthorization(), salary,
                 value.applicationDeadline(), value.extractionMethod());
     }
 
