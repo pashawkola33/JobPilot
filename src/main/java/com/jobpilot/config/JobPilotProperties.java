@@ -53,11 +53,17 @@ public record JobPilotProperties(
         public static final int MAX_JOBS_PER_MESSAGE_CEILING = 10;
         /** Matches the job_workflow_state note check constraint. */
         public static final int NOTE_LENGTH_CEILING = 1000;
+        /**
+         * Telegram holds an idle long poll open for the whole timeout, so this must stay
+         * strictly below jobpilot.http.response-timeout (20s). A larger value makes the
+         * HTTP client abort every idle cycle and retry it as a transport failure.
+         */
+        public static final Duration DEFAULT_POLL_TIMEOUT = Duration.ofSeconds(15);
 
         @ConstructorBinding
         public Telegram {
             botUsername = normalizeBotUsername(botUsername);
-            pollTimeout = pollTimeout == null ? Duration.ofSeconds(25) : pollTimeout;
+            pollTimeout = pollTimeout == null ? DEFAULT_POLL_TIMEOUT : pollTimeout;
             pollDelay = pollDelay == null ? Duration.ofSeconds(2) : pollDelay;
             allowedChatIds = normalizeChatIds(allowedChatIds);
             if (pollTimeout.isNegative() || pollTimeout.compareTo(Duration.ofSeconds(50)) > 0
@@ -87,7 +93,7 @@ public record JobPilotProperties(
         }
 
         public Telegram(String botToken, String channelId) {
-            this(botToken, channelId, "", false, "", "", Duration.ofSeconds(25),
+            this(botToken, channelId, "", false, "", "", DEFAULT_POLL_TIMEOUT,
                     Duration.ofSeconds(2), 50, 3, true, false, List.of(), true, true, 5, 500);
         }
 
@@ -105,7 +111,7 @@ public record JobPilotProperties(
         public Telegram(String botToken, boolean enabled, List<String> allowedChatIds,
                         boolean matchNotificationsEnabled, boolean reviewDigestEnabled,
                         int maxJobsPerMessage, int maxNoteLength) {
-            this(botToken, "", "", false, "", "", Duration.ofSeconds(25), Duration.ofSeconds(2),
+            this(botToken, "", "", false, "", "", DEFAULT_POLL_TIMEOUT, Duration.ofSeconds(2),
                     50, 3, true, enabled, allowedChatIds, matchNotificationsEnabled,
                     reviewDigestEnabled, maxJobsPerMessage, maxNoteLength);
         }

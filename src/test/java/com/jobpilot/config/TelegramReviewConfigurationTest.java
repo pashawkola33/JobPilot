@@ -33,7 +33,7 @@ class TelegramReviewConfigurationTest {
         assertThat(settings.reviewDigestEnabled()).isTrue();
         assertThat(settings.maxJobsPerMessage()).isEqualTo(5);
         assertThat(settings.maxNoteLength()).isEqualTo(500);
-        assertThat(settings.pollTimeout().toSeconds()).isEqualTo(25);
+        assertThat(settings.pollTimeout().toSeconds()).isEqualTo(15);
     }
 
     @Test

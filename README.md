@@ -255,7 +255,7 @@ Important variables:
 | `TELEGRAM_COMMANDS_ENABLED` | No | Enables long polling; default `false` |
 | `TELEGRAM_ALLOWED_CHAT_ID` | Commands: yes | Explicit authorized numeric chat ID |
 | `TELEGRAM_ALLOWED_USER_ID` | Commands: yes | Explicit authorized numeric sender/user ID |
-| `TELEGRAM_POLL_TIMEOUT` | No | Bounded long-poll timeout; default `25s` |
+| `TELEGRAM_POLL_TIMEOUT` | No | Bounded long-poll timeout; default `15s`. Must stay below `jobpilot.http.response-timeout` (20s) |
 | `TELEGRAM_POLL_DELAY` | No | Delay between local polls; default `2s` |
 | `TELEGRAM_POLL_LIMIT` | No | Updates per request, `1`–`100`; default `50` |
 | `TELEGRAM_MAX_UPDATE_FAILURES` | No | Attempts before dead-lettering; default `3` |
@@ -266,7 +266,7 @@ Important variables:
 | `TELEGRAM_REVIEW_DIGEST_ENABLED` | No | Push one REVIEW digest after ingestion; default `true` |
 | `TELEGRAM_MAX_JOBS_PER_MESSAGE` | No | Queue page size and notification cap, `1`-`10`; default `5` |
 | `TELEGRAM_MAX_NOTE_LENGTH` | No | Maximum review note length, `1`-`1000`; default `500` |
-| `TELEGRAM_POLLING_TIMEOUT_SECONDS` | No | Whole-second form of `TELEGRAM_POLL_TIMEOUT`; default `25` |
+| `TELEGRAM_POLLING_TIMEOUT_SECONDS` | No | Whole-second form of `TELEGRAM_POLL_TIMEOUT`; default `15` |
 | `JOB_FETCH_CRON` | No | Default `0 0 */6 * * *` |
 | `DAILY_DIGEST_CRON` | No | Default `0 0 9 * * *` |
 | `STALE_DAYS` | No | Default `30` |

@@ -41,9 +41,11 @@ public class TelegramUpdatePoller {
         this.lifecycle = lifecycle;
         this.counters = counters;
         log.info("Telegram poller initialized enabled={} commandsEnabled={} pollingEnabled={} "
-                        + "discardPendingOnFirstStart={} pollDelay={} lifecycleAcceptingWork={}",
+                        + "discardPendingOnFirstStart={} pollTimeout={} pollDelay={} "
+                        + "lifecycleAcceptingWork={}",
                 settings.enabled(), settings.commandsEnabled(), settings.pollingEnabled(),
-                settings.discardPendingOnFirstStart(), settings.pollDelay(), lifecycle.acceptingWork());
+                settings.discardPendingOnFirstStart(), settings.pollTimeout(),
+                settings.pollDelay(), lifecycle.acceptingWork());
     }
 
     public TelegramUpdatePoller(TelegramClient client, TelegramUpdateProcessor processor,
@@ -56,11 +58,11 @@ public class TelegramUpdatePoller {
     public void scheduledPoll() {
         if (firstScheduledPoll.compareAndSet(true, false)) {
             log.info("Telegram scheduled poll first invocation enabled={} commandsEnabled={} "
-                            + "pollingEnabled={} discardPendingOnFirstStart={} pollDelay={} "
-                            + "lifecycleAcceptingWork={}",
+                            + "pollingEnabled={} discardPendingOnFirstStart={} pollTimeout={} "
+                            + "pollDelay={} lifecycleAcceptingWork={}",
                     settings.enabled(), settings.commandsEnabled(), settings.pollingEnabled(),
-                    settings.discardPendingOnFirstStart(), settings.pollDelay(),
-                    lifecycle.acceptingWork());
+                    settings.discardPendingOnFirstStart(), settings.pollTimeout(),
+                    settings.pollDelay(), lifecycle.acceptingWork());
         }
         if (settings.pollingEnabled()) pollOnce();
     }

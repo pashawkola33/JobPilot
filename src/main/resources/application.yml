@@ -44,9 +44,11 @@ jobpilot:
     commands-enabled: ${TELEGRAM_COMMANDS_ENABLED:false}
     allowed-chat-id: ${TELEGRAM_ALLOWED_CHAT_ID:}
     allowed-user-id: ${TELEGRAM_ALLOWED_USER_ID:}
-    # TELEGRAM_POLL_TIMEOUT accepts a Duration ("25s"); TELEGRAM_POLLING_TIMEOUT_SECONDS
+    # TELEGRAM_POLL_TIMEOUT accepts a Duration ("15s"); TELEGRAM_POLLING_TIMEOUT_SECONDS
     # is the whole-second form of the same single knob. There is no second timeout.
-    poll-timeout: ${TELEGRAM_POLL_TIMEOUT:PT${TELEGRAM_POLLING_TIMEOUT_SECONDS:25}S}
+    # It MUST stay strictly below jobpilot.http.response-timeout (20s): Telegram holds an
+    # idle long poll open for the full timeout, so a larger value aborts every idle cycle.
+    poll-timeout: ${TELEGRAM_POLL_TIMEOUT:PT${TELEGRAM_POLLING_TIMEOUT_SECONDS:15}S}
     poll-delay: ${TELEGRAM_POLL_DELAY:2s}
     poll-limit: ${TELEGRAM_POLL_LIMIT:50}
     max-update-failures: ${TELEGRAM_MAX_UPDATE_FAILURES:3}
