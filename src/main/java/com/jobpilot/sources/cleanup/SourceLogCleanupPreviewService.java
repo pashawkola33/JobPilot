@@ -20,7 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Builds evidence in one read-only snapshot; there is deliberately no cleanup executor. */
+/** Builds the immutable evidence plan in one read-only snapshot. */
 @Service
 public class SourceLogCleanupPreviewService {
     public static final String PROPOSED_STATUS = "FAILED";

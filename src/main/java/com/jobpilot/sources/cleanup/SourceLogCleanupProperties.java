@@ -7,26 +7,35 @@ import java.util.List;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.ConstructorBinding;
 
-/** Default-off settings for the strictly read-only historical source-log preview. */
+/** Default-off settings for the guarded historical source-log one-shot command. */
 @ConfigurationProperties("jobpilot.source-log-cleanup")
 public record SourceLogCleanupProperties(
         Mode mode,
+        boolean writeEnabled,
         Duration minimumAge,
         Integer maxCandidates,
         String expectedRunningIds,
-        String expectedRunningCount) {
+        String expectedRunningCount,
+        String expectedPlanFingerprint,
+        String confirmation) {
 
     public static final Duration DEFAULT_MINIMUM_AGE = Duration.ofHours(6);
     public static final int DEFAULT_MAX_CANDIDATES = 20;
     public static final int HARD_MAX_CANDIDATES = 100;
 
-    public enum Mode { OFF, PREVIEW }
+    public enum Mode { OFF, PREVIEW, WRITE }
 
     @ConstructorBinding
     public SourceLogCleanupProperties {
         mode = mode == null ? Mode.OFF : mode;
         minimumAge = minimumAge == null ? DEFAULT_MINIMUM_AGE : minimumAge;
         maxCandidates = maxCandidates == null ? DEFAULT_MAX_CANDIDATES : maxCandidates;
+    }
+
+    SourceLogCleanupProperties(Mode mode, Duration minimumAge, Integer maxCandidates,
+                               String expectedRunningIds, String expectedRunningCount) {
+        this(mode, false, minimumAge, maxCandidates, expectedRunningIds,
+                expectedRunningCount, null, null);
     }
 
     /** Parses all operator guards at command execution time, never while mode is OFF. */
@@ -38,13 +47,14 @@ public record SourceLogCleanupProperties(
             throw new IllegalArgumentException("Maximum candidates is outside the safe range");
         }
         List<Long> ids = parseIds(expectedRunningIds);
-        if (ids.isEmpty()) {
-            throw new IllegalArgumentException("Expected RUNNING IDs are required");
-        }
         if (ids.size() > HARD_MAX_CANDIDATES) {
             throw new IllegalArgumentException("Expected RUNNING IDs exceed hard maximum");
         }
         Integer count = parseCount(expectedRunningCount);
+        if (ids.isEmpty() && (count == null || count != 0)) {
+            throw new IllegalArgumentException(
+                    "Expected RUNNING IDs are required unless expected count is zero");
+        }
         if (count != null && count != ids.size()) {
             throw new IllegalArgumentException("Expected RUNNING count conflicts with expected IDs");
         }
@@ -75,7 +85,7 @@ public record SourceLogCleanupProperties(
     private static Integer parseCount(String raw) {
         if (raw == null || raw.isBlank()) return null;
         String value = raw.strip();
-        if (!value.matches("[1-9]\\d*")) {
+        if (!value.matches("\\d+")) {
             throw new IllegalArgumentException("Expected RUNNING count is malformed");
         }
         try {

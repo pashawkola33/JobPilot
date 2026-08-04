@@ -47,10 +47,13 @@ jobpilot:
     confirmation: ${JOBPILOT_SCORE_RESCORE_CONFIRMATION:}
   source-log-cleanup:
     mode: ${JOBPILOT_SOURCE_LOG_CLEANUP_MODE:OFF}
+    write-enabled: ${JOBPILOT_SOURCE_LOG_CLEANUP_WRITE_ENABLED:false}
     minimum-age: ${JOBPILOT_SOURCE_LOG_CLEANUP_MINIMUM_AGE:6h}
     max-candidates: ${JOBPILOT_SOURCE_LOG_CLEANUP_MAX_CANDIDATES:20}
     expected-running-ids: ${JOBPILOT_SOURCE_LOG_CLEANUP_EXPECTED_RUNNING_IDS:}
     expected-running-count: ${JOBPILOT_SOURCE_LOG_CLEANUP_EXPECTED_RUNNING_COUNT:}
+    expected-plan-fingerprint: ${JOBPILOT_SOURCE_LOG_CLEANUP_EXPECTED_PLAN_FINGERPRINT:}
+    confirmation: ${JOBPILOT_SOURCE_LOG_CLEANUP_CONFIRMATION:}
   build:
     version: ${JOBPILOT_VERSION:unknown}
     commit: ${BUILD_COMMIT:unknown}

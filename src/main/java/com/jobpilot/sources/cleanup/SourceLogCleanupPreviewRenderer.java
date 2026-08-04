@@ -17,8 +17,8 @@ public class SourceLogCleanupPreviewRenderer {
     public List<String> render(SourceLogCleanupPlan plan) {
         ArrayList<String> lines = new ArrayList<>();
         lines.add(bound("SOURCE_LOG_CLEANUP_PREVIEW status="
-                + (plan.futureWriteEligible() ? "SAFE" : "BLOCKED")
-                + " readOnly=true writeImplemented=false observedRunning="
+                + (plan.previewSafe() ? "SAFE" : "BLOCKED")
+                + " readOnly=true writeImplemented=true observedRunning="
                 + plan.observedRunningIds().size() + " expectedIds="
                 + plan.expectedRunningIds() + " eligible=" + plan.eligibleCount()
                 + " rejected=" + plan.rejectedCount() + " preV10=" + plan.preV10Count()

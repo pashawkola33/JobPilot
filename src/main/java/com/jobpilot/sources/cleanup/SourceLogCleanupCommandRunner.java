@@ -13,7 +13,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Component;
 
-/** Dedicated no-web, no-scheduler, read-only one-shot command. */
+/** Dedicated no-web, no-scheduler one-shot preview/write command. */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class SourceLogCleanupCommandRunner implements ApplicationRunner {
@@ -23,6 +23,7 @@ public class SourceLogCleanupCommandRunner implements ApplicationRunner {
     private final SourceLogCleanupProperties properties;
     private final SourceLogCleanupPreviewService preview;
     private final SourceLogCleanupPreviewRenderer renderer;
+    private final SourceLogCleanupWriteCoordinator writer;
     private final JobPilotProperties jobPilot;
     private final ScoreRescorePreviewProperties scoreStartupPreview;
     private final ScoreRescoreCommandProperties scoreCommand;
@@ -32,6 +33,7 @@ public class SourceLogCleanupCommandRunner implements ApplicationRunner {
             SourceLogCleanupProperties properties,
             SourceLogCleanupPreviewService preview,
             SourceLogCleanupPreviewRenderer renderer,
+            SourceLogCleanupWriteCoordinator writer,
             JobPilotProperties jobPilot,
             ScoreRescorePreviewProperties scoreStartupPreview,
             ScoreRescoreCommandProperties scoreCommand,
@@ -39,6 +41,7 @@ public class SourceLogCleanupCommandRunner implements ApplicationRunner {
         this.properties = properties;
         this.preview = preview;
         this.renderer = renderer;
+        this.writer = writer;
         this.jobPilot = jobPilot;
         this.scoreStartupPreview = scoreStartupPreview;
         this.scoreCommand = scoreCommand;
@@ -53,22 +56,32 @@ public class SourceLogCleanupCommandRunner implements ApplicationRunner {
             validateProcessBoundary();
             SourceLogCleanupPlan plan = preview.plan(properties.guards());
             renderer.render(plan).forEach(line -> LOGGER.info("{}", line));
-            if (!plan.futureWriteEligible()) fail("PREVIEW_EVIDENCE_BLOCKED");
+            if (!plan.previewSafe()) fail("PREVIEW_EVIDENCE_BLOCKED");
+            if (properties.mode() == SourceLogCleanupProperties.Mode.WRITE) {
+                SourceLogCleanupWriteResult result = writer.execute(plan, properties);
+                if (result.status() == SourceLogCleanupWriteResult.Status.ERROR) {
+                    fail(result.safeReason());
+                }
+                LOGGER.info("SOURCE_LOG_CLEANUP_WRITE success rowsUpdated={} ids={} "
+                                + "finishedAt={}", result.rowsUpdated(), result.ids(),
+                        result.finishedAt());
+            }
             long durationMillis = (System.nanoTime() - started) / 1_000_000;
-            LOGGER.info("SOURCE_LOG_CLEANUP_COMMAND complete mode=PREVIEW durationMs={}",
-                    durationMillis);
+            LOGGER.info("SOURCE_LOG_CLEANUP_COMMAND complete mode={} durationMs={}",
+                    properties.mode(), durationMillis);
         } catch (CommandFailure safeFailure) {
-            LOGGER.error("SOURCE_LOG_CLEANUP_COMMAND failed mode=PREVIEW reason={}",
+            LOGGER.error("SOURCE_LOG_CLEANUP_COMMAND failed mode={} reason={}",
+                    properties.mode(),
                     safeFailure.getMessage());
-            throw new IllegalStateException("One-shot source-log cleanup preview failed");
+            throw new IllegalStateException("One-shot source-log cleanup command failed");
         } catch (IllegalArgumentException invalidConfiguration) {
-            LOGGER.error("SOURCE_LOG_CLEANUP_COMMAND failed mode=PREVIEW "
-                    + "reason=INVALID_CONFIGURATION");
-            throw new IllegalStateException("One-shot source-log cleanup preview failed");
+            LOGGER.error("SOURCE_LOG_CLEANUP_COMMAND failed mode={} "
+                    + "reason=INVALID_CONFIGURATION", properties.mode());
+            throw new IllegalStateException("One-shot source-log cleanup command failed");
         } catch (RuntimeException previewFailure) {
-            LOGGER.error("SOURCE_LOG_CLEANUP_COMMAND failed mode=PREVIEW "
-                    + "reason=PREVIEW_CONSTRUCTION_FAILED");
-            throw new IllegalStateException("One-shot source-log cleanup preview failed");
+            LOGGER.error("SOURCE_LOG_CLEANUP_COMMAND failed mode={} "
+                    + "reason=COMMAND_EXECUTION_FAILED", properties.mode());
+            throw new IllegalStateException("One-shot source-log cleanup command failed");
         }
     }
 

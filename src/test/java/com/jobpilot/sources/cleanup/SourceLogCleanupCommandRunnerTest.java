@@ -17,37 +17,41 @@ class SourceLogCleanupCommandRunnerTest {
     void offModePerformsNoCleanupSpecificReadOrRendering() {
         SourceLogCleanupPreviewService preview = mock(SourceLogCleanupPreviewService.class);
         SourceLogCleanupPreviewRenderer renderer = mock(SourceLogCleanupPreviewRenderer.class);
+        SourceLogCleanupWriteCoordinator writer = mock(SourceLogCleanupWriteCoordinator.class);
         SourceLogCleanupCommandRunner runner = runner(new SourceLogCleanupProperties(
-                null, null, null, null, null), preview, renderer, new MockEnvironment());
+                null, null, null, null, null), preview, renderer, writer,
+                new MockEnvironment());
 
         runner.run(mock(ApplicationArguments.class));
 
-        verifyNoInteractions(preview, renderer);
+        verifyNoInteractions(preview, renderer, writer);
     }
 
     @Test
     void previewRefusesToReadWhileSchedulingIsEnabled() {
         SourceLogCleanupPreviewService preview = mock(SourceLogCleanupPreviewService.class);
         SourceLogCleanupPreviewRenderer renderer = mock(SourceLogCleanupPreviewRenderer.class);
+        SourceLogCleanupWriteCoordinator writer = mock(SourceLogCleanupWriteCoordinator.class);
         MockEnvironment environment = new MockEnvironment()
                 .withProperty("spring.main.web-application-type", "none")
                 .withProperty("jobpilot.scheduled-tasks-enabled", "true");
         SourceLogCleanupCommandRunner runner = runner(new SourceLogCleanupProperties(
                 SourceLogCleanupProperties.Mode.PREVIEW, Duration.ofHours(6), 20,
-                "69", "1"), preview, renderer, environment);
+                "69", "1"), preview, renderer, writer, environment);
 
         assertThatThrownBy(() -> runner.run(mock(ApplicationArguments.class)))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessage("One-shot source-log cleanup preview failed");
-        verifyNoInteractions(preview, renderer);
+                .hasMessage("One-shot source-log cleanup command failed");
+        verifyNoInteractions(preview, renderer, writer);
     }
 
     private SourceLogCleanupCommandRunner runner(
             SourceLogCleanupProperties properties,
             SourceLogCleanupPreviewService preview,
             SourceLogCleanupPreviewRenderer renderer,
+            SourceLogCleanupWriteCoordinator writer,
             MockEnvironment environment) {
-        return new SourceLogCleanupCommandRunner(properties, preview, renderer,
+        return new SourceLogCleanupCommandRunner(properties, preview, renderer, writer,
                 TestProperties.create(), new ScoreRescorePreviewProperties(false, 250),
                 new ScoreRescoreCommandProperties(null, false, null, null, null, null),
                 environment);

@@ -70,6 +70,20 @@ class SourceLogCleanupPreviewServiceTest {
     }
 
     @Test
+    void explicitlyExpectedEmptySetIsASafeReadOnlyPreviewButNeverWriteEligible() {
+        stubSnapshot(List.of());
+
+        SourceLogCleanupPlan plan = service(JVM_START).plan(
+                new Guards(Duration.ofHours(6), 20, List.of(), 0));
+
+        assertThat(plan.observedRunningIds()).isEmpty();
+        assertThat(plan.entries()).isEmpty();
+        assertThat(plan.previewSafe()).isTrue();
+        assertThat(plan.futureWriteEligible()).isFalse();
+        assertThat(plan.blockers()).isEmpty();
+    }
+
+    @Test
     void unknownAdditionalRunningRowFailsClosed() {
         SourceRow known = row(69, null, "greenhouse", OLD);
         SourceRow unknown = row(70, null, "lever", OLD);

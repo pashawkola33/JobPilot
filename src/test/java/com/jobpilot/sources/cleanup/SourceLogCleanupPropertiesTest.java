@@ -13,8 +13,20 @@ class SourceLogCleanupPropertiesTest {
                 new SourceLogCleanupProperties(null, null, null, null, null);
 
         assertThat(properties.mode()).isEqualTo(SourceLogCleanupProperties.Mode.OFF);
+        assertThat(properties.writeEnabled()).isFalse();
         assertThat(properties.minimumAge()).isEqualTo(Duration.ofHours(6));
         assertThat(properties.maxCandidates()).isEqualTo(20);
+        assertThat(properties.expectedPlanFingerprint()).isNull();
+    }
+
+    @Test
+    void explicitZeroCountAllowsAnEmptyPreviewExpectation() {
+        SourceLogCleanupProperties properties = new SourceLogCleanupProperties(
+                SourceLogCleanupProperties.Mode.PREVIEW, false, Duration.ofHours(6), 20,
+                "", "0", null, null);
+
+        assertThat(properties.guards().expectedRunningIds()).isEmpty();
+        assertThat(properties.guards().expectedRunningCount()).isZero();
     }
 
     @Test

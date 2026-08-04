@@ -61,9 +61,14 @@ public record SourceLogCleanupPlan(
                 SourceLogCleanupPlanEntry::confidence, Collectors.counting()));
     }
 
-    /** Evidence eligibility only. WRITE is absent from this phase regardless of this value. */
-    public boolean futureWriteEligible() {
-        return !entries.isEmpty() && rejectedCount() == 0 && blockers.isEmpty()
+    /** A valid read-only observation, including an explicitly expected empty RUNNING set. */
+    public boolean previewSafe() {
+        return rejectedCount() == 0 && blockers.isEmpty()
                 && proofBefore.equals(proofAfter) && transactionMode.safe();
+    }
+
+    /** A nonempty plan that is eligible to proceed to the independent WRITE guards. */
+    public boolean futureWriteEligible() {
+        return !entries.isEmpty() && previewSafe();
     }
 }
