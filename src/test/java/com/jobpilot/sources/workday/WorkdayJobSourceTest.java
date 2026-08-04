@@ -461,6 +461,34 @@ class WorkdayJobSourceTest {
                         org.mockito.ArgumentMatchers.anyLong(), any(), any());
     }
 
+    /**
+     * The health key and the persisted job key must be the same string, or per-tenant
+     * health and yield reporting cannot be joined.
+     */
+    @Test
+    void recordsTheSameStructuredTenantKeyOnJobsAndOnTheTenantAttempt() throws Exception {
+        SourceTenantHealthRecorder recorder = mock(SourceTenantHealthRecorder.class);
+        ExternalHttpClient http = stub(fixture("db-search-bootstrap.json"),
+                Map.of(0, page(1, 0, 1)), url -> detailFor(0));
+        WorkdayJobSource source = new WorkdayJobSource(http, new UrlCanonicalizer(),
+                new WorkdayFacetResolver(), propertiesWith(List.of(DB)), monitor(recorder));
+
+        List<RawJob> jobs = source.fetchJobs();
+
+        org.mockito.ArgumentCaptor<String> attemptTenant =
+                org.mockito.ArgumentCaptor.forClass(String.class);
+        org.mockito.Mockito.verify(recorder).record(any(), anyString(), attemptTenant.capture(),
+                any(), any(), org.mockito.ArgumentMatchers.anyInt(),
+                org.mockito.ArgumentMatchers.anyLong(), any(), any());
+
+        assertThat(attemptTenant.getValue()).isEqualTo("db/DBWebsite");
+        assertThat(jobs).singleElement()
+                .extracting(RawJob::providerTenant).isEqualTo("db/DBWebsite");
+        // Same string, and it survives the health-layer sanitiser untouched.
+        assertThat(com.jobpilot.sources.health.SafeErrorText.token(attemptTenant.getValue()))
+                .isEqualTo(jobs.getFirst().providerTenant());
+    }
+
     private JobPilotProperties propertiesWith(List<String> sites) {
         JobPilotProperties base = TestProperties.create();
         return new JobPilotProperties(base.telegram(),

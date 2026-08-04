@@ -14,6 +14,14 @@ import java.util.regex.Pattern;
 public final class SafeErrorText {
     public static final int MAX_TYPE_LENGTH = 120;
     public static final int MAX_MESSAGE_LENGTH = 500;
+    /** Matches the source_tenant_health and source_tenant_fetch_logs tenant column. */
+    public static final int MAX_TOKEN_LENGTH = 100;
+
+    /** One safe segment: must start alphanumeric, so "..", ".hidden" and "-lead" are out. */
+    private static final String TOKEN_SEGMENT = "[A-Za-z0-9][A-Za-z0-9._-]{0,62}";
+    /** Exactly two segments joined by a single separator; anchored by {@code matches()}. */
+    private static final Pattern STRUCTURED_TENANT_KEY =
+            Pattern.compile(TOKEN_SEGMENT + "/" + TOKEN_SEGMENT);
 
     /** Any absolute URL: replaced by scheme://host plus a redaction marker for the rest. */
     private static final Pattern URL = Pattern.compile("(?i)\\b(https?)://([^\\s/?#\"']{1,253})(\\S*)");
@@ -59,11 +67,28 @@ public final class SafeErrorText {
         return Utf16.truncate(cleaned, MAX_TYPE_LENGTH);
     }
 
-    /** Bounds a tenant or provider token for log and message interpolation. */
+    /**
+     * Bounds a tenant or provider token for log, message, and health-key interpolation.
+     *
+     * <p>A <em>structured</em> tenant key — exactly two safe segments joined by one
+     * {@code /}, as produced by providers whose tenant is a pair such as
+     * {@code db/DBWebsite} — is recognised and returned unchanged, so the stored health key
+     * matches {@code jobs.provider_tenant} exactly. Everything else is stripped to the
+     * original conservative charset, which still removes control characters, newlines,
+     * whitespace, URL punctuation, percent-escapes, and any extra separator.
+     *
+     * <p>This is a validation step, not a relaxation: the separator survives only inside a
+     * fully matched, length-bounded key. {@code ../t}, {@code a//b}, {@code a/b/c},
+     * {@code a%2Fb}, and any URL-shaped text all fail the match and fall through to the
+     * unchanged sanitiser.
+     */
     public static String token(String raw) {
         if (raw == null || raw.isBlank()) return "unknown";
+        if (raw.length() <= MAX_TOKEN_LENGTH && STRUCTURED_TENANT_KEY.matcher(raw).matches()) {
+            return raw;
+        }
         String cleaned = raw.replaceAll("[^A-Za-z0-9._-]", "");
         if (cleaned.isEmpty()) return "unknown";
-        return Utf16.truncate(cleaned, 100);
+        return Utf16.truncate(cleaned, MAX_TOKEN_LENGTH);
     }
 }

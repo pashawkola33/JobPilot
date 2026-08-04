@@ -10,6 +10,22 @@ class SourceTenantHealthTest {
     private static final Instant T0 = Instant.parse("2026-08-03T09:00:00Z");
 
     @Test
+    void keepsAStructuredTenantKeyIntactOnTheEntity() {
+        SourceTenantHealth health = new SourceTenantHealth("workday", "db/DBWebsite", T0);
+
+        assertThat(health.getProvider()).isEqualTo("workday");
+        assertThat(health.getTenant()).isEqualTo("db/DBWebsite");
+    }
+
+    @Test
+    void keepsExistingSingleSegmentTenantLabelsIntactOnTheEntity() {
+        assertThat(new SourceTenantHealth("greenhouse", "gitlab", T0).getTenant())
+                .isEqualTo("gitlab");
+        assertThat(new SourceTenantHealth("smartrecruiters", "BoschGroup", T0).getTenant())
+                .isEqualTo("BoschGroup");
+    }
+
+    @Test
     void firstSuccessInitialisesEveryCounterAndTimestamp() {
         SourceTenantHealth health = new SourceTenantHealth("ashby", "linear", T0);
 

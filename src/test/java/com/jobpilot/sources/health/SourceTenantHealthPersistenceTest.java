@@ -31,6 +31,40 @@ class SourceTenantHealthPersistenceTest {
     @Autowired private SourceTenantFetchLogRepository attempts;
 
     @Test
+    void storesAStructuredWorkdayTenantKeyByteForByteInBothTables() {
+        UUID run = UUID.randomUUID();
+
+        for (String tenantKey : List.of("db/DBWebsite", "nxp/careers", "lseg/Careers")) {
+            recorder.record(run, "workday", tenantKey, TenantAttemptStatus.SUCCESS,
+                    TenantFailure.none(), 7, 90L, T0, T0.plusMillis(90));
+
+            // The health roll-up is keyed by the exact structured key, separator intact.
+            assertThat(health.findByProviderAndTenant("workday", tenantKey))
+                    .as(tenantKey)
+                    .isPresent()
+                    .get()
+                    .extracting(SourceTenantHealth::getTenant)
+                    .isEqualTo(tenantKey);
+            // The attempt history agrees, so the two tables join on one value.
+            assertThat(attempts.findByProviderAndTenantOrderByIdAsc("workday", tenantKey))
+                    .as(tenantKey)
+                    .isNotEmpty()
+                    .allSatisfy(row -> assertThat(row.getTenant()).isEqualTo(tenantKey));
+        }
+    }
+
+    @Test
+    void stillSanitisesAnUnsafeTenantLabelBeforePersisting() {
+        UUID run = UUID.randomUUID();
+
+        recorder.record(run, "workday", "evil/../escape", TenantAttemptStatus.SUCCESS,
+                TenantFailure.none(), 1, 10L, T0, T0.plusMillis(10));
+
+        assertThat(health.findByProviderAndTenant("workday", "evil/../escape")).isEmpty();
+        assertThat(health.findByProviderAndTenant("workday", "evil..escape")).isPresent();
+    }
+
+    @Test
     void oneAttemptWritesExactlyOneHistoryRowAndUpsertsTheRollUp() {
         String tenant = unique("history");
         UUID run = UUID.randomUUID();
