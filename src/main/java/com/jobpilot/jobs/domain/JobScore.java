@@ -50,6 +50,11 @@ public class JobScore {
 
     public JobScore(Job job, ScoreCard card, Instant scoredAt) {
         this.job = job;
+        apply(card, scoredAt);
+    }
+
+    /** Replaces only the persisted score projection while preserving this row's identity. */
+    public void apply(ScoreCard card, Instant scoredAt) {
         this.score = card.score();
         this.band = card.band();
         this.suitable = card.suitable();
@@ -78,7 +83,9 @@ public class JobScore {
         return value == null || value.isBlank() ? List.of() : Arrays.asList(value.split("\\|"));
     }
 
+    public Long getId() { return id; }
     public Job getJob() { return job; }
     public int getScore() { return score; }
     public ScoreBand getBand() { return band; }
+    public Instant getScoredAt() { return scoredAt; }
 }

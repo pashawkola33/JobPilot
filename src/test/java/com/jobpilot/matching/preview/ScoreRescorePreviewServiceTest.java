@@ -258,14 +258,18 @@ class ScoreRescorePreviewServiceTest {
     }
 
     private JobScore row(Job job, ScoreCard score) {
-        return new JobScore(job, score, NOW);
+        JobScore row = new JobScore(job, score, NOW);
+        ReflectionTestUtils.setField(row, "id", 1_000L + job.getId());
+        return row;
     }
 
     private JobRequirement requirement(Job job, ExtractedRequirements value) {
-        return new JobRequirement(job, value, String.join("|", value.technologies()),
+        JobRequirement row = new JobRequirement(job, value, String.join("|", value.technologies()),
                 String.join("|", value.programmingLanguages()),
                 String.join("|", value.spokenLanguages()),
                 String.join("|", value.mentorshipSignals()), "{}");
+        ReflectionTestUtils.setField(row, "id", 2_000L + job.getId());
+        return row;
     }
 
     private ExtractedRequirements withSeniority(ExtractedRequirements value, String seniority) {

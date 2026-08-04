@@ -48,6 +48,13 @@ import com.jobpilot.llm.repository.LlmBudgetReservationRepository;
 import com.jobpilot.llm.repository.LlmBudgetControlRepository;
 import com.jobpilot.llm.repository.LlmUsageEventRepository;
 import com.jobpilot.manualurl.application.ManualJobPersistenceService;
+import com.jobpilot.matching.preview.ScoreRescorePreviewService;
+import com.jobpilot.matching.rescore.ScoreRescoreCommandGuards;
+import com.jobpilot.matching.rescore.ScoreRescoreCommandProperties;
+import com.jobpilot.matching.rescore.ScoreRescorePlan;
+import com.jobpilot.matching.rescore.ScoreRescorePlanResult;
+import com.jobpilot.matching.rescore.ScoreRescoreWriteCoordinator;
+import com.jobpilot.matching.rescore.ScoreRescoreWriteResult;
 import com.jobpilot.resume.domain.CoverNote;
 import com.jobpilot.resume.domain.ResumeVersion;
 import com.jobpilot.resume.repository.CoverNoteRepository;
@@ -69,6 +76,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -164,6 +172,10 @@ class PostgresPersistenceIT {
     private EntityManager entityManager;
     @Autowired
     private PlatformTransactionManager transactionManager;
+    @Autowired
+    private ScoreRescorePreviewService rescorePlanner;
+    @Autowired
+    private ScoreRescoreWriteCoordinator rescoreWriter;
 
     @Test
     void flywayMigratesTheSchemaOnRealPostgres() {
@@ -528,6 +540,83 @@ class PostgresPersistenceIT {
     }
 
     @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void oneTargetDatabaseFailureRollsBackTheCompleteRescorePlan() {
+        List<Long> createdJobIds = new ArrayList<>();
+        String function = "jobpilot_test_fail_rescore";
+        String trigger = "jobpilot_test_fail_rescore_trigger";
+        try {
+            createdJobIds.add(processRescoreFixture("rescore-rollback-a",
+                    "Junior Java Developer A"));
+            createdJobIds.add(processRescoreFixture("rescore-rollback-b",
+                    "Junior Java Developer B"));
+            makeScoresStale(createdJobIds);
+            ScoreRescorePlan plan = requiredPlan();
+            assertThat(plan.changedJobIds()).containsExactlyElementsOf(createdJobIds);
+            Map<String, String> before = protectedTableSnapshots();
+            Map<Long, Integer> staleScores = scoreValues(createdJobIds);
+
+            long failingJobId = createdJobIds.getLast();
+            jdbcTemplate.execute("create or replace function " + function + "() returns trigger "
+                    + "language plpgsql as 'begin if new.job_id = " + failingJobId
+                    + " then raise exception ''injected rescore failure''; end if; return new; end'");
+            jdbcTemplate.execute("create trigger " + trigger
+                    + " before update on job_scores for each row execute function "
+                    + function + "()");
+
+            ScoreRescoreWriteResult result = rescoreWriter.execute(plan, guards(plan));
+
+            assertThat(result.status()).isEqualTo(ScoreRescoreWriteResult.Status.ERROR);
+            assertThat(scoreValues(createdJobIds)).isEqualTo(staleScores);
+            assertThat(protectedTableSnapshots()).isEqualTo(before);
+            assertThat(requiredPlan().fingerprint()).isEqualTo(plan.fingerprint());
+        } finally {
+            jdbcTemplate.execute("drop trigger if exists " + trigger + " on job_scores");
+            jdbcTemplate.execute("drop function if exists " + function + "()");
+            deleteJobs(createdJobIds);
+        }
+    }
+
+    @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    void successfulRescorePreservesRowsAndRejectsOldFingerprintOnSecondExecution() {
+        List<Long> createdJobIds = new ArrayList<>();
+        try {
+            long targetId = processRescoreFixture("rescore-idempotent",
+                    "Junior Java Developer Idempotent");
+            createdJobIds.add(targetId);
+            long rejectedId = processRescoreFixture("rescore-reject-excluded",
+                    "Junior Java Developer Rejected");
+            createdJobIds.add(rejectedId);
+            jdbcTemplate.update("update jobs set screening_disposition = 'REJECT' where id = ?",
+                    rejectedId);
+            committedJob("rescore-scoreless-excluded", createdJobIds);
+            makeScoresStale(List.of(targetId));
+            ScoreRescorePlan first = requiredPlan();
+            assertThat(first.report().inspectedJobs()).isEqualTo(1);
+            assertThat(first.changedJobIds()).containsExactly(targetId);
+            Map<String, String> protectedBefore = protectedTableSnapshots();
+            List<Long> scoreRowIds = rowIds("job_scores", createdJobIds);
+            List<Long> requirementRowIds = rowIds("job_requirements", createdJobIds);
+
+            ScoreRescoreWriteResult written = rescoreWriter.execute(first, guards(first));
+            ScoreRescorePlan second = requiredPlan();
+            ScoreRescoreWriteResult repeated = rescoreWriter.execute(second, guards(first));
+
+            assertThat(written.status()).isEqualTo(ScoreRescoreWriteResult.Status.SUCCESS);
+            assertThat(written.scoreRowsUpdated()).isEqualTo(1);
+            assertThat(written.requirementRowsUpdated()).isZero();
+            assertThat(second.changedCount()).isZero();
+            assertThat(repeated.status()).isEqualTo(ScoreRescoreWriteResult.Status.ERROR);
+            assertThat(rowIds("job_scores", createdJobIds)).isEqualTo(scoreRowIds);
+            assertThat(rowIds("job_requirements", createdJobIds)).isEqualTo(requirementRowIds);
+            assertThat(protectedTableSnapshots()).isEqualTo(protectedBefore);
+        } finally {
+            deleteJobs(createdJobIds);
+        }
+    }
+
+    @Test
     void persistsTelegramLongPollingStateWithoutCredentials() {
         Instant now = Instant.parse("2026-07-19T14:00:00Z");
 
@@ -663,6 +752,72 @@ class PostgresPersistenceIT {
         return new RawJob("greenhouse", externalId, url, "Java Intern", "Example",
                 "Bucharest, Romania", description, null, Instant.parse("2026-07-16T10:00:00Z"),
                 null, description);
+    }
+
+    private long processRescoreFixture(String externalId, String title) {
+        RawJob raw = new RawJob("greenhouse", externalId,
+                "https://example.com/jobs/" + externalId, title, "Example " + externalId,
+                "Bucharest, Romania",
+                "Junior Java role building Java and Spring Boot services with mentorship.",
+                "Full-time", Instant.parse("2026-08-01T10:00:00Z"), null,
+                "rescore fixture " + externalId);
+        return processor.process(raw).job().getId();
+    }
+
+    private void makeScoresStale(List<Long> jobIds) {
+        for (Long id : jobIds) {
+            jdbcTemplate.update("update job_scores set score = score + 1, freshness = freshness + 1 "
+                    + "where job_id = ?", id);
+        }
+    }
+
+    private ScoreRescorePlan requiredPlan() {
+        ScoreRescorePlanResult result = rescorePlanner.plan(250);
+        assertThat(result.status()).isEqualTo(ScoreRescorePlanResult.Status.SUCCESS);
+        return result.plan();
+    }
+
+    private ScoreRescoreCommandProperties guards(ScoreRescorePlan plan) {
+        return new ScoreRescoreCommandProperties(ScoreRescoreCommandProperties.Mode.WRITE,
+                true, Integer.toString(plan.changedCount()), plan.fingerprint(), "250",
+                ScoreRescoreCommandGuards.CONFIRMATION);
+    }
+
+    private Map<Long, Integer> scoreValues(List<Long> jobIds) {
+        Map<Long, Integer> result = new java.util.LinkedHashMap<>();
+        for (Long id : jobIds) {
+            result.put(id, jdbcTemplate.queryForObject(
+                    "select score from job_scores where job_id = ?", Integer.class, id));
+        }
+        return result;
+    }
+
+    private Map<String, String> protectedTableSnapshots() {
+        Map<String, String> result = new java.util.LinkedHashMap<>();
+        for (String table : List.of("jobs", "job_requirements", "job_workflow_state",
+                "source_fetch_logs", "source_tenant_fetch_logs", "source_tenant_health",
+                "telegram_bot_state", "telegram_job_delivery")) {
+            result.put(table, jdbcTemplate.queryForObject(
+                    "select count(*)::text || ':' || coalesce(md5(string_agg(row_to_json(t)::text, "
+                            + "'|' order by row_to_json(t)::text)), md5('')) from " + table + " t",
+                    String.class));
+        }
+        return result;
+    }
+
+    private List<Long> rowIds(String table, List<Long> jobIds) {
+        if (jobIds.isEmpty()) return List.of();
+        return jdbcTemplate.queryForList("select id from " + table
+                + " where job_id in (" + String.join(",", java.util.Collections.nCopies(
+                jobIds.size(), "?")) + ") order by job_id", Long.class, jobIds.toArray());
+    }
+
+    private void deleteJobs(List<Long> ids) {
+        if (ids.isEmpty()) return;
+        new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
+            jobs.deleteAllById(ids);
+            jobs.flush();
+        });
     }
 
     private Job job(String externalId, String url, Instant seenAt) {

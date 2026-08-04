@@ -51,6 +51,13 @@ public class JobRequirement {
                           String programmingLanguages, String spokenLanguages,
                           String mentorshipSignals, String rawJson) {
         this.job = job;
+        apply(r, technologies, programmingLanguages, spokenLanguages, mentorshipSignals, rawJson);
+    }
+
+    /** Replaces only extracted requirement fields while preserving this row's identity. */
+    public void apply(ExtractedRequirements r, String technologies,
+                      String programmingLanguages, String spokenLanguages,
+                      String mentorshipSignals, String rawJson) {
         this.seniority = r.seniority();
         this.internshipOrTrainee = r.internshipOrTrainee();
         this.requiredExperienceYears = r.requiredExperienceYears();
@@ -82,5 +89,7 @@ public class JobRequirement {
                 : java.util.Arrays.stream(value.split("\\|", -1)).filter(s -> !s.isBlank()).toList();
     }
 
+    public Long getId() { return id; }
     public Job getJob() { return job; }
+    public String getRawJson() { return rawJson; }
 }

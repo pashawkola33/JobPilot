@@ -5,10 +5,13 @@ import com.jobpilot.matching.ScoreBand;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.Collection;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.jpa.repository.QueryHints;
+import org.springframework.data.jpa.repository.Lock;
 import jakarta.persistence.QueryHint;
 
 public interface JobScoreRepository extends JpaRepository<JobScore, Long> {
@@ -35,4 +38,8 @@ public interface JobScoreRepository extends JpaRepository<JobScore, Long> {
             + "com.jobpilot.jobs.domain.ScreeningDisposition.REVIEW) order by j.id")
     @QueryHints(@QueryHint(name = "org.hibernate.readOnly", value = "true"))
     List<JobScore> findRescorePreviewCandidates(Pageable pageable);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select s from JobScore s join fetch s.job j where j.id in :jobIds order by j.id")
+    List<JobScore> findAllByJobIdInForRescoreWrite(Collection<Long> jobIds);
 }

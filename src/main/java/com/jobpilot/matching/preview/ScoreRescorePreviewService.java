@@ -15,6 +15,9 @@ import com.jobpilot.matching.JobScoreCalculator;
 import com.jobpilot.matching.ScoreCalculation;
 import com.jobpilot.matching.ScoreCard;
 import com.jobpilot.matching.ScoreBand;
+import com.jobpilot.matching.rescore.ScoreRescorePlan;
+import com.jobpilot.matching.rescore.ScoreRescorePlanEntry;
+import com.jobpilot.matching.rescore.ScoreRescorePlanResult;
 import com.jobpilot.matching.preview.ScoreRescorePreviewReport.BoundaryCrossings;
 import com.jobpilot.matching.preview.ScoreRescorePreviewReport.JobPreview;
 import com.jobpilot.matching.preview.ScoreRescorePreviewReport.QueueEntry;
@@ -63,19 +66,34 @@ public class ScoreRescorePreviewService {
 
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public ScoreRescorePreviewResult preview(int maximumJobs) {
+        ScoreRescorePlanResult result = calculatePlan(maximumJobs);
+        if (result.status() == ScoreRescorePlanResult.Status.ERROR) {
+            return ScoreRescorePreviewResult.error(result.errorCategory(), result.safeMessage());
+        }
+        return ScoreRescorePreviewResult.success(result.plan().report());
+    }
+
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public ScoreRescorePlanResult plan(int maximumJobs) {
+        return calculatePlan(maximumJobs);
+    }
+
+    private ScoreRescorePlanResult calculatePlan(int maximumJobs) {
         if (maximumJobs < 1
                 || maximumJobs > ScoreRescorePreviewProperties.HARD_MAX_INSPECTED_JOBS) {
-            return ScoreRescorePreviewResult.error(ErrorCategory.INVALID_LIMIT,
+            return ScoreRescorePlanResult.error(ErrorCategory.INVALID_LIMIT,
                     "Configured preview limit is outside the safe range");
         }
         try {
             long candidateCount = scores.countRescorePreviewCandidates();
             if (candidateCount > maximumJobs) {
-                return ScoreRescorePreviewResult.error(ErrorCategory.CAP_EXCEEDED,
+                return ScoreRescorePlanResult.error(ErrorCategory.CAP_EXCEEDED,
                         "Preview candidate count " + candidateCount
                                 + " exceeds configured limit " + maximumJobs);
             }
-            if (candidateCount == 0) return ScoreRescorePreviewResult.success(emptyReport());
+            if (candidateCount == 0) {
+                return ScoreRescorePlanResult.success(new ScoreRescorePlan(emptyReport(), List.of()));
+            }
 
             List<JobScore> scoreRows = scores.findRescorePreviewCandidates(
                     PageRequest.of(0, maximumJobs));
@@ -100,6 +118,7 @@ public class ScoreRescorePreviewService {
                     workflowStates.findAllByJobIdIn(ids));
 
             List<EvaluatedJob> evaluated = new ArrayList<>(scoreRows.size());
+            List<ScoreRescorePlanEntry> changedEntries = new ArrayList<>();
             for (JobScore scoreRow : scoreRows) {
                 Job job = scoreRow.getJob();
                 validateRequiredJobData(job);
@@ -110,6 +129,13 @@ public class ScoreRescorePreviewService {
                 JobRequirement requirementRow = requirementByJob.get(job.getId());
                 if (requirementRow == null) {
                     throw missing(job.getId(), "job_requirements row");
+                }
+                if (scoreRow.getId() == null) throw missing(job.getId(), "score row identity");
+                if (requirementRow.getId() == null) {
+                    throw missing(job.getId(), "requirements row identity");
+                }
+                if (scoreRow.getScoredAt() == null) {
+                    throw missing(job.getId(), "score timestamp");
                 }
                 ExtractedRequirements storedRequirements = requirementRow.toValue();
                 validateRequirements(job.getId(), storedRequirements);
@@ -128,11 +154,20 @@ public class ScoreRescorePreviewService {
                 evaluated.add(new EvaluatedJob(job,
                         workflowByJob.getOrDefault(job.getId(), WorkflowStatus.UNREVIEWED),
                         storedRequirements, storedScore, computed, seniorityFix));
+                try {
+                    ScoreRescorePlanEntry entry = ScoreRescorePlanEntry.snapshot(
+                            scoreRow, requirementRow, computed);
+                    if (entry.changed()) changedEntries.add(entry);
+                } catch (IllegalArgumentException invalidPersistedIdentity) {
+                    throw abort(ErrorCategory.MISSING_REQUIRED_DATA,
+                            "Required persisted rescore identity is missing for job " + job.getId());
+                }
             }
 
-            return ScoreRescorePreviewResult.success(buildReport(evaluated));
+            return ScoreRescorePlanResult.success(
+                    new ScoreRescorePlan(buildReport(evaluated), changedEntries));
         } catch (PreviewAbort failure) {
-            return ScoreRescorePreviewResult.error(failure.category, failure.getMessage());
+            return ScoreRescorePlanResult.error(failure.category, failure.getMessage());
         }
     }
 
@@ -376,6 +411,7 @@ public class ScoreRescorePreviewService {
         require(job, job.getProviderTenant(), "provider_tenant");
         require(job, job.getTitle(), "title");
         require(job, job.getDescription(), "description");
+        require(job, job.getDescriptionHash(), "description_hash");
         if (job.getRemoteType() == null) throw missing(job.getId(), "remote_type");
         if (job.getLocationEligibility() == null) {
             throw missing(job.getId(), "location_eligibility");
