@@ -252,11 +252,14 @@ Important variables:
 | `JOBPILOT_SCORE_RESCORE_EXPECTED_PLAN_FINGERPRINT` | Write only | Fresh plan's exact SHA-256 fingerprint; no default |
 | `JOBPILOT_SCORE_RESCORE_MAX_JOBS` | One-shot command | Explicit inspection/write ceiling, `1`–`1000`; no default |
 | `JOBPILOT_SCORE_RESCORE_CONFIRMATION` | Write only | Exact one-time confirmation phrase documented in the operator procedure; no default |
-| `JOBPILOT_SOURCE_LOG_CLEANUP_MODE` | No | One-shot historical source-log mode: `OFF` or read-only `PREVIEW`; default `OFF`; there is no `WRITE` mode |
-| `JOBPILOT_SOURCE_LOG_CLEANUP_MINIMUM_AGE` | Preview only | Minimum candidate age; default `6h` |
-| `JOBPILOT_SOURCE_LOG_CLEANUP_MAX_CANDIDATES` | Preview only | Candidate ceiling, `1`–`100` hard maximum; default `20` |
-| `JOBPILOT_SOURCE_LOG_CLEANUP_EXPECTED_RUNNING_IDS` | Preview only | Exact comma-separated complete `RUNNING` ID set; no default and never persist it in `.env` |
-| `JOBPILOT_SOURCE_LOG_CLEANUP_EXPECTED_RUNNING_COUNT` | Preview only | Optional exact complete `RUNNING` count; no default |
+| `JOBPILOT_SOURCE_LOG_CLEANUP_MODE` | No | Dedicated historical source-log command: `OFF`, `PREVIEW`, or guarded `WRITE`; default `OFF` |
+| `JOBPILOT_SOURCE_LOG_CLEANUP_WRITE_ENABLED` | No | Independent write capability gate; default `false` |
+| `JOBPILOT_SOURCE_LOG_CLEANUP_MINIMUM_AGE` | One-shot command | Minimum candidate age; default `6h` |
+| `JOBPILOT_SOURCE_LOG_CLEANUP_MAX_CANDIDATES` | One-shot command | Candidate ceiling, `1`–`100` hard maximum; default `20` |
+| `JOBPILOT_SOURCE_LOG_CLEANUP_EXPECTED_RUNNING_IDS` | One-shot command | Exact comma-separated complete `RUNNING` ID set; no default and never persist it in `.env` |
+| `JOBPILOT_SOURCE_LOG_CLEANUP_EXPECTED_RUNNING_COUNT` | One-shot command | Exact complete `RUNNING` count; write requires the approved count; no default |
+| `JOBPILOT_SOURCE_LOG_CLEANUP_EXPECTED_PLAN_FINGERPRINT` | Write only | Fresh preview plan's exact SHA-256 fingerprint; no default |
+| `JOBPILOT_SOURCE_LOG_CLEANUP_CONFIRMATION` | Write only | Exact one-time phrase `RECONCILE_HISTORICAL_SOURCE_LOG_ORPHANS_ONCE`; no default |
 | `JOBPILOT_SCHEDULING_ENABLED` | No | Registers ingestion, digest, Telegram-polling and maintenance schedules; default `true`; must be `false` for one-shot rescore commands |
 | `GREENHOUSE_BOARD_TOKENS` | At least one source | Comma-separated Greenhouse board tokens |
 | `LEVER_COMPANY_IDS` | At least one source | Comma-separated Lever company identifiers |

@@ -537,3 +537,109 @@ currently defined evidence checks passed; it is not permission and cannot cause 
 If any guard fails, retain the historical rows and investigate the blocker. A later cleanup
 phase, if separately approved, must recompute and compare the entire fingerprint in its own
 write transaction; this preview intentionally provides no such path.
+
+# Phase 4B.4C-B: guarded one-time cleanup
+
+This phase is a narrowly scoped correction of the seven already diagnosed historical
+aggregate rows. It does not introduce startup, pre-ingestion or scheduled reconciliation and
+does not use age alone as proof. The implementation has three explicit modes: `OFF`,
+`PREVIEW`, and `WRITE`. `OFF` remains the default, while `WRITE` additionally requires an
+independent capability flag that also defaults to false.
+
+The write changes only these columns in `source_fetch_logs`:
+
+```text
+status        = FAILED
+finished_at   = one shared database transaction timestamp
+error_summary = PROCESS_INTERRUPTED: HistoricalOrphanReconciliation
+```
+
+Primary keys, ingestion run IDs, `fetched_count`, `saved_count`, and every other column remain
+unchanged. Tenant attempts, tenant health, jobs, scores, requirements, workflow state,
+Telegram state/delivery and source configuration are outside the writer's persistence
+boundary.
+
+## Independent write guards
+
+A write is rejected before opening the mutation transaction unless all of these guards match:
+
+1. mode is exactly `WRITE`;
+2. `JOBPILOT_SOURCE_LOG_CLEANUP_WRITE_ENABLED=true`;
+3. the configured expected count is the phase-approved value **7**;
+4. the expected ID set is present, unique, positive, sorted canonically, and has exactly that
+   count;
+5. a maximum candidate limit is present through the bounded cleanup configuration and the
+   fresh plan does not exceed it;
+6. the provided 64-hex SHA-256 fingerprint exactly equals a plan rebuilt by this same process;
+7. the exact confirmation is
+   `RECONCILE_HISTORICAL_SOURCE_LOG_ORPHANS_ONCE`; and
+8. the fresh plan has no rejected row, global blocker, protected-proof change, live owner or
+   unsafe transaction evidence.
+
+Expected IDs and fingerprints are never compiled into the application or committed as
+configuration defaults. The historical count guard is deliberately fixed to seven for this
+one-time phase; this command is not a generic stale-row sweeper.
+
+## Atomic transaction and race protection
+
+After all process-level guards pass, one transaction performs the complete write:
+
+```text
+LOCK source_fetch_logs against concurrent inserts/updates for the transaction
+  -> SELECT every target FOR UPDATE
+  -> SELECT the complete RUNNING ID set
+  -> require that set to equal the approved seven IDs
+  -> compare every stored target field with its immutable preview-plan snapshot
+  -> obtain transaction_timestamp() once
+  -> conditionally update each target
+       WHERE id = ? AND status = 'RUNNING' AND finished_at IS NULL
+  -> require one update per target and seven in total
+  -> reread and verify the exact terminal result
+COMMIT
+```
+
+The table-level write lock closes the insertion gap around the complete-set check; row locks
+protect the selected targets. Any missing, additional or changed row, a non-`RUNNING` status,
+a non-null `finished_at`, fingerprint mismatch, conditional update count other than one, final
+count other than seven, or result mismatch raises an exception. Spring then rolls back every
+earlier update in the same transaction. The command emits only bounded IDs, counts, status,
+timestamp and safe reason tokens; it never prints existing error text, URLs, credentials,
+job content or Telegram authorization identifiers.
+
+This is idempotent by state and guards, not by silently claiming a replay succeeded. After the
+commit there are no matching `RUNNING` rows, so the old expected set and fingerprint cannot
+construct an eligible fresh plan. Replaying the old guarded command fails closed with zero
+writes. A read-only preview that explicitly expects count zero and an empty ID set reports zero
+candidates and remains ineligible for `WRITE`.
+
+## Production operator procedure
+
+1. Build, test and push the documentation and feature commits before any production write.
+2. Capture the current container IDs, PostgreSQL start time, volume identities, schema version,
+   table counts/fingerprints, complete `RUNNING` set, app health, cron and Telegram polling
+   health. Confirm no ingestion or live source handle exists.
+3. Gracefully stop **only** the normal application container. Leave PostgreSQL running and
+   healthy; never recreate either PostgreSQL volume.
+4. Run a temporary newest-image `PREVIEW` process with web mode none, scheduling disabled,
+   Telegram polling/commands disabled, score startup preview disabled, score command `OFF`,
+   minimum age and maximum limit explicit, and the complete expected set/count supplied only
+   in that process environment.
+5. Require the fresh preview to reproduce exactly seven eligible rows, zero rejected rows and
+   no blockers. Capture its newly emitted fingerprint. A previously observed fingerprint is
+   evidence only and must not be copied into the write without this post-stop preview.
+6. Run one temporary `WRITE` process with all the same controls and candidate guards, plus the
+   independent capability flag, the just-captured fingerprint and the exact confirmation
+   phrase. Do not trigger ingestion.
+7. Verify `source_fetch_logs` changed from seven to zero `RUNNING` rows without changing its
+   total count; exactly the approved IDs are `FAILED`, share one `finished_at`, preserve counts
+   and run IDs, and have the constant reconciliation summary. Require every protected table
+   except the intended `source_fetch_logs` content fingerprint to remain identical.
+8. Run a read-only preview with explicit expected count zero and an empty expected set. Require
+   zero candidates and zero writes. Replay the old guards once and require a fail-closed exit
+   and zero writes.
+9. Recreate/start the normal application exactly once from the newest image with cleanup mode
+   `OFF` and write capability false. Confirm healthy app/PostgreSQL, schema V12, normal cron,
+   active Telegram polling, unchanged PostgreSQL container/volumes and no ingestion.
+
+If any preview, transaction, proof or runtime guard differs, do not weaken it: keep the app
+stopped, retain PostgreSQL, investigate read-only, and make no cleanup write.
