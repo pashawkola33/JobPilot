@@ -38,16 +38,25 @@ public class SourceFetchLogLifecycleService {
             LoggerFactory.getLogger(SourceFetchLogLifecycleService.class);
 
     private final SourceFetchLogTerminalWriter writer;
+    private final SourceFetchExecutionRegistry executions;
     private final Duration retryDelay;
 
     @org.springframework.beans.factory.annotation.Autowired
-    public SourceFetchLogLifecycleService(SourceFetchLogTerminalWriter writer) {
-        this(writer, Duration.ofMillis(200));
+    public SourceFetchLogLifecycleService(SourceFetchLogTerminalWriter writer,
+                                          SourceFetchExecutionRegistry executions) {
+        this(writer, executions, Duration.ofMillis(200));
     }
 
     /** Test seam: a zero delay keeps retry tests fast without touching the attempt count. */
     public SourceFetchLogLifecycleService(SourceFetchLogTerminalWriter writer, Duration retryDelay) {
+        this(writer, new SourceFetchExecutionRegistry(), retryDelay);
+    }
+
+    SourceFetchLogLifecycleService(SourceFetchLogTerminalWriter writer,
+                                   SourceFetchExecutionRegistry executions,
+                                   Duration retryDelay) {
         this.writer = writer;
+        this.executions = executions;
         this.retryDelay = retryDelay;
     }
 
@@ -57,7 +66,9 @@ public class SourceFetchLogLifecycleService {
      * there is nothing yet to orphan.
      */
     public SourceFetchLogHandle begin(String sourceName, UUID ingestionRunId, Instant startedAt) {
-        return writer.begin(sourceName, ingestionRunId, startedAt);
+        SourceFetchLogHandle handle = writer.begin(sourceName, ingestionRunId, startedAt);
+        executions.register(handle);
+        return handle;
     }
 
     public SourceFetchLogTerminalOutcome succeed(SourceFetchLogHandle handle, int fetched,
@@ -85,6 +96,16 @@ public class SourceFetchLogLifecycleService {
     private SourceFetchLogTerminalOutcome terminalize(SourceFetchLogHandle handle, String status,
                                                       Instant finishedAt, int fetched, int saved,
                                                       String errorSummary) {
+        try {
+            return terminalizeWithRetry(handle, status, finishedAt, fetched, saved, errorSummary);
+        } finally {
+            executions.unregister(handle);
+        }
+    }
+
+    private SourceFetchLogTerminalOutcome terminalizeWithRetry(
+            SourceFetchLogHandle handle, String status, Instant finishedAt, int fetched, int saved,
+            String errorSummary) {
         DataAccessException lastTransient = null;
         for (int attempt = 1; attempt <= MAX_TERMINAL_ATTEMPTS; attempt++) {
             try {

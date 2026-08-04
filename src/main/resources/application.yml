@@ -45,6 +45,12 @@ jobpilot:
     expected-plan-fingerprint: ${JOBPILOT_SCORE_RESCORE_EXPECTED_PLAN_FINGERPRINT:}
     max-jobs: ${JOBPILOT_SCORE_RESCORE_MAX_JOBS:}
     confirmation: ${JOBPILOT_SCORE_RESCORE_CONFIRMATION:}
+  source-log-cleanup:
+    mode: ${JOBPILOT_SOURCE_LOG_CLEANUP_MODE:OFF}
+    minimum-age: ${JOBPILOT_SOURCE_LOG_CLEANUP_MINIMUM_AGE:6h}
+    max-candidates: ${JOBPILOT_SOURCE_LOG_CLEANUP_MAX_CANDIDATES:20}
+    expected-running-ids: ${JOBPILOT_SOURCE_LOG_CLEANUP_EXPECTED_RUNNING_IDS:}
+    expected-running-count: ${JOBPILOT_SOURCE_LOG_CLEANUP_EXPECTED_RUNNING_COUNT:}
   build:
     version: ${JOBPILOT_VERSION:unknown}
     commit: ${BUILD_COMMIT:unknown}
