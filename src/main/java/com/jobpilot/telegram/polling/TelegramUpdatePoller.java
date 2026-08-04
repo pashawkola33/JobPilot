@@ -1,6 +1,7 @@
 package com.jobpilot.telegram.polling;
 
 import com.jobpilot.config.JobPilotProperties;
+import com.jobpilot.config.SchedulingConfiguration;
 import com.jobpilot.common.ApplicationLifecycleGate;
 import com.jobpilot.telegram.api.TelegramClient;
 import com.jobpilot.telegram.api.TelegramUpdate;
@@ -54,7 +55,13 @@ public class TelegramUpdatePoller {
                 new OperationalCounters());
     }
 
-    @Scheduled(fixedDelayString = "#{@telegramPollDelay}")
+    /**
+     * Runs on its own scheduler. A long poll parks its thread for the whole poll timeout, so
+     * sharing the application scheduler with ingestion meant a six-hourly run starved the bot
+     * until it finished.
+     */
+    @Scheduled(fixedDelayString = "#{@telegramPollDelay}",
+            scheduler = SchedulingConfiguration.TELEGRAM_SCHEDULER)
     public void scheduledPoll() {
         if (firstScheduledPoll.compareAndSet(true, false)) {
             log.info("Telegram scheduled poll first invocation enabled={} commandsEnabled={} "
