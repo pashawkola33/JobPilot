@@ -415,3 +415,125 @@ Telegram scheduler isolation are all unmodified.
 
 **Cleanup of the seven rows remains a separate, optional phase.** They are inert: they do not
 affect overlap protection, health roll-ups, ingestion, alerts, or Telegram.
+
+# Phase 4B.4C-A: read-only cleanup preview
+
+This phase adds an operator-invoked decision aid, not cleanup. The command is default-off,
+supports only `OFF` and `PREVIEW`, and contains no status-update service, repository write call,
+or `WRITE` enum value. It never runs as a startup sweep: `PREVIEW` must be selected explicitly
+for a temporary one-shot process with scheduling and Telegram disabled. Historical rows,
+including IDs 69, 74, 79, 92, 95, 96 and 100, remain unchanged.
+
+## Preview architecture
+
+```
+temporary process (PREVIEW; schedules/Telegram off)
+  -> validate bounded configuration and exact operator expectation
+  -> open one REPEATABLE READ, READ ONLY transaction
+     -> capture protected-table proof BEFORE
+     -> read the complete source_fetch_logs RUNNING set
+     -> correlate terminal tenant attempts and later terminal source runs
+     -> compare with the JVM-local active source-execution registry
+     -> reread the complete RUNNING set and active registry
+     -> build an immutable, ID-sorted plan
+     -> capture protected-table proof AFTER
+  -> require identical before/after proof
+  -> emit bounded sanitized report and versioned SHA-256 fingerprint
+  -> exit; no mutation path exists
+```
+
+The source lifecycle registers an immutable handle only while that JVM owns source work. This
+does not pretend to be a distributed lease: the production procedure must first prove there is
+no active ingestion and must run only one preview process. The exact complete database
+`RUNNING` set is also an operator guard, so an unexpected row fails the whole preview closed.
+No parent state is inferred because production has no `ingestion_runs` table.
+
+## Exact candidate rules
+
+A plan entry is eligible only if every applicable check succeeds:
+
+1. `status = RUNNING` and `finished_at IS NULL`.
+2. `started_at` exists, is older than the configured minimum age (default six hours), and is
+   strictly before the current JVM start.
+3. Neither of two active-registry snapshots says the current JVM owns the row, its run, or the
+   same source operation.
+4. The complete observed `RUNNING` ID set equals the operator-supplied set; the optional count,
+   when supplied, also matches.
+5. The observed set is nonempty and does not exceed the configured candidate limit (default
+   20, absolute maximum 100).
+6. For a V10+ row, its run ID exists; all existing tenant attempts for that run are terminal,
+   at least one terminal tenant child exists, no unfinished tenant child exists, and at least
+   one later terminal source log exists for the same source.
+7. A single ingestion run may not own another `RUNNING` source row in the snapshot.
+8. Required identifiers, timestamps, states and counts are present and internally consistent.
+
+Any failed row check rejects that row and makes a future write ineligible. Set mismatch,
+malformed configuration, transaction-mode mismatch, row/snapshot change, live ownership or a
+cap violation blocks the preview itself. An unknown extra `RUNNING` row therefore can never be
+silently ignored.
+
+Pre-V10 rows with `ingestion_run_id = NULL` are not rejected merely for lacking the later-added
+column. They require stronger evidence: the same age and JVM-start checks, no active source
+execution, and at least two later terminal runs from that provider. They are reported as
+`MODERATE` confidence with the missing run/tenant correlation stated explicitly. V10+ rows
+with terminal tenant evidence are `HIGH` confidence.
+
+## Immutable plan and fingerprint
+
+Plan entries are sorted by `source_fetch_logs.id`. The SHA-256 input uses a versioned,
+length-prefixed binary encoding rather than delimiter-concatenated text. Format version 1
+includes:
+
+- the exact expected and observed ID sets, optional expected count, minimum-age boundary and
+  candidate limit;
+- ID, explicit run-ID value or NULL marker, source, current status, `started_at`, explicit
+  NULL `finished_at`, counts and existing `error_summary`;
+- tenant attempt count and deterministic terminal-state summary;
+- later-terminal count plus latest later terminal source-log ID, status and timestamp;
+- confidence, eligibility decision and bounded reason;
+- proposed status `FAILED`, category `PROCESS_INTERRUPTED`, existing fetched/saved counts, and
+  exact bounded summary `PROCESS_INTERRUPTED: HistoricalOrphanReconciliation`.
+
+The displayed preview time and age are deliberately excluded: the fingerprint instead binds
+the configured minimum-age boundary and immutable row timestamps, so identical data and guards
+produce the same fingerprint on repeated previews. A possible later write phase would set
+`finished_at` to that write transaction's database timestamp, not reuse a stale preview time;
+the preview labels this policy as `WRITE_TRANSACTION_TIMESTAMP`. No production fingerprint or
+expected ID is stored in tracked configuration.
+
+## Read-only proof and safe output
+
+Within the same read-only repeatable-read transaction, the command captures counts, latest
+timestamps and deterministic content fingerprints before and after planning for
+`source_fetch_logs`, `source_tenant_fetch_logs`, `source_tenant_health`, `jobs`, `job_scores`,
+`job_requirements`, workflow state and Telegram state/delivery. Equality proves that the
+transaction observed no change; PostgreSQL's transaction mode provides the independent
+no-write guard. The report includes both proof snapshots, the transaction settings, aggregate
+candidate/blocker counts, the plan fingerprint and one bounded line per candidate.
+
+Only source names, numeric IDs, truncated run IDs, timestamps, counts, closed status/category
+tokens and bounded reasons are rendered. Existing error text participates in the fingerprint
+but is never printed. URLs, job descriptions, exception messages, credentials and Telegram
+authorization identifiers are neither selected for output nor logged.
+
+`WRITE` is explicitly **not implemented**. The report's future-write field means only that all
+currently defined evidence checks passed; it is not permission and cannot cause a mutation.
+
+## Production preview procedure
+
+1. Confirm no ingestion or source execution is active, then capture the complete current
+   `source_fetch_logs` `RUNNING` ID set.
+2. Rebuild and recreate the application service only with cleanup mode `OFF`; do not restart
+   PostgreSQL. Confirm normal application and database health.
+3. Start one temporary application process with `PREVIEW`, scheduling disabled, both Telegram
+   modes disabled, minimum age `6h`, maximum candidates `20`, and the exact expected IDs
+   supplied only as process environment. Do not edit `.env`.
+4. Capture its bounded report, eligibility decisions, proof and fingerprint, then allow the
+   one-shot process to exit cleanly.
+5. Restore the normal application with cleanup mode `OFF`, normal cron
+   `0 0 */6 * * *`, and the existing Telegram configuration. Confirm application/PostgreSQL
+   health, schema V12, polling health and unchanged database fingerprints.
+
+If any guard fails, retain the historical rows and investigate the blocker. A later cleanup
+phase, if separately approved, must recompute and compare the entire fingerprint in its own
+write transaction; this preview intentionally provides no such path.

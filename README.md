@@ -252,6 +252,11 @@ Important variables:
 | `JOBPILOT_SCORE_RESCORE_EXPECTED_PLAN_FINGERPRINT` | Write only | Fresh plan's exact SHA-256 fingerprint; no default |
 | `JOBPILOT_SCORE_RESCORE_MAX_JOBS` | One-shot command | Explicit inspection/write ceiling, `1`–`1000`; no default |
 | `JOBPILOT_SCORE_RESCORE_CONFIRMATION` | Write only | Exact one-time confirmation phrase documented in the operator procedure; no default |
+| `JOBPILOT_SOURCE_LOG_CLEANUP_MODE` | No | One-shot historical source-log mode: `OFF` or read-only `PREVIEW`; default `OFF`; there is no `WRITE` mode |
+| `JOBPILOT_SOURCE_LOG_CLEANUP_MINIMUM_AGE` | Preview only | Minimum candidate age; default `6h` |
+| `JOBPILOT_SOURCE_LOG_CLEANUP_MAX_CANDIDATES` | Preview only | Candidate ceiling, `1`–`100` hard maximum; default `20` |
+| `JOBPILOT_SOURCE_LOG_CLEANUP_EXPECTED_RUNNING_IDS` | Preview only | Exact comma-separated complete `RUNNING` ID set; no default and never persist it in `.env` |
+| `JOBPILOT_SOURCE_LOG_CLEANUP_EXPECTED_RUNNING_COUNT` | Preview only | Optional exact complete `RUNNING` count; no default |
 | `JOBPILOT_SCHEDULING_ENABLED` | No | Registers ingestion, digest, Telegram-polling and maintenance schedules; default `true`; must be `false` for one-shot rescore commands |
 | `GREENHOUSE_BOARD_TOKENS` | At least one source | Comma-separated Greenhouse board tokens |
 | `LEVER_COMPANY_IDS` | At least one source | Comma-separated Lever company identifiers |
@@ -478,6 +483,15 @@ scheduled tasks are registered, and keeps write capability behind an additional 
 gate plus exact count, fingerprint, cap and confirmation guards. See
 [the zero-score diagnosis](docs/scoring-zero-diagnosis.md#13-phase-4b3c-b-guarded-one-time-write-back)
 for the architecture and operator procedure. Never store execution guards in `.env`.
+
+Historical source-log cleanup preview is independently default-off. `PREVIEW` is a bounded,
+one-shot, repeatable-read/read-only command: scheduling and Telegram must be disabled, the
+operator must temporarily supply the exact complete `RUNNING` ID set, and the process exits
+after logging a sanitized immutable plan and before/after database proof. It cannot update a
+row because this phase has no `WRITE` mode or write implementation. Run it only after proving
+that no ingestion is active; keep expected IDs and the optional expected count out of `.env`.
+The complete safety model and production procedure are in
+[the orphan diagnosis](docs/orphaned-source-runs-diagnosis.md#phase-4b4c-a-read-only-cleanup-preview).
 
 Stop without deleting PostgreSQL data:
 
