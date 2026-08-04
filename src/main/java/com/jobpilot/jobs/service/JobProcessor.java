@@ -17,10 +17,13 @@ import com.jobpilot.jobs.domain.ScreeningDisposition;
 import com.jobpilot.jobs.repository.JobRepository;
 import com.jobpilot.jobs.repository.JobRequirementRepository;
 import com.jobpilot.jobs.repository.JobScoreRepository;
+import com.jobpilot.matching.JobScoreCalculator;
 import com.jobpilot.matching.JobMatchingService;
+import com.jobpilot.matching.ScoreCalculation;
 import com.jobpilot.matching.ScoreCard;
 import java.time.Clock;
 import java.util.Optional;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,8 +34,7 @@ public class JobProcessor {
     private final EarlyCareerEligibilityService earlyCareerEligibility;
     private final JobRelevanceFilter relevance;
     private final JobDeduplicationService deduplication;
-    private final DeterministicRequirementExtractor extractor;
-    private final JobMatchingService matching;
+    private final JobScoreCalculator scoreCalculator;
     private final JobRepository jobs;
     private final JobRequirementRepository requirements;
     private final JobScoreRepository scores;
@@ -40,11 +42,12 @@ public class JobProcessor {
     private final UrlCanonicalizer urlCanonicalizer;
     private final Clock clock;
 
+    @Autowired
     public JobProcessor(JobNormalizer normalizer, LocationEligibilityService eligibility,
                         EarlyCareerEligibilityService earlyCareerEligibility,
                         JobRelevanceFilter relevance,
                         JobDeduplicationService deduplication,
-                        DeterministicRequirementExtractor extractor, JobMatchingService matching,
+                        JobScoreCalculator scoreCalculator,
                         JobRepository jobs, JobRequirementRepository requirements,
                         JobScoreRepository scores, ObjectMapper objectMapper,
                         UrlCanonicalizer urlCanonicalizer, Clock clock) {
@@ -53,14 +56,26 @@ public class JobProcessor {
         this.earlyCareerEligibility = earlyCareerEligibility;
         this.relevance = relevance;
         this.deduplication = deduplication;
-        this.extractor = extractor;
-        this.matching = matching;
+        this.scoreCalculator = scoreCalculator;
         this.jobs = jobs;
         this.requirements = requirements;
         this.scores = scores;
         this.objectMapper = objectMapper;
         this.urlCanonicalizer = urlCanonicalizer;
         this.clock = clock;
+    }
+
+    /** Legacy construction shape retained for focused unit tests and non-Spring callers. */
+    public JobProcessor(JobNormalizer normalizer, LocationEligibilityService eligibility,
+                        EarlyCareerEligibilityService earlyCareerEligibility,
+                        JobRelevanceFilter relevance, JobDeduplicationService deduplication,
+                        DeterministicRequirementExtractor extractor, JobMatchingService matching,
+                        JobRepository jobs, JobRequirementRepository requirements,
+                        JobScoreRepository scores, ObjectMapper objectMapper,
+                        UrlCanonicalizer urlCanonicalizer, Clock clock) {
+        this(normalizer, eligibility, earlyCareerEligibility, relevance, deduplication,
+                new JobScoreCalculator(extractor, matching), jobs, requirements, scores,
+                objectMapper, urlCanonicalizer, clock);
     }
 
     @Transactional
@@ -188,9 +203,10 @@ public class JobProcessor {
     }
 
     private ScoreCard extractScoreAndSave(Job job) {
-        ExtractedRequirements extracted = extractor.extract(job);
+        ScoreCalculation calculation = scoreCalculator.calculate(job);
+        ExtractedRequirements extracted = calculation.requirements();
         job.applyRequirements(extracted, join(extracted.technologies()), join(extracted.spokenLanguages()));
-        ScoreCard card = matching.score(job, extracted);
+        ScoreCard card = calculation.score();
         Job saved = jobs.save(job);
         requirements.findByJobId(saved.getId()).ifPresent(outdated -> {
             requirements.delete(outdated);

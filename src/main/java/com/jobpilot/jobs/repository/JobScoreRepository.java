@@ -8,6 +8,8 @@ import java.util.Optional;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.jpa.repository.QueryHints;
+import jakarta.persistence.QueryHint;
 
 public interface JobScoreRepository extends JpaRepository<JobScore, Long> {
     Optional<JobScore> findByJobId(Long jobId);
@@ -21,4 +23,16 @@ public interface JobScoreRepository extends JpaRepository<JobScore, Long> {
     List<JobScore> findDigest(ScoreBand band, Instant since, Pageable pageable);
 
     long countByBand(ScoreBand band);
+
+    @Query("select count(s) from JobScore s where s.job.screeningDisposition in "
+            + "(com.jobpilot.jobs.domain.ScreeningDisposition.MATCH, "
+            + "com.jobpilot.jobs.domain.ScreeningDisposition.REVIEW)")
+    long countRescorePreviewCandidates();
+
+    @Query("select s from JobScore s join fetch s.job j "
+            + "where j.screeningDisposition in "
+            + "(com.jobpilot.jobs.domain.ScreeningDisposition.MATCH, "
+            + "com.jobpilot.jobs.domain.ScreeningDisposition.REVIEW) order by j.id")
+    @QueryHints(@QueryHint(name = "org.hibernate.readOnly", value = "true"))
+    List<JobScore> findRescorePreviewCandidates(Pageable pageable);
 }

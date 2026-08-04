@@ -34,6 +34,9 @@ logging:
     org.apache.pdfbox.pdmodel.font.FileSystemFontProvider: OFF
 
 jobpilot:
+  score-rescore-preview:
+    enabled: ${JOBPILOT_SCORE_RESCORE_PREVIEW_ENABLED:false}
+    max-inspected-jobs: ${JOBPILOT_SCORE_RESCORE_PREVIEW_MAX_JOBS:250}
   build:
     version: ${JOBPILOT_VERSION:unknown}
     commit: ${BUILD_COMMIT:unknown}

@@ -408,6 +408,18 @@ class JobProcessorTest {
                 .isEmpty();
     }
 
+    @Test
+    void rescorePreviewRepositoryQueryNeverReturnsRejectJobsEvenWithALegacyScoreRow() {
+        var accepted = processor.process(rawWithIdentity("preview-reject", "Java Developer Intern",
+                "Bucharest, Romania", "No experience required. Build Java services."));
+        jobs.flush();
+        jdbc.update("update jobs set screening_disposition = 'REJECT' where id = ?",
+                accepted.job().getId());
+
+        assertThat(scores.countRescorePreviewCandidates()).isZero();
+        assertThat(scores.findRescorePreviewCandidates(Pageable.ofSize(10))).isEmpty();
+    }
+
     /** Physical job_scores row identity; extractScoreAndSave deletes and reinserts. */
     private Long scoreRowId(Long jobId) {
         return jdbc.queryForObject("select id from job_scores where job_id = ?", Long.class, jobId);

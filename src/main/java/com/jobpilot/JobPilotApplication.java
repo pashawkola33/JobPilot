@@ -5,6 +5,7 @@ import com.jobpilot.browser.config.ScraperWorkerProperties;
 import com.jobpilot.config.BuildInfoProperties;
 import com.jobpilot.config.JobPilotProperties;
 import com.jobpilot.config.MaintenanceProperties;
+import com.jobpilot.matching.preview.ScoreRescorePreviewProperties;
 import com.jobpilot.resume.config.DocumentProperties;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -15,7 +16,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableScheduling
 @EnableConfigurationProperties({JobPilotProperties.class, CandidateProfileProperties.class,
         DocumentProperties.class, MaintenanceProperties.class, BuildInfoProperties.class,
-        ScraperWorkerProperties.class})
+        ScraperWorkerProperties.class, ScoreRescorePreviewProperties.class})
 public class JobPilotApplication {
     public static void main(String[] args) {
         SpringApplication.run(JobPilotApplication.class, args);
