@@ -1,0 +1,15 @@
+{
+  "total": 803,
+  "jobPostings": [],
+  "facets": [
+    {"facetParameter": "Location_Country", "descriptor": "Country/Territory",
+     "values": [
+       {"descriptor": "India", "id": "cccccccccccccccccccccccccccccccc", "count": 222},
+       {"descriptor": "Romania", "id": "f2e609fe92974a55a05fc1cdc2852122", "count": 57}
+     ]},
+    {"facetParameter": "locationMainGroup", "descriptor": null,
+     "values": [{"facetParameter": "locations", "descriptor": "Location",
+       "values": [{"descriptor": "Bucharest", "id": "dddddddddddddddddddddddddddddddd", "count": 52}]}]}
+  ],
+  "userAuthenticated": false
+}

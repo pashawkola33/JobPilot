@@ -208,8 +208,10 @@ public class ExternalHttpClient {
         }
         String host = uri.getHost().toLowerCase(Locale.ROOT);
         DestinationFamily family = family(host);
+        boolean hostPinned = family == DestinationFamily.RECRUITEE
+                || family == DestinationFamily.WORKDAY;
         if (family != destination.family()
-                || family == DestinationFamily.RECRUITEE && !host.equals(destination.initialHost())) {
+                || hostPinned && !host.equals(destination.initialHost())) {
             throw new ExternalHttpException(ExternalHttpException.Category.INVALID_DESTINATION, null);
         }
         validateAddresses(host);
@@ -228,8 +230,20 @@ public class ExternalHttpClient {
                 return DestinationFamily.RECRUITEE;
             }
         }
+        if (isWorkdayHost(host)) return DestinationFamily.WORKDAY;
         if (host.equals("api.telegram.org")) return DestinationFamily.TELEGRAM;
         return null;
+    }
+
+    /**
+     * Exactly {@code <tenant>.<shard>.myworkdayjobs.com} and nothing else.
+     *
+     * <p>The anchored pattern rejects the bare apex, any extra label depth, and every
+     * lookalike that merely contains or ends near the suffix — {@code evilmyworkdayjobs.com},
+     * {@code myworkdayjobs.com.attacker.test}, and {@code a.b.c.myworkdayjobs.com} all fail.
+     */
+    static boolean isWorkdayHost(String host) {
+        return host != null && WORKDAY_HOST.matcher(host).matches();
     }
 
     private void validateAddresses(String host) {
@@ -351,12 +365,17 @@ public class ExternalHttpClient {
         }
     }
 
+    /** tenant label, shard label, then the exact apex. Anchored on both ends. */
+    private static final java.util.regex.Pattern WORKDAY_HOST = java.util.regex.Pattern.compile(
+            "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+                    + "\\.myworkdayjobs\\.com");
+
     static boolean isAllowedProductionHost(String host) {
         return host != null && family(host.toLowerCase(Locale.ROOT)) != null;
     }
 
     private enum DestinationFamily {
-        GREENHOUSE, LEVER, ASHBY, RECRUITEE, SMARTRECRUITERS, TELEGRAM, TEST
+        GREENHOUSE, LEVER, ASHBY, RECRUITEE, SMARTRECRUITERS, WORKDAY, TELEGRAM, TEST
     }
 
     private record Destination(DestinationFamily family, String initialHost) {

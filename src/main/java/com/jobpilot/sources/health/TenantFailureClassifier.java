@@ -67,6 +67,13 @@ public class TenantFailureClassifier {
                     "SmartRecruiters " + kind + " cap of " + limit.configuredMaximum()
                             + " was exceeded for " + provider + " tenant " + tenant);
         }
+        if (error instanceof com.jobpilot.sources.workday.WorkdayLimitException limit) {
+            return new TenantFailure(TenantFailureCategory.RESPONSE_TOO_LARGE, null,
+                    error.getClass().getName(),
+                    "Workday " + limit.limit().name().toLowerCase(java.util.Locale.ROOT).replace('_', '-')
+                            + " cap of " + limit.configuredMaximum() + " was exceeded for "
+                            + provider + " tenant " + tenant);
+        }
         if (error instanceof ExternalHttpException transport) {
             return fromTransport(provider, tenant, transport);
         }

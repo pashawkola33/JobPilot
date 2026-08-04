@@ -2,7 +2,7 @@
 
 ![Java](https://img.shields.io/badge/Java-21-orange) ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3-brightgreen) ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg) ![Docker](https://img.shields.io/badge/Docker-ready-2496ED)
 
-JobPilot is a human-in-the-loop internship discovery service for entry-level software roles. It fetches public Greenhouse, Lever, Ashby, Recruitee, and SmartRecruiters boards, applies hard location and early-career eligibility gates, normalizes and deduplicates vacancies, deterministically extracts requirements, scores them against a configurable candidate profile, and sends strong matches to a Telegram channel. Phase 2 Stage 1 adds the versioned candidate truth model, Stage 2 safely processes manually submitted public vacancy URLs, Stage 3 adds human-maintained application tracking, Stage 4 adds optional structured job analysis, Stage 5 creates truthful application documents for private human review, and Stage 6 integrates the complete workflow with maintenance, readiness, safe operational counters, PostgreSQL end-to-end verification, and production-like Docker defaults.
+JobPilot is a human-in-the-loop internship discovery service for entry-level software roles. It fetches public Greenhouse, Lever, Ashby, Recruitee, SmartRecruiters, and Workday boards, applies hard location and early-career eligibility gates, normalizes and deduplicates vacancies, deterministically extracts requirements, scores them against a configurable candidate profile, and sends strong matches to a Telegram channel. Phase 2 Stage 1 adds the versioned candidate truth model, Stage 2 safely processes manually submitted public vacancy URLs, Stage 3 adds human-maintained application tracking, Stage 4 adds optional structured job analysis, Stage 5 creates truthful application documents for private human review, and Stage 6 integrates the complete workflow with maintenance, readiness, safe operational counters, PostgreSQL end-to-end verification, and production-like Docker defaults.
 
 JobPilot never submits applications, uploads documents to employers, answers screening questions, accepts agreements, or contacts recruiters. Stage 5 generates ATS-oriented DOCX/PDF résumés and optional cover notes, but attaching a completed version to an existing application remains a separate human-triggered internal operation. Protected-site browser automation remains out of scope.
 
@@ -249,6 +249,7 @@ Important variables:
 | `ASHBY_BOARD_NAMES` | At least one source | Comma-separated Ashby board names |
 | `RECRUITEE_COMPANY_IDS` | At least one source | Comma-separated Recruitee company identifiers |
 | `SMARTRECRUITERS_COMPANY_IDENTIFIERS` | No; empty unless set | Comma-separated SmartRecruiters company identifiers, maximum 100 |
+| `WORKDAY_CAREER_SITES` | No; empty unless set | Comma-separated Workday career sites as `tenant:shard:careerSite`, maximum 25. Empty disables the provider entirely |
 | `TELEGRAM_BOT_TOKEN` | Notifications only | BotFather token; never commit it |
 | `TELEGRAM_CHANNEL_ID` | Notifications only | Target channel ID, usually beginning with `-100` |
 | `TELEGRAM_BOT_USERNAME` | Commands: yes | Bot username, with or without leading `@`; used locally for command addressing |
@@ -333,6 +334,44 @@ LEVER_COMPANY_IDS=acme,another-company
 ```
 
 Greenhouse, Lever, Ashby, Recruitee, and SmartRecruiters tenant values all use the startup-validated grammar `[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}`. Empty, whitespace-padded, oversized, path-like, percent-encoded, or hostname-manipulating values fail startup. Recruitee requests are always constructed as exactly `<tenant>.recruitee.com`. SmartRecruiters preserves declaration order and case, rejects duplicates, and caps configuration at 100 companies. Its public Posting API adapter queries `country=ro` and `q=remote` in fixed order, allows at most ten list pages and 500 unique postings across the complete tenant attempt, hydrates each unique ID once, and discards the tenant's complete partial result if any page or detail fails. The existing 10 MiB per-response bound applies unchanged.
+
+### Workday
+
+Configured as `WORKDAY_CAREER_SITES=tenant:shard:careerSite`, comma separated — for example
+`db:wd3:DBWebsite,nxp:wd3:careers,lseg:wd3:Careers`. A single company identifier is not
+enough: one Workday host can serve several career sites and the shard differs per tenant, so
+all three parts are required. The provider is **empty by default** and makes no HTTP request
+at all until at least one site is configured.
+
+Each site is read through the public, unauthenticated Workday CXS endpoints
+(`POST /wday/cxs/{tenant}/{site}/jobs` and `GET /wday/cxs/{tenant}/{site}{externalPath}`).
+No cookies, CSRF tokens, JavaScript, authentication, or session state are involved, and
+`/refreshFacet/` — the one path `robots.txt` disallows — is never called.
+
+Fetching is bounded server-side first: the adapter discovers this tenant's country facet at
+runtime (the parameter name differs per tenant, the Romania GUID does not) and applies it, so
+Workday returns only Romania-matching postings before any detail request is made. Safety
+limits per career site, all failing closed as a categorized tenant attempt:
+
+| Limit | Value |
+|---|---|
+| Page size | 20 (Workday rejects more with HTTP 400) |
+| Unique postings | 300 |
+| Search pages | 20 |
+| Detail requests | 300 |
+| Runtime | 3 minutes |
+
+Hostnames are allowlisted as exactly `<tenant>.<shard>.myworkdayjobs.com`; the bare apex,
+extra label depth, lookalike suffixes, user-info URLs and non-HTTPS URLs are all rejected,
+and redirects are pinned to the same validated hostname. The canonical link stored for a
+vacancy is always the employer's own Workday application URL — a detail `externalUrl`
+pointing anywhere else is discarded and rebuilt.
+
+Because the Romania facet matches *any* location on a posting, a vacancy whose primary
+office is outside Romania but which lists Bucharest among its additional locations is kept
+and passed to screening with every location Workday supplied. See
+[docs/workday-provider-design.md](docs/workday-provider-design.md) for the per-site evidence,
+the compatibility matrix, and the validation decision.
 
 ### SmartRecruiters
 

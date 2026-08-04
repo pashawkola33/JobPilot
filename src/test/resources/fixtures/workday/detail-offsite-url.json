@@ -1,0 +1,15 @@
+{
+  "jobPostingInfo": {
+    "id": "5555eeee4444ffff3333aaaa2222bbbb",
+    "title": "Backend Engineer",
+    "jobDescription": "Text only.",
+    "location": "Bucharest",
+    "startDate": "2026-08-01",
+    "timeType": "Full time",
+    "country": {"descriptor": "Romania", "id": "f2e609fe92974a55a05fc1cdc2852122"},
+    "externalUrl": "https://aggregator.example.test/redirect?to=workday",
+    "canApply": true, "posted": true
+  },
+  "hiringOrganization": {"name": "Example SRL", "url": ""},
+  "userAuthenticated": false
+}

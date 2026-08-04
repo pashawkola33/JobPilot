@@ -1,0 +1,19 @@
+{
+  "total": 773,
+  "jobPostings": [],
+  "facets": [
+    {"facetParameter": "CF_Lookup_Business_Unit", "descriptor": "Business Unit",
+     "values": [{"descriptor": "Engineering", "id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "count": 90}]},
+    {"facetParameter": "locationMainGroup", "descriptor": null,
+     "values": [
+       {"facetParameter": "locationCountry", "descriptor": "Country/Territory",
+        "values": [
+          {"descriptor": "Poland", "id": "ffffffffffffffffffffffffffffffff", "count": 120},
+          {"descriptor": "Romania", "id": "f2e609fe92974a55a05fc1cdc2852122", "count": 65}
+        ]},
+       {"facetParameter": "primaryLocation", "descriptor": "Office Location/City",
+        "values": [{"descriptor": "Bucharest, Romania", "id": "11111111111111111111111111111111", "count": 23}]}
+     ]}
+  ],
+  "userAuthenticated": false
+}

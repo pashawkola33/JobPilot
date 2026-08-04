@@ -149,6 +149,51 @@ class ExternalHttpClientTest {
     }
 
     @Test
+    void workdayDestinationRequiresATenantAndShardBelowTheExactApex() {
+        assertThat(ExternalHttpClient.isAllowedProductionHost("db.wd3.myworkdayjobs.com")).isTrue();
+        assertThat(ExternalHttpClient.isAllowedProductionHost("accenture.wd103.myworkdayjobs.com"))
+                .isTrue();
+        assertThat(ExternalHttpClient.isAllowedProductionHost("alliance-wd.wd3.myworkdayjobs.com"))
+                .isTrue();
+    }
+
+    @Test
+    void rejectsEveryWorkdayLookalikeAndWrongLabelDepth() {
+        for (String host : java.util.List.of(
+                "myworkdayjobs.com",                       // bare apex, no tenant
+                "wd3.myworkdayjobs.com",                   // shard only
+                "a.b.c.myworkdayjobs.com",                 // extra label depth
+                "evilmyworkdayjobs.com",                   // suffix not on a label boundary
+                "db.wd3.myworkdayjobs.com.attacker.test",  // apex in the middle
+                "db.wd3.myworkdayjobs.co",                 // truncated apex
+                "db.wd3.notmyworkdayjobs.com",
+                "-db.wd3.myworkdayjobs.com",               // leading hyphen label
+                "db-.wd3.myworkdayjobs.com",               // trailing hyphen label
+                "db..myworkdayjobs.com")) {
+            assertThat(ExternalHttpClient.isAllowedProductionHost(host)).as(host).isFalse();
+        }
+        assertThat(ExternalHttpClient.isAllowedProductionHost(null)).isFalse();
+    }
+
+    @Test
+    void rejectsNonHttpsAndUserInfoWorkdayUrls() {
+        assertCategoryForUrl("http://db.wd3.myworkdayjobs.com/wday/cxs/db/S/jobs",
+                ExternalHttpException.Category.INVALID_DESTINATION);
+        assertCategoryForUrl("https://user:pass@db.wd3.myworkdayjobs.com/wday/cxs/db/S/jobs",
+                ExternalHttpException.Category.INVALID_DESTINATION);
+        assertCategoryForUrl("https://myworkdayjobs.com/wday/cxs/db/S/jobs",
+                ExternalHttpException.Category.INVALID_DESTINATION);
+    }
+
+    private void assertCategoryForUrl(String url, ExternalHttpException.Category expected) {
+        assertThatThrownBy(() -> client.getJson(url))
+                .as(url)
+                .isInstanceOf(ExternalHttpException.class)
+                .extracting(failure -> ((ExternalHttpException) failure).category())
+                .isEqualTo(expected);
+    }
+
+    @Test
     void rejectsInvalidContentTypeAndMalformedJson() {
         assertCategory("/wrong-type", ExternalHttpException.Category.INVALID_CONTENT_TYPE);
         assertCategory("/malformed", ExternalHttpException.Category.MALFORMED_JSON);

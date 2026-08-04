@@ -206,10 +206,13 @@ public record JobPilotProperties(
             List<String> leverCompanyIds,
             List<String> ashbyBoardNames,
             List<String> recruiteeCompanyIds,
-            List<String> smartrecruitersCompanyIdentifiers) {
+            List<String> smartrecruitersCompanyIdentifiers,
+            List<String> workdayCareerSites) {
 
         private static final int MAX_SMARTRECRUITERS_COMPANIES = 100;
+        public static final int MAX_WORKDAY_CAREER_SITES = 25;
 
+        @ConstructorBinding
         public Sources {
             greenhouseBoardTokens = copyAndValidate("Greenhouse", greenhouseBoardTokens);
             leverCompanyIds = copyAndValidate("Lever", leverCompanyIds);
@@ -217,6 +220,7 @@ public record JobPilotProperties(
             recruiteeCompanyIds = copyAndValidate("Recruitee", recruiteeCompanyIds);
             smartrecruitersCompanyIdentifiers = copyAndValidate(
                     "SmartRecruiters", smartrecruitersCompanyIdentifiers);
+            workdayCareerSites = normalizeWorkdaySites(workdayCareerSites);
             if (smartrecruitersCompanyIdentifiers.size() > MAX_SMARTRECRUITERS_COMPANIES) {
                 throw new IllegalArgumentException(
                         "SmartRecruiters supports at most 100 configured companies");
@@ -228,8 +232,45 @@ public record JobPilotProperties(
             }
         }
 
+        /** Shape before Workday existed; Workday stays empty, so it is inert. */
+        public Sources(List<String> greenhouseBoardTokens, List<String> leverCompanyIds,
+                       List<String> ashbyBoardNames, List<String> recruiteeCompanyIds,
+                       List<String> smartrecruitersCompanyIdentifiers) {
+            this(greenhouseBoardTokens, leverCompanyIds, ashbyBoardNames, recruiteeCompanyIds,
+                    smartrecruitersCompanyIdentifiers, List.of());
+        }
+
         public static Sources empty() {
-            return new Sources(List.of(), List.of(), List.of(), List.of(), List.of());
+            return new Sources(List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+        }
+
+        /**
+         * Each entry is {@code tenant:shard:careerSite}. A single company identifier is not
+         * enough: one Workday host can serve several career sites, and the shard differs
+         * between tenants. Parsing is delegated so the adapter and the binder agree on the
+         * one grammar.
+         */
+        private static List<String> normalizeWorkdaySites(List<String> values) {
+            if (values == null) return List.of();
+            List<String> normalized = new java.util.ArrayList<>();
+            for (String value : values) {
+                if (value == null || value.isBlank()) continue;
+                String entry = value.strip();
+                // Throws IllegalArgumentException with a safe message when malformed.
+                com.jobpilot.sources.workday.WorkdayCareerSite parsed =
+                        com.jobpilot.sources.workday.WorkdayCareerSite.parse(entry);
+                String canonical = parsed.configEntry();
+                if (normalized.contains(canonical)) {
+                    throw new IllegalArgumentException(
+                            "Workday career sites must not contain duplicates");
+                }
+                normalized.add(canonical);
+            }
+            if (normalized.size() > MAX_WORKDAY_CAREER_SITES) {
+                throw new IllegalArgumentException(
+                        "Workday supports at most " + MAX_WORKDAY_CAREER_SITES + " configured career sites");
+            }
+            return List.copyOf(normalized);
         }
 
         private static List<String> copyAndValidate(String provider, List<String> values) {

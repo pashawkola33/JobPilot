@@ -1,0 +1,17 @@
+{
+  "jobPostingInfo": {
+    "id": "9999aaaa8888bbbb7777cccc6666dddd",
+    "title": "Junior Java Developer",
+    "jobDescription": "<div>Graduate programme in Bucharest.</div>",
+    "location": "Bucharest, Example Blvd",
+    "startDate": "2026-08-04",
+    "postedOn": "Posted Today",
+    "timeType": "Full time",
+    "jobReqId": "R0441509",
+    "country": {"descriptor": "Romania", "id": "f2e609fe92974a55a05fc1cdc2852122"},
+    "externalUrl": "https://db.wd3.myworkdayjobs.com/DBWebsite/job/Bucharest/Junior-Java-Developer_R0441509",
+    "canApply": true, "posted": true
+  },
+  "hiringOrganization": {"name": "Example Global Technology SRL", "url": ""},
+  "userAuthenticated": false
+}

@@ -1,0 +1,17 @@
+{
+  "total": 1055,
+  "jobPostings": [
+    {"title": "Example Analyst", "externalPath": "/job/Example-City/Example-Analyst_R0000001",
+     "locationsText": "Example City", "postedOn": "Posted Today", "bulletFields": ["R0000001"]}
+  ],
+  "facets": [
+    {"facetParameter": "jobFamilyGroup", "descriptor": "Job Category",
+     "values": [{"descriptor": "Technology", "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "count": 10}]},
+    {"facetParameter": "Country", "descriptor": "Country",
+     "values": [
+       {"descriptor": "Germany", "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "count": 200},
+       {"descriptor": "Romania", "id": "f2e609fe92974a55a05fc1cdc2852122", "count": 127}
+     ]}
+  ],
+  "userAuthenticated": false
+}

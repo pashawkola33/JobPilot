@@ -1,0 +1,9 @@
+{
+  "total": 4,
+  "jobPostings": [],
+  "facets": [
+    {"facetParameter": "Country", "descriptor": "Country",
+     "values": [{"descriptor": "Germany", "id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "count": 4}]}
+  ],
+  "userAuthenticated": false
+}

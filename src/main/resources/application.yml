@@ -65,6 +65,9 @@ jobpilot:
     ashby-board-names: ${ASHBY_BOARD_NAMES:}
     recruitee-company-ids: ${RECRUITEE_COMPANY_IDS:}
     smartrecruiters-company-identifiers: ${SMARTRECRUITERS_COMPANY_IDENTIFIERS:}
+    # Workday career sites as tenant:shard:careerSite. Empty by default; a single company
+    # identifier is not enough because one host can serve several career sites.
+    workday-career-sites: ${WORKDAY_CAREER_SITES:}
   eligibility:
     target-city: ${JOBPILOT_TARGET_CITY:Bucharest}
     target-country: ${JOBPILOT_TARGET_COUNTRY:Romania}

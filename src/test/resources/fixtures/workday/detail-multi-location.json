@@ -1,0 +1,18 @@
+{
+  "jobPostingInfo": {
+    "id": "aaaa1111bbbb2222cccc3333dddd4444",
+    "title": "Junior Full Stack Developer",
+    "jobDescription": "<p>Work with <b>Java</b> &amp; SQL.</p><script>ignored()</script>",
+    "location": "POL-Gdynia-3T Office Park, Tower C",
+    "additionalLocations": ["Bucharest, Romania"],
+    "startDate": "2026-07-28",
+    "postedOn": "Posted 7 Days Ago",
+    "timeType": "Full time",
+    "jobReqId": "R0114058",
+    "country": {"descriptor": "Poland", "id": "ffffffffffffffffffffffffffffffff"},
+    "externalUrl": "https://lseg.wd3.myworkdayjobs.com/Careers/job/POL-Gdynia/Junior-Full-Stack-Developer_R0114058",
+    "canApply": true, "posted": true
+  },
+  "hiringOrganization": {"name": "Example Poland Sp. z o.o.", "url": ""},
+  "userAuthenticated": false
+}
