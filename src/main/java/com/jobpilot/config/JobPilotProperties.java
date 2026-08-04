@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Locale;
 import com.jobpilot.jobs.domain.RemoteScope;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
 
 @ConfigurationProperties("jobpilot")
 public record JobPilotProperties(
@@ -53,6 +54,7 @@ public record JobPilotProperties(
         /** Matches the job_workflow_state note check constraint. */
         public static final int NOTE_LENGTH_CEILING = 1000;
 
+        @ConstructorBinding
         public Telegram {
             botUsername = normalizeBotUsername(botUsername);
             pollTimeout = pollTimeout == null ? Duration.ofSeconds(25) : pollTimeout;

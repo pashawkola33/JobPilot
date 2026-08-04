@@ -25,6 +25,7 @@ public class TelegramUpdatePoller {
     private final TelegramBotStateService state;
     private final JobPilotProperties.Telegram settings;
     private final AtomicBoolean polling = new AtomicBoolean();
+    private final AtomicBoolean firstScheduledPoll = new AtomicBoolean(true);
     private final ApplicationLifecycleGate lifecycle;
     private final OperationalCounters counters;
 
@@ -39,6 +40,10 @@ public class TelegramUpdatePoller {
         this.settings = properties.telegram();
         this.lifecycle = lifecycle;
         this.counters = counters;
+        log.info("Telegram poller initialized enabled={} commandsEnabled={} pollingEnabled={} "
+                        + "discardPendingOnFirstStart={} pollDelay={} lifecycleAcceptingWork={}",
+                settings.enabled(), settings.commandsEnabled(), settings.pollingEnabled(),
+                settings.discardPendingOnFirstStart(), settings.pollDelay(), lifecycle.acceptingWork());
     }
 
     public TelegramUpdatePoller(TelegramClient client, TelegramUpdateProcessor processor,
@@ -49,6 +54,14 @@ public class TelegramUpdatePoller {
 
     @Scheduled(fixedDelayString = "#{@telegramPollDelay}")
     public void scheduledPoll() {
+        if (firstScheduledPoll.compareAndSet(true, false)) {
+            log.info("Telegram scheduled poll first invocation enabled={} commandsEnabled={} "
+                            + "pollingEnabled={} discardPendingOnFirstStart={} pollDelay={} "
+                            + "lifecycleAcceptingWork={}",
+                    settings.enabled(), settings.commandsEnabled(), settings.pollingEnabled(),
+                    settings.discardPendingOnFirstStart(), settings.pollDelay(),
+                    lifecycle.acceptingWork());
+        }
         if (settings.pollingEnabled()) pollOnce();
     }
 
@@ -70,7 +83,9 @@ public class TelegramUpdatePoller {
             process(updates, lastProcessed);
             return true;
         } catch (RuntimeException transportOrStateFailure) {
-            log.warn("Telegram polling cycle failed category=poll_or_transport_failure");
+            log.warn("Telegram polling cycle failed category=poll_or_transport_failure "
+                            + "exceptionClass={}",
+                    transportOrStateFailure.getClass().getName());
             return true;
         } finally {
             polling.set(false);
