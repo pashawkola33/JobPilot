@@ -244,6 +244,8 @@ Important variables:
 | `DATABASE_URL` | Local JVM: yes | JDBC PostgreSQL URL |
 | `JOBPILOT_VERSION` | No | Safe health build version token; default `unknown` |
 | `BUILD_COMMIT` | No | Safe health commit token; default `unknown` |
+| `JOBPILOT_SCORE_RESCORE_PREVIEW_ENABLED` | No | Runs one read-only stale-score preview at startup; default `false` |
+| `JOBPILOT_SCORE_RESCORE_PREVIEW_MAX_JOBS` | No | Preview cap, `1`–`1000`; default `250` |
 | `GREENHOUSE_BOARD_TOKENS` | At least one source | Comma-separated Greenhouse board tokens |
 | `LEVER_COMPANY_IDS` | At least one source | Comma-separated Lever company identifiers |
 | `ASHBY_BOARD_NAMES` | At least one source | Comma-separated Ashby board names |
@@ -461,6 +463,11 @@ docker compose ps
 ```
 
 Compose waits for a bounded PostgreSQL 16 health check before starting the app, binds HTTP to `127.0.0.1`, runs the app as UID/GID `10001`, drops Linux capabilities, uses a read-only root filesystem, mounts an explicit private temporary directory, and persists documents in `jobpilot-documents`. Optional Telegram, LLM, documents, and maintenance remain disabled unless explicitly enabled. Graceful shutdown stops new polling, ingestion, digest, and maintenance work; the scheduler and server have bounded termination windows.
+
+The stale-score preview is also disabled by default. It performs one bounded, repeatable-read
+comparison at application startup and logs sanitized score and queue projections without
+updating any row. See [the zero-score diagnosis](docs/scoring-zero-diagnosis.md#12-phase-4b3c-a-read-only-stale-score-preview)
+for its exact guarded run procedure. Score write-back is not implemented.
 
 Stop without deleting PostgreSQL data:
 

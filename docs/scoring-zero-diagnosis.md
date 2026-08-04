@@ -418,3 +418,104 @@ Smallest safe mechanism, for that later phase — not implemented:
 Blocker-to-penalty calibration (Option A) remains a **future option**, unimplemented — it is a
 ranking-policy decision, not a defect fix. The `locationScore` UNKNOWN trap and the
 supporting-skills divisor from §7 were likewise left untouched.
+
+---
+
+## 12. Phase 4B.3C-A — read-only stale-score preview
+
+Phase 4B.3C-A adds the blast-radius preview required by §11. It is an opt-in diagnostic,
+not a rescore or backfill operation. The default remains:
+
+```dotenv
+JOBPILOT_SCORE_RESCORE_PREVIEW_ENABLED=false
+JOBPILOT_SCORE_RESCORE_PREVIEW_MAX_JOBS=250
+```
+
+The default cap is above the current scored dataset. Configuration accepts `1`–`1000`;
+`1000` is a non-configurable hard ceiling. The preview counts its candidates first and, if
+the configured cap would be exceeded, stops before loading any job details and emits the safe
+category `CAP_EXCEEDED`.
+
+### Architecture
+
+`JobScoreCalculator` is the pure calculation boundary shared by both paths:
+
+```text
+new/changed vacancy -> JobProcessor -> JobScoreCalculator -> requirements + ScoreCard
+                                                    |
+                                                    +-> existing persistence path
+
+startup runner (flag on) -> repeatable-read preview queries
+                         -> JobScoreCalculator -> immutable preview report -> bounded logs
+```
+
+The calculator owns the existing `DeterministicRequirementExtractor` and
+`JobMatchingService`; it owns no repository and does not mutate `Job`. `JobProcessor` keeps
+the same create/update persistence sequence and merely receives the calculator's immutable
+`ScoreCalculation` instead of calling extraction and matching inline. Weights, blockers,
+bands, component arithmetic, screening and Telegram ordering are unchanged.
+
+The preview selects only rows that satisfy both conditions:
+
+- `jobs.screening_disposition IN ('MATCH', 'REVIEW')`;
+- an existing `job_scores` row joins that job.
+
+The repository query excludes `REJECT` in SQL, and the service repeats the invariant check
+before calculation. The stored `job_requirements` row supplies the old inferred seniority;
+current requirements are reconstructed from the persisted job title and description only.
+No provider is queried. Missing job identity/scoring fields or a missing requirements row
+stops the complete preview with `MISSING_REQUIRED_DATA`; it never falls back to a provider,
+ingestion, screening refresh or newly fetched content.
+
+The immutable report contains changed rows, score/band/blocker/penalty/seniority differences,
+raw component total, seniority-fix attribution, delta distribution, boundary crossings, and
+the exact before/after `/matches` and `/review` ordering. Queue projections use the production
+ordering rules: workflow state, score, recency, then job ID. Rows and log fields are ordered
+deterministically. Titles, sources and tenant keys are control-character stripped and bounded;
+long external IDs are emitted only as a short prefix plus a SHA-256 correlation suffix.
+Descriptions, URLs, candidate facts, Telegram authorization values and secrets never enter
+the report model.
+
+### Proof of the read-only boundary
+
+The startup runner checks `enabled` before calling the preview service, so disabled mode makes
+no preview repository call. Enabled mode runs inside one Spring `readOnly=true`, PostgreSQL
+repeatable-read transaction. Its dependency graph contains exactly three read repositories
+(`job_scores`, `job_requirements`, `job_workflow_state`) and the pure calculator. It does not
+depend on `JobRepository`, ingestion, source adapters, screening services, workflow mutation
+services, Telegram clients or any HTTP client.
+
+There is no invocation of `save`, `saveAndFlush`, `flush`, `delete`, update SQL, or a locking
+query in the preview path. Tests assert zero repository write-method invocations, cap-before-
+detail-read behavior, SQL-level REJECT exclusion, fail-closed missing data, deterministic
+repeat runs and bounded sanitized output. Operational validation compares table counts,
+checksums and maximum update timestamps before and after the enabled run.
+
+### Exact guarded Docker run
+
+First recreate only the application with the default-off setting, wait for health, and take
+the database baseline. Do not edit `.env`, stop PostgreSQL, or remove volumes. Then enable the
+flag only for the one Compose invocation:
+
+```bash
+JOBPILOT_SCORE_RESCORE_PREVIEW_ENABLED=true \
+JOBPILOT_SCORE_RESCORE_PREVIEW_MAX_JOBS=250 \
+docker compose up -d --build --force-recreate --no-deps app
+
+docker compose logs --no-color app | rg 'SCORE_RESCORE_PREVIEW'
+```
+
+The runner executes exactly once for that application start. After capturing the bounded
+report, remove the temporary shell override by recreating only the application normally:
+
+```bash
+docker compose up -d --force-recreate --no-deps app
+```
+
+Confirm `/health`, PostgreSQL health, schema V12, Telegram polling, and unchanged database
+fingerprints after the restore. Compare ingestion-run and tenant-attempt counts and inspect
+the bounded application logs to establish that no ingestion or source fetch began during the
+preview window.
+
+**Write-back is not implemented in Phase 4B.3C-A.** There is no production rescore-enabled
+flag, no rescore command, no migration and no code path that persists the calculated preview.
