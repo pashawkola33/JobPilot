@@ -519,3 +519,124 @@ preview window.
 
 **Write-back is not implemented in Phase 4B.3C-A.** There is no production rescore-enabled
 flag, no rescore command, no migration and no code path that persists the calculated preview.
+
+---
+
+## 13. Phase 4B.3C-B — guarded one-time write-back
+
+Phase 4B.3C-B turns the same pure calculation used by §12 into an immutable rescore plan and
+adds a dedicated one-shot process. Normal application startup remains unable to write stale
+scores because both controls are independently off:
+
+```dotenv
+JOBPILOT_SCORE_RESCORE_COMMAND_MODE=OFF
+JOBPILOT_SCORE_RESCORE_WRITE_ENABLED=false
+```
+
+Execution guards have no tracked defaults and must not be saved in `.env`. `WRITE` requires
+all of the following in the temporary process environment: an exact changed count, the exact
+fresh plan fingerprint, an explicit maximum-job ceiling, and the literal confirmation
+`APPLY_STALE_SCORE_PLAN_ONCE`. Missing, malformed or mismatched values stop before the
+transactional writer is called.
+
+### Immutable plan and fingerprint
+
+The repeatable-read planner selects the same SQL-bounded population as the Phase 4B.3C-A
+preview: existing score rows for MATCH/REVIEW jobs only. It never manufactures a score for a
+scoreless job and repeats the REJECT invariant in memory. Each changed entry is an immutable
+snapshot containing the score-row and requirements-row identities and versions, screening
+disposition, source-content hashes, old and new complete `ScoreCard` values, old and new
+complete `ExtractedRequirements` values, and the previous score timestamp.
+
+The plan fingerprint is lowercase hexadecimal SHA-256 over a versioned, length-prefixed UTF-8
+canonical stream. Changed records are sorted by numeric job ID. Scalar fields have explicit
+names; null is encoded distinctly from an empty value; lists are length-prefixed and sorted
+where they represent sets. The stream includes at least job ID, source-content/description
+hashes, row IDs, old score timestamp, old/new score and band, old/new inferred seniority,
+old/new blockers, penalty totals and penalty/risk sets. It additionally includes every score
+component and every extracted requirement, so an otherwise subtle stored-state change also
+invalidates the fingerprint. Raw requirements JSON is represented only by its SHA-256 hash;
+vacancy text and raw JSON are never logged.
+
+The ordinary startup preview continues to omit the complete fingerprint. The dedicated
+`PREVIEW` command is the explicit operator step and emits the complete fingerprint once with
+the bounded report. A fresh plan must be used for the write; an old fingerprint cannot be
+reused after successful persistence.
+
+### Atomic write boundary
+
+Guard validation happens before the transactional writer. The writer then uses one database
+transaction for the complete plan, obtains pessimistic write locks on every planned
+`job_scores` and `job_requirements` row in job-ID order, and rechecks row identity, persisted
+values, score timestamp, source-content hashes and screening disposition. It recalculates
+each target with `JobScoreCalculator` inside that transaction and requires the reconstructed
+plan and fingerprint to equal the previewed plan before changing the first entity.
+
+Existing entities are updated in place: all planned score rows receive their fresh score card
+and one common scoring timestamp; a requirements row is updated only when its extracted value
+differs. Primary keys and row counts are preserved. Any stale target, missing target,
+calculation/serialization error, database failure or lock-time failure throws from the single
+transaction and rolls back every target. After success a preview has zero changes; a repeated
+command carrying the old count/fingerprint fails closed.
+
+| May change | Must not change |
+|---|---|
+| Existing planned `job_scores` values and `scored_at` | `jobs`, including description, screening and identity |
+| Existing planned `job_requirements` values when extraction differs | workflow/application/history state |
+| Nothing else | ingestion runs, source fetch logs, tenant attempts/health |
+|  | Telegram state/delivery, candidate truth, LLM/document state |
+|  | schema/Flyway history, row counts and primary keys |
+
+### Dedicated operator procedure
+
+Build, test, commit and push the implementation before production data is touched. Confirm
+`main == origin/main`, confirm no ingestion is running, and capture counts, maximum timestamps
+and deterministic table fingerprints for jobs, scores, requirements, workflow, ingestion,
+source fetch, tenant attempts/health and Telegram state. Stop only the normal application;
+leave PostgreSQL and its volume running:
+
+```bash
+docker compose stop app
+
+docker compose run --rm --no-deps \
+  -e SPRING_MAIN_WEB_APPLICATION_TYPE=none \
+  -e JOBPILOT_SCHEDULING_ENABLED=false \
+  -e TELEGRAM_COMMANDS_ENABLED=false \
+  -e TELEGRAM_BOT_ENABLED=false \
+  -e JOBPILOT_SCORE_RESCORE_COMMAND_MODE=PREVIEW \
+  -e JOBPILOT_SCORE_RESCORE_MAX_JOBS=250 \
+  app
+```
+
+The command refuses to run unless web mode is `none`, scheduled-task registration is disabled
+and Telegram polling is disabled. It exits after printing the bounded preview, changed count
+and fingerprint. Compare every changed ID and old/new score with the approved plan. If any
+value differs, do not write. Otherwise copy the fresh fingerprint only into this one shell
+invocation and execute exactly once:
+
+```bash
+docker compose run --rm --no-deps \
+  -e SPRING_MAIN_WEB_APPLICATION_TYPE=none \
+  -e JOBPILOT_SCHEDULING_ENABLED=false \
+  -e TELEGRAM_COMMANDS_ENABLED=false \
+  -e TELEGRAM_BOT_ENABLED=false \
+  -e JOBPILOT_SCORE_RESCORE_COMMAND_MODE=WRITE \
+  -e JOBPILOT_SCORE_RESCORE_WRITE_ENABLED=true \
+  -e JOBPILOT_SCORE_RESCORE_EXPECTED_CHANGED_COUNT=17 \
+  -e JOBPILOT_SCORE_RESCORE_EXPECTED_PLAN_FINGERPRINT=<fresh-preview-sha256> \
+  -e JOBPILOT_SCORE_RESCORE_MAX_JOBS=250 \
+  -e JOBPILOT_SCORE_RESCORE_CONFIRMATION=APPLY_STALE_SCORE_PLAN_ONCE \
+  app
+```
+
+Require a clean zero exit, then rerun the `PREVIEW` command and require `changed=0`. Recreate
+only the normal application without temporary overrides:
+
+```bash
+docker compose up -d --force-recreate --no-deps app
+```
+
+Finally compare all pre/post table evidence, confirm only the planned score and differing
+requirements rows changed, and verify health, schema V12, the six-hour ingestion cron and
+Telegram's 15-second poll timeout. Never run a second normal application during the command,
+edit `.env`, invoke ingestion, send Telegram commands, stop PostgreSQL, or remove volumes.

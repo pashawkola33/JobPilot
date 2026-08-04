@@ -246,6 +246,13 @@ Important variables:
 | `BUILD_COMMIT` | No | Safe health commit token; default `unknown` |
 | `JOBPILOT_SCORE_RESCORE_PREVIEW_ENABLED` | No | Runs one read-only stale-score preview at startup; default `false` |
 | `JOBPILOT_SCORE_RESCORE_PREVIEW_MAX_JOBS` | No | Preview cap, `1`–`1000`; default `250` |
+| `JOBPILOT_SCORE_RESCORE_COMMAND_MODE` | No | Dedicated one-shot mode: `OFF`, `PREVIEW`, or `WRITE`; default `OFF` |
+| `JOBPILOT_SCORE_RESCORE_WRITE_ENABLED` | No | Independent write capability gate; default `false` |
+| `JOBPILOT_SCORE_RESCORE_EXPECTED_CHANGED_COUNT` | Write only | Fresh plan's exact changed-row count; no default |
+| `JOBPILOT_SCORE_RESCORE_EXPECTED_PLAN_FINGERPRINT` | Write only | Fresh plan's exact SHA-256 fingerprint; no default |
+| `JOBPILOT_SCORE_RESCORE_MAX_JOBS` | One-shot command | Explicit inspection/write ceiling, `1`–`1000`; no default |
+| `JOBPILOT_SCORE_RESCORE_CONFIRMATION` | Write only | Exact one-time confirmation phrase documented in the operator procedure; no default |
+| `JOBPILOT_SCHEDULING_ENABLED` | No | Registers ingestion, digest, Telegram-polling and maintenance schedules; default `true`; must be `false` for one-shot rescore commands |
 | `GREENHOUSE_BOARD_TOKENS` | At least one source | Comma-separated Greenhouse board tokens |
 | `LEVER_COMPANY_IDS` | At least one source | Comma-separated Lever company identifiers |
 | `ASHBY_BOARD_NAMES` | At least one source | Comma-separated Ashby board names |
@@ -466,8 +473,11 @@ Compose waits for a bounded PostgreSQL 16 health check before starting the app, 
 
 The stale-score preview is also disabled by default. It performs one bounded, repeatable-read
 comparison at application startup and logs sanitized score and queue projections without
-updating any row. See [the zero-score diagnosis](docs/scoring-zero-diagnosis.md#12-phase-4b3c-a-read-only-stale-score-preview)
-for its exact guarded run procedure. Score write-back is not implemented.
+updating any row. A separate `PREVIEW`/`WRITE` command mode is one-shot, refuses to run while
+scheduled tasks are registered, and keeps write capability behind an additional default-off
+gate plus exact count, fingerprint, cap and confirmation guards. See
+[the zero-score diagnosis](docs/scoring-zero-diagnosis.md#13-phase-4b3c-b-guarded-one-time-write-back)
+for the architecture and operator procedure. Never store execution guards in `.env`.
 
 Stop without deleting PostgreSQL data:
 
