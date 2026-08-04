@@ -66,6 +66,41 @@ class JobProcessorTest {
                 .contains("SOFTWARE_DEVELOPMENT_ROLE");
     }
 
+    /**
+     * Pins the healing behaviour relied on by Phase 4B.3B: an unchanged vacancy reuses its
+     * stored score row rather than recomputing it, so a scoring or extraction fix does NOT
+     * retroactively heal already-persisted jobs. Content must actually change first.
+     */
+    @Test
+    void unchangedVacancyReusesItsStoredScoreRowRatherThanRecomputingIt() {
+        var first = processor.process(rawWithIdentity("heal-1", "Java Developer Intern",
+                "Bucharest, Romania", "Java internship in Bucharest with mentorship."));
+        Long scoreRowId = scoreRowId(first.job().getId());
+
+        var again = processor.process(rawWithIdentity("heal-1", "Java Developer Intern",
+                "Bucharest, Romania", "Java internship in Bucharest with mentorship."));
+
+        assertThat(again.persistenceOutcome()).isEqualTo(JobPersistenceOutcome.UNCHANGED);
+        // Same physical row: extractScoreAndSave deletes and reinserts, so a recompute would
+        // have produced a new identity.
+        assertThat(scoreRowId(again.job().getId())).isEqualTo(scoreRowId);
+    }
+
+    /** Changed content does rebuild the score row, which is the path a re-ingest must take. */
+    @Test
+    void changedVacancyContentRebuildsTheScoreRow() {
+        var first = processor.process(rawWithIdentity("heal-2", "Java Developer Intern",
+                "Bucharest, Romania", "Java internship in Bucharest with mentorship."));
+        Long scoreRowId = scoreRowId(first.job().getId());
+
+        var updated = processor.process(rawWithIdentity("heal-2", "Java Developer Intern",
+                "Bucharest, Romania",
+                "Java internship in Bucharest with mentorship and Spring Boot, REST and SQL."));
+
+        assertThat(updated.persistenceOutcome()).isEqualTo(JobPersistenceOutcome.UPDATED);
+        assertThat(scoreRowId(updated.job().getId())).isNotEqualTo(scoreRowId);
+    }
+
     @Test
     void unchangedJobIsRecordedAsSeenWithoutANewRowOrScore() {
         var first = processor.process(raw("Java internship in Bucharest with mentorship."));
@@ -371,6 +406,11 @@ class JobProcessorTest {
 
         assertThat(scores.findDigest(accepted.score().band(), Instant.EPOCH, Pageable.ofSize(10)))
                 .isEmpty();
+    }
+
+    /** Physical job_scores row identity; extractScoreAndSave deletes and reinserts. */
+    private Long scoreRowId(Long jobId) {
+        return jdbc.queryForObject("select id from job_scores where job_id = ?", Long.class, jobId);
     }
 
     private RawJob raw(String description) {
