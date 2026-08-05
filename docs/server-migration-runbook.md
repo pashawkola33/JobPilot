@@ -474,7 +474,7 @@ Docker images plus the database plus 14 dumps stay well under 10 GB, so a rising
 or image leak.
 
 ```cron
-0 6 * * * df -h / | awk 'NR==2 && int($5) > 80 {print "jobpilot: disk " $5}' 
+0 6 * * * df -h / | awk 'NR==2 && int($5) > 80 {print "jobpilot: disk " $5}'
 ```
 
 Route the output to mail or a Telegram message. Also prune unused images after each deployment:
