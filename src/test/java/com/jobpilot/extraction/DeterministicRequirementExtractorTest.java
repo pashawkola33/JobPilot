@@ -180,6 +180,106 @@ class DeterministicRequirementExtractorTest {
                 "Apply to our graduate programme in Bucharest.")).internshipOrTrainee()).isTrue();
     }
 
+    // ------------------------------------------------- 4B.5B-A: other-person seniority contexts
+
+    @Test
+    void mentoringLessSeniorEngineersIsNotASeniorRole() {
+        assertThat(seniorityOf("System Software Engineer",
+                "You will be discussing design with other team members, mentor less senior "
+                        + "engineers, and participate in code reviews."))
+                .isNotEqualTo("SENIOR");
+    }
+
+    @Test
+    void boundedVariantsOfTheLessSeniorPhraseAreAlsoExcluded() {
+        assertThat(seniorityOf("Software Engineer", "You will be mentoring less senior colleagues."))
+                .isNotEqualTo("SENIOR");
+        assertThat(seniorityOf("Software Engineer", "The role mentors less senior developers."))
+                .isNotEqualTo("SENIOR");
+        assertThat(seniorityOf("Software Engineer", "Coaching less senior team members is expected."))
+                .isNotEqualTo("SENIOR");
+    }
+
+    @Test
+    void escalatingToSeniorLevelEmployeesIsNotASeniorRole() {
+        assertThat(seniorityOf("Data Engineering Specialist III",
+                "Escalates unsolvable problems beyond individual knowledge and scope to senior "
+                        + "level employees proficient in data programming languages."))
+                .isNotEqualTo("SENIOR");
+    }
+
+    @Test
+    void boundedVariantsOfTheEscalationPhraseAreAlsoExcluded() {
+        assertThat(seniorityOf("Support Engineer", "Escalate complex issues to senior staff."))
+                .isNotEqualTo("SENIOR");
+        assertThat(seniorityOf("Support Engineer", "Tickets are escalated to a senior engineer."))
+                .isNotEqualTo("SENIOR");
+        assertThat(seniorityOf("Support Engineer",
+                "Escalation of unresolved incidents goes to our senior on-call responders."))
+                .isNotEqualTo("SENIOR");
+    }
+
+    @Test
+    void genuineSeniorWordingSurvivesTheNewExclusions() {
+        assertThat(seniorityOf("AI Engineer",
+                "As a senior AI engineer at GitLab, you'll help build the foundation for "
+                        + "our transformation.")).isEqualTo("SENIOR");
+        assertThat(seniorityOf("Postgres Engineer",
+                "About the role: we are looking for a senior engineer to join the team."))
+                .isEqualTo("SENIOR");
+        assertThat(seniorityOf("Content Specialist", "Career stage: Senior Associate."))
+                .isEqualTo("SENIOR");
+        assertThat(seniorityOf("Software Engineer",
+                "As a mid level backend engineer on the platform team you will ship features."))
+                .isEqualTo("MIDDLE");
+    }
+
+    /**
+     * The exclusions must not become a wildcard: a genuine level word elsewhere in a long
+     * description still has to win, and the phrases that look similar but describe the vacancy
+     * itself must survive.
+     */
+    @Test
+    void newExclusionsStayBounded() {
+        // A genuine senior statement in a later sentence is not suppressed by an earlier
+        // escalation clause.
+        assertThat(seniorityOf("Engineer",
+                "Escalate blocked work to senior staff. We are hiring a senior engineer for "
+                        + "this position.")).isEqualTo("SENIOR");
+        // "senior level" describing the advertised openings is untouched: no escalation verb.
+        assertThat(seniorityOf("Talent Scientist",
+                "We have a number of mid-senior level openings in our team."))
+                .isEqualTo("SENIOR");
+        // Escalation far away from the level word stays outside the bounded window.
+        assertThat(seniorityOf("Engineer",
+                "Escalation paths are documented in the handbook and reviewed twice a year by "
+                        + "the operations guild during their planning cycle. We seek a senior "
+                        + "engineer.")).isEqualTo("SENIOR");
+        // Plain "senior engineers" without a trigger context is still a signal.
+        assertThat(seniorityOf("Engineer", "We are growing our team of senior engineers."))
+                .isEqualTo("SENIOR");
+    }
+
+    /**
+     * Regression fixtures standing in for production jobs 86 and 98. Wording is paraphrased
+     * from the single triggering clause of each vacancy; full descriptions are not copied.
+     */
+    @Test
+    void productionRegressionFixturesForJobs86And98() {
+        // job 86 - greenhouse/canonical, System Software Engineer, GCC/LLVM toolchain.
+        assertThat(seniorityOf("System Software Engineer - compiler, tooling, and ecosystem",
+                "You will design and build toolchain components in a future-proof fashion. You "
+                        + "will be discussing design with other team members, mentor less senior "
+                        + "engineers, and participate in code reviews and design reviews."))
+                .isEqualTo("UNKNOWN");
+        // job 98 - smartrecruiters/AECOM2, Data Engineering Specialist III.
+        assertThat(seniorityOf("Data Engineering Specialist III",
+                "Builds and maintains pipelines across varied data sources. Escalates "
+                        + "unsolvable problems beyond individual knowledge and scope to senior "
+                        + "level employees proficient in data programming languages."))
+                .isEqualTo("UNKNOWN");
+    }
+
     private Job jobWithDescription(String title, String description) {
         return normalizer.normalize(new RawJob("fixture", "text-1", "https://example.com/jobs/text-1",
                 title, "Example", "Bucharest, Romania", description, null,

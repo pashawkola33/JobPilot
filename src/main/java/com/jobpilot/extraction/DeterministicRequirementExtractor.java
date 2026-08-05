@@ -32,8 +32,14 @@ public class DeterministicRequirementExtractor {
             "(?i)\\b(?:junior|entry[- ]level|graduate)\\b");
 
     /**
-     * A level word attached to other people: colleagues, stakeholders, leadership, or the
-     * person the role reports to. None of these describe the advertised vacancy.
+     * A level word attached to other people: colleagues, stakeholders, leadership, the person
+     * the role reports to, the engineers the role mentors, or the people work is escalated to.
+     * None of these describe the advertised vacancy.
+     *
+     * <p>Every alternative needs its own trigger context. There is deliberately no blanket rule
+     * for "mentor", "senior engineers", "senior employees" or "senior level" on their own: those
+     * appear in genuine role descriptions too ("mid-senior level openings"), and a broad
+     * exclusion would silently downgrade real mid/senior vacancies.
      */
     private static final Pattern OTHER_PEOPLE_SENIORITY = Pattern.compile(
             "(?i)\\bsenior\\b\\s+(?:colleagues?|stakeholders?|leadership|management|leaders?|"
@@ -43,7 +49,15 @@ public class DeterministicRequirementExtractor {
                     + "\\s+(?:of|from|by)\\s+(?:an?\\s+|the\\s+|our\\s+)?\\bsenior\\b"
                     + "|\\b(?:work|working|collaborate|collaborating|liaise|liaising|partner|"
                     + "partnering|engage|engaging|paired?)\\s+(?:closely\\s+)?with\\s+"
-                    + "(?:an?\\s+|the\\s+|our\\s+)?\\bsenior\\b");
+                    + "(?:an?\\s+|the\\s+|our\\s+)?\\bsenior\\b"
+                    // Comparative form. "less senior" is relative by construction: it can only
+                    // describe somebody positioned below the advertised role, never the role.
+                    // Covers the whole "mentor/mentors/mentoring/coach less senior X" family.
+                    + "|\\bless\\s+senior\\b"
+                    // Escalation recipients sit above the role, so naming them says nothing
+                    // about the vacancy. Anchored on an escalation verb and kept inside one
+                    // sentence, so an unrelated later clause cannot suppress a genuine level.
+                    + "|\\bescalat\\w*\\b[^.!?]{0,80}?\\bto\\s+(?:an?\\s+|the\\s+|our\\s+)?\\bsenior\\b");
 
     /** A level word qualifying a training programme rather than the role being filled. */
     private static final Pattern PROGRAMME_AUDIENCE_LEVEL = Pattern.compile(
