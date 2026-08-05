@@ -13,6 +13,16 @@ RUN addgroup -S -g 10001 jobpilot \
     && chmod 700 /var/lib/jobpilot/documents /tmp/jobpilot
 WORKDIR /app
 COPY --from=build /workspace/target/jobpilot-*.jar /app/jobpilot.jar
+# Build identity is baked here, after the cacheable layers, so a new commit only
+# invalidates this layer. The runtime reads it through jobpilot.build.* and serves
+# it from /health; leaving these unset at runtime keeps the baked values.
+ARG BUILD_COMMIT=unknown
+ARG JOBPILOT_VERSION=unknown
+ENV BUILD_COMMIT=${BUILD_COMMIT} \
+    JOBPILOT_VERSION=${JOBPILOT_VERSION}
+LABEL org.opencontainers.image.revision=${BUILD_COMMIT} \
+      org.opencontainers.image.version=${JOBPILOT_VERSION} \
+      org.opencontainers.image.source=https://github.com/pashawkola33/JobPilot
 USER jobpilot
 EXPOSE 8080
 HEALTHCHECK --interval=20s --timeout=5s --start-period=30s --retries=3 \

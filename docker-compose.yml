@@ -22,13 +22,19 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        BUILD_COMMIT: ${BUILD_COMMIT:-unknown}
+        JOBPILOT_VERSION: ${JOBPILOT_VERSION:-unknown}
     environment:
       SPRING_PROFILES_ACTIVE: prod
       DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-jobpilot}
       POSTGRES_USER: ${POSTGRES_USER:-jobpilot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jobpilot}
-      JOBPILOT_VERSION: ${JOBPILOT_VERSION:-unknown}
-      BUILD_COMMIT: ${BUILD_COMMIT:-unknown}
+      # Declared without a value on purpose: an unset host variable is not passed at
+      # all, so the identity baked into the image wins. Assigning a `:-unknown`
+      # fallback here is what previously reported BUILD_COMMIT=unknown at runtime.
+      JOBPILOT_VERSION:
+      BUILD_COMMIT:
       JOBPILOT_SCORE_RESCORE_PREVIEW_ENABLED: ${JOBPILOT_SCORE_RESCORE_PREVIEW_ENABLED:-false}
       JOBPILOT_SCORE_RESCORE_PREVIEW_MAX_JOBS: ${JOBPILOT_SCORE_RESCORE_PREVIEW_MAX_JOBS:-250}
       JOBPILOT_SCORE_RESCORE_COMMAND_MODE: ${JOBPILOT_SCORE_RESCORE_COMMAND_MODE:-OFF}
