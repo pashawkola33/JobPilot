@@ -30,11 +30,10 @@ services:
       DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-jobpilot}
       POSTGRES_USER: ${POSTGRES_USER:-jobpilot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jobpilot}
-      # Declared without a value on purpose: an unset host variable is not passed at
-      # all, so the identity baked into the image wins. Assigning a `:-unknown`
-      # fallback here is what previously reported BUILD_COMMIT=unknown at runtime.
-      JOBPILOT_VERSION:
-      BUILD_COMMIT:
+      # JOBPILOT_VERSION and BUILD_COMMIT are intentionally not declared here. They
+      # are baked into the image from the build args above; any declaration in this
+      # block — a value, an empty string, or a null key — overrides the baked
+      # identity and makes /health report "unknown".
       JOBPILOT_SCORE_RESCORE_PREVIEW_ENABLED: ${JOBPILOT_SCORE_RESCORE_PREVIEW_ENABLED:-false}
       JOBPILOT_SCORE_RESCORE_PREVIEW_MAX_JOBS: ${JOBPILOT_SCORE_RESCORE_PREVIEW_MAX_JOBS:-250}
       JOBPILOT_SCORE_RESCORE_COMMAND_MODE: ${JOBPILOT_SCORE_RESCORE_COMMAND_MODE:-OFF}
