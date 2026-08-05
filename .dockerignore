@@ -10,6 +10,7 @@
 target
 scraper-worker
 data
+backups
 *.log
 *.pdf
 *.docx

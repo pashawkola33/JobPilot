@@ -5,6 +5,7 @@ target/
 .env
 .env.*
 !.env.example
+!.env.prod.example
 data/
 data/documents/
 *.log
