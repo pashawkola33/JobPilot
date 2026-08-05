@@ -943,3 +943,16 @@ these unchanged diagnostic fields is in scope here.
 | scheduling | enabled, `JOB_FETCH_CRON=0 0 */6 * * *` |
 | cleanup mode / write | `OFF` / `false` |
 | score rescore mode / write | `OFF` / `false` |
+
+## B7. Phase 4B.5B-B — guarded write executed
+
+Historical note only. No new analysis, no rule change.
+
+The guarded write for the plan in [B4](#b4-rescore-preview-report) was executed successfully as
+Phase 4B.5B-B against the same four planned rows: **jobs 16, 17, 86 and 98**. A preview repeated
+immediately after the write reported **changed score rows = 0 and changed requirement rows = 0**,
+so the plan applied exactly once and the corpus is now a fixed point of the corrected extractor.
+
+`JOBPILOT_SCORE_RESCORE_COMMAND_MODE` and `JOBPILOT_SOURCE_LOG_CLEANUP_MODE` returned to `OFF`
+with `write-enabled=false` after the run. The stale `job_requirements.seniority` rows described
+in [B5](#b5-stale-job_requirementsseniority--unchanged-by-design) remain unchanged, as designed.
