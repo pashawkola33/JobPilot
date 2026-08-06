@@ -1,6 +1,8 @@
 import { defineConfig } from '@playwright/test';
 
 const PORT = 5179;
+/** Second server so API-mode specs exercise a real `VITE_JOBPILOT_MODE=api` build. */
+const API_PORT = 5180;
 
 /**
  * Telegram on iOS runs a WKWebView, so WebKit is the truest engine to test against.
@@ -25,13 +27,30 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
   projects: [
-    { name: 'mobile-390', use: mobile(390, 844) },
-    { name: 'mobile-430', use: mobile(430, 932) },
-    { name: 'desktop-1024', use: { viewport: { width: 1024, height: 768 } } },
+    { name: 'mobile-390', testIgnore: /api\.spec\.ts/, use: mobile(390, 844) },
+    { name: 'mobile-430', testIgnore: /api\.spec\.ts/, use: mobile(430, 932) },
+    {
+      name: 'desktop-1024',
+      testIgnore: /api\.spec\.ts/,
+      use: { viewport: { width: 1024, height: 768 } },
+    },
+    {
+      name: 'api',
+      testMatch: /api\.spec\.ts/,
+      use: { ...mobile(390, 844), baseURL: `http://localhost:${API_PORT}` },
+    },
   ],
-  webServer: {
-    command: `npx vite --port ${PORT} --strictPort`,
-    url: `http://localhost:${PORT}`,
-    reuseExistingServer: !process.env.CI,
-  },
+  webServer: [
+    {
+      command: `npx vite --port ${PORT} --strictPort`,
+      url: `http://localhost:${PORT}`,
+      reuseExistingServer: !process.env.CI,
+    },
+    {
+      command: `npx vite --port ${API_PORT} --strictPort`,
+      url: `http://localhost:${API_PORT}`,
+      env: { VITE_JOBPILOT_MODE: 'api' },
+      reuseExistingServer: !process.env.CI,
+    },
+  ],
 });

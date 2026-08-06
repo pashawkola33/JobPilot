@@ -87,7 +87,14 @@ export function JobDetails({
 
             <section>
               <h3 className="block__title">Why this matched</h3>
-              <p className="prose">{shown.matchSummary}</p>
+              {shown.matchSummary !== null ? (
+                <p className="prose">{shown.matchSummary}</p>
+              ) : (
+                <p className="prose" style={{ color: 'var(--muted)' }}>
+                  The score above comes from deterministic screening. A written summary needs
+                  a full analysis, which JobPilot runs on request rather than for every vacancy.
+                </p>
+              )}
               <p className="eyebrow" style={{ marginTop: 'var(--s3)', lineHeight: 1.5 }}>
                 Bands — {BAND_THRESHOLDS[2]}+ excellent · {BAND_THRESHOLDS[1]}+ good ·{' '}
                 {BAND_THRESHOLDS[0]}+ possible
@@ -127,7 +134,7 @@ export function JobDetails({
                 </ul>
               </Disclosure>
 
-              {showDiagnostics && (
+              {showDiagnostics && shown.diagnostics && (
                 <Disclosure title="Diagnostics" count={shown.diagnostics.screeningReasons.length}>
                   <pre className="diagnostics" style={{ padding: '0 0 var(--s3)' }}>
                     {`job ${shown.id}\ntenant ${shown.diagnostics.providerTenant}\nexternal ${shown.diagnostics.externalId}\n\n${shown.diagnostics.screeningReasons

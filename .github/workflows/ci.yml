@@ -62,10 +62,118 @@ jobs:
           echo "version=$(./mvnw -q -DforceStdout help:evaluate -Dexpression=project.version)" \
             >> "$GITHUB_OUTPUT"
 
+  mini-app:
+    name: Verify Mini App
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mini-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # 22.x, which satisfies Vite's "20.19+ or 22.12+" floor.
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mini-app/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Production build
+        run: npm run build
+
+      # Every Playwright project in playwright.config.ts is Chromium, so only Chromium
+      # is downloaded. Add browsers here if a project ever names another engine.
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Playwright tests
+        run: npm test
+
+  image:
+    name: Verify container image
+    # No `if`: this runs for pull requests as well as pushes to main, so a Dockerfile or
+    # packaging regression is caught in review rather than after merge. It never logs in,
+    # never pushes, needs no secret and touches no deployment host — only the default
+    # read-only `contents` permission and a tag that exists on this runner alone.
+    needs: [verify, mini-app]
+    runs-on: ubuntu-latest
+    env:
+      LOCAL_IMAGE: jobpilot:ci-${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Same context, platform and build args as the release build, so this warms the
+      # very cache that job reads and the layers it verifies are the ones published.
+      - name: Build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          push: false
+          platforms: linux/amd64
+          provenance: false
+          build-args: |
+            BUILD_COMMIT=${{ github.sha }}
+            JOBPILOT_VERSION=${{ needs.verify.outputs.version }}
+          tags: ${{ env.LOCAL_IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # `docker create` materialises the filesystem and stops there: the entrypoint never
+      # runs, so no scheduler, no Telegram poller, no database and no network call are
+      # involved. Everything below is a static inspection of that filesystem.
+      - name: Mini App is packaged, and Node is not
+        run: |
+          set -euo pipefail
+          container="$(docker create "$LOCAL_IMAGE")"
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          docker export "$container" -o image.tar
+          tar -tf image.tar > files.txt
+          tar -xf image.tar app/jobpilot.jar
+
+          unzip -Z1 app/jobpilot.jar \
+            | grep '^BOOT-INF/classes/static/mini-app/' > packaged.txt || true
+          echo "::group::Mini App entries in the jar"
+          cat packaged.txt
+          echo "::endgroup::"
+
+          require() {
+            grep -qE "$1" packaged.txt \
+              || { echo "::error::$2 is missing from the image"; exit 1; }
+          }
+          require '^BOOT-INF/classes/static/mini-app/index\.html$' 'the Mini App shell'
+          require '^BOOT-INF/classes/static/mini-app/assets/.+\.js$' 'the Mini App JS bundle'
+          require '^BOOT-INF/classes/static/mini-app/assets/.+\.css$' 'the Mini App stylesheet'
+
+          # The Node toolchain builds the Mini App in its own stage and must not survive
+          # into the runtime image, along with anything else it drags in. `grep -m` caps
+          # the evidence without a pipe: piping into `head` under `pipefail` surfaces
+          # grep's SIGPIPE instead, which loses the message that says what leaked.
+          for leak in 'node_modules/' 'bin/node$' 'bin/npm$' 'bin/npx$' '\.tsx?$'; do
+            found="$(grep -m 10 -E "$leak" files.txt || true)"
+            if [ -n "$found" ]; then
+              printf '%s\n' "$found"
+              echo "::error::$leak leaked into the runtime image"; exit 1
+            fi
+          done
+          echo "OK: the jar carries the Mini App and the runtime image carries no Node."
+
   release:
     name: Publish container image
-    # Fails closed: no image is built unless every check in `verify` passed.
-    needs: verify
+    # Fails closed: nothing is published unless the backend, the Mini App and the image
+    # inspection all passed.
+    needs: [verify, mini-app, image]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:

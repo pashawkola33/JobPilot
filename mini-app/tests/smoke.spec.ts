@@ -80,8 +80,19 @@ test('applications filter down to a single stage and back', async ({ page }) => 
 test('a failed load explains itself and offers a retry', async ({ page }) => {
   await page.goto('/?mock=fail');
 
-  await expect(page.getByRole('heading', { name: 'Vacancies did not load' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'JobPilot is unreachable' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
+});
+
+test('a rejected mock write is rolled back and explained', async ({ page }) => {
+  await page.goto('/?mock=fail-write');
+  await page.getByRole('button', { name: /^Review(,|$)/ }).click();
+  await expect(page.getByRole('heading', { name: 'Junior Java Backend Engineer' })).toBeVisible();
+
+  await page.locator('.actions').getByRole('button', { name: 'Save' }).click();
+
+  await expect(page.getByRole('alert')).toContainText('Change was rejected');
+  await expect(page.getByRole('heading', { name: 'Junior Java Backend Engineer' })).toBeVisible();
 });
 
 test('the dark theme repaints the surfaces', async ({ page }) => {

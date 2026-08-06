@@ -1,5 +1,6 @@
 import { AnimatePresence, motion } from 'motion/react';
-import type { Job, WorkflowStatus } from '../data/types';
+import type { FailureKind, Job, WorkflowStatus } from '../data/types';
+import { FAILURE_MESSAGES } from '../data/types';
 import type { UndoEntry } from '../lib/useJobPilot';
 import { openLink } from '../lib/telegram';
 import { IconChevronRight, IconEmpty, IconExternal } from '../components/icons';
@@ -13,8 +14,10 @@ export function Review({
   total,
   direction,
   undo,
+  writeFailure,
   onDecide,
   onUndo,
+  onDismissWriteFailure,
   onNext,
   onDetails,
   onGoSaved,
@@ -24,8 +27,10 @@ export function Review({
   total: number;
   direction: number;
   undo: UndoEntry | null;
+  writeFailure: FailureKind | null;
   onDecide: (job: Job, status: WorkflowStatus, action: string) => void;
   onUndo: () => void;
+  onDismissWriteFailure: () => void;
   onNext: () => void;
   onDetails: (job: Job) => void;
   onGoSaved: () => void;
@@ -94,7 +99,21 @@ export function Review({
 
       {/* The footer anchors the undo toast whether or not the action bar is present. */}
       <div className="review__foot">
-        <UndoToast undo={undo} onUndo={onUndo} />
+        {writeFailure ? (
+          // A rejected write has already been rolled back; this says so and gets out of
+          // the way. role="alert" because it appears without the user asking.
+          <div className="toast" role="alert">
+            <span className="toast__text">
+              {FAILURE_MESSAGES[writeFailure].title}
+              <span className="toast__title">Your change was not saved.</span>
+            </span>
+            <button type="button" className="toast__undo" onClick={onDismissWriteFailure}>
+              Dismiss
+            </button>
+          </div>
+        ) : (
+          <UndoToast undo={undo} onUndo={onUndo} />
+        )}
         {job && (
           <div className="actions">
             <OpenVacancy url={job.canonicalUrl} />

@@ -9,16 +9,21 @@ import { bandLabel } from '../lib/format';
  *
  * Score is carried three ways — numeral, band name, bar position — never colour alone.
  */
-export function ScoreRail({ score, band }: { score: number; band: ScoreBand }) {
+export function ScoreRail({ score, band }: { score: number; band: ScoreBand | null }) {
   const reduced = useReducedMotion();
-  const label = bandLabel(band);
+  // No band row rather than a guessed one: the label is the backend's judgement, not ours.
+  const label = band === null ? null : bandLabel(band);
 
   return (
-    <div className="rail" role="img" aria-label={`Match score ${score} out of 100. ${label}.`}>
+    <div
+      className="rail"
+      role="img"
+      aria-label={`Match score ${score} out of 100.${label === null ? '' : ` ${label}.`}`}
+    >
       <div className="rail__head">
         <span className="rail__score">{score}</span>
         <span className="rail__of">/100</span>
-        <span className="rail__band">{label}</span>
+        {label !== null && <span className="rail__band">{label}</span>}
       </div>
 
       <div className="rail__track">

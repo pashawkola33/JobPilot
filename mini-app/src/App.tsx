@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AnimatePresence, MotionConfig, motion } from 'motion/react';
-import type { Job } from './data/types';
+import type { FailureKind, Job } from './data/types';
+import { FAILURE_MESSAGES } from './data/types';
 import { useJobPilot } from './lib/useJobPilot';
 import { colorScheme, onColorSchemeChange, ready, setBackButton } from './lib/telegram';
 import { BottomNav } from './components/BottomNav';
@@ -12,6 +13,9 @@ import { Saved } from './features/Saved';
 import { Applications } from './features/Applications';
 import { Settings } from './features/Settings';
 import { JobDetails } from './features/JobDetails';
+
+/** Failures a retry can plausibly clear. The rest need Telegram or an operator. */
+const RETRYABLE = new Set<FailureKind>(['unavailable', 'not-found', 'conflict']);
 
 export type Screen = 'discover' | 'review' | 'saved' | 'applications' | 'settings';
 export type ThemeMode = 'telegram' | 'light' | 'dark';
@@ -51,12 +55,15 @@ export function App() {
           {store.phase === 'error' && (
             <State
               mark={<IconAlert />}
-              title="Vacancies did not load"
-              text="The request to JobPilot failed before any vacancy arrived. Nothing was lost — try again."
+              title={FAILURE_MESSAGES[store.failure].title}
+              text={FAILURE_MESSAGES[store.failure].text}
               action={
-                <button type="button" className="btn btn--primary" onClick={store.reload}>
-                  Try again
-                </button>
+                // Retrying cannot fix who you are or what the server has switched off.
+                RETRYABLE.has(store.failure) ? (
+                  <button type="button" className="btn btn--primary" onClick={store.reload}>
+                    Try again
+                  </button>
+                ) : undefined
               }
             />
           )}
@@ -88,8 +95,10 @@ export function App() {
                     total={store.total}
                     direction={store.direction}
                     undo={store.undo}
+                    writeFailure={store.writeFailure}
                     onDecide={store.decide}
                     onUndo={store.revert}
+                    onDismissWriteFailure={store.dismissWriteFailure}
                     onNext={store.skipToNext}
                     onDetails={setDetails}
                     onGoSaved={() => setScreen('saved')}

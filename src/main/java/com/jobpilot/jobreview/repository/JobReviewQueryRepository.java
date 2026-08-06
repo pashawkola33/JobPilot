@@ -94,6 +94,42 @@ public class JobReviewQueryRepository {
                 .stream().findFirst();
     }
 
+    /**
+     * One bounded page of active vacancies for the Mini App, in the same order the triage
+     * queues use. Everything selected already lives in jobs or job_scores: no LLM analysis
+     * is loaded, and nothing here fans out into a per-row query.
+     */
+    public List<MiniAppJobRow> findMiniAppJobs(int limit) {
+        String sql = COLUMNS + ", j.remote_type, j.seniority_level, j.employment_type, "
+                + "s.band, s.strengths, s.risks" + FROM + " where " + ACTIVE + ORDER
+                + " limit :limit";
+        RowMapper<JobQueueItem> items = itemMapper();
+        return jdbc.query(sql, new MapSqlParameterSource("limit", limit), (rs, row) ->
+                new MiniAppJobRow(items.mapRow(rs, row),
+                        rs.getString("remote_type"), rs.getString("seniority_level"),
+                        rs.getString("employment_type"), rs.getString("band"),
+                        pipeSeparated(rs.getString("strengths")),
+                        pipeSeparated(rs.getString("risks"))));
+    }
+
+    /** The queue projection plus the columns only the Mini App card needs. */
+    public record MiniAppJobRow(
+            JobQueueItem item,
+            String remoteType,
+            String seniorityLevel,
+            String employmentType,
+            String band,
+            List<String> strengths,
+            List<String> risks) {
+    }
+
+    /** JobScore stores these as a single '|'-joined column. */
+    private static List<String> pipeSeparated(String value) {
+        if (value == null || value.isBlank()) return List.of();
+        return java.util.Arrays.stream(value.split("\\|")).map(String::strip)
+                .filter(entry -> !entry.isEmpty()).toList();
+    }
+
     public JobReviewStats stats() {
         String sql = "select "
                 + "count(*) filter (where w.job_id is null "

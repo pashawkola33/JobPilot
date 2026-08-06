@@ -21,14 +21,33 @@ public record JobPilotProperties(
         ManualUrl manualUrl,
         Llm llm,
         Scheduling scheduling,
+        MiniApp miniApp,
         List<String> searchTerms,
         List<String> locations) {
 
+    /** Explicit because the legacy convenience constructor below makes binding ambiguous. */
+    @ConstructorBinding
     public JobPilotProperties {
         telegram = telegram == null ? new Telegram("", "") : telegram;
         sources = sources == null ? Sources.empty() : sources;
         eligibility = eligibility == null ? Eligibility.defaults() : eligibility;
         llm = llm == null ? Llm.disabled() : llm;
+        miniApp = miniApp == null ? MiniApp.disabled() : miniApp;
+        // The Mini App validates initData with the bot token, so it cannot run without one.
+        // Checked here because it is the only place both settings are visible.
+        if (miniApp.enabled() && (telegram.botToken() == null || telegram.botToken().isBlank())) {
+            throw new IllegalArgumentException(
+                    "Mini App API requires jobpilot.telegram.bot-token when enabled");
+        }
+    }
+
+    /** Shape before the Mini App API existed; it stays disabled, so it is inert. */
+    public JobPilotProperties(Telegram telegram, Sources sources, Eligibility eligibility,
+                              Candidate candidate, Http http, ManualUrl manualUrl, Llm llm,
+                              Scheduling scheduling, List<String> searchTerms,
+                              List<String> locations) {
+        this(telegram, sources, eligibility, candidate, http, manualUrl, llm, scheduling,
+                MiniApp.disabled(), searchTerms, locations);
     }
 
     public record Telegram(
@@ -510,5 +529,81 @@ public record JobPilotProperties(
     }
 
     public record Scheduling(String fetchCron, String digestCron, int staleDays) {
+    }
+
+    /**
+     * Telegram Mini App API. Disabled by default, and an empty allow-list is a deny-all:
+     * there is no configuration in which this surface is open to everyone.
+     *
+     * <p>Telegram user ids are not the same thing as the bot's allowed chat ids, so this
+     * keeps its own explicit list rather than reusing {@link Telegram#allowedChatIds()}.
+     */
+    public record MiniApp(
+            boolean enabled,
+            List<String> allowedUserIds,
+            Duration maxAuthAge) {
+
+        /** Telegram tokens are long-lived; anything beyond a day is not a fresh launch. */
+        public static final Duration MAX_AUTH_AGE_CEILING = Duration.ofHours(24);
+        public static final Duration DEFAULT_MAX_AUTH_AGE = Duration.ofHours(1);
+
+        @ConstructorBinding
+        public MiniApp {
+            allowedUserIds = normalizeUserIds(allowedUserIds);
+            maxAuthAge = maxAuthAge == null ? DEFAULT_MAX_AUTH_AGE : maxAuthAge;
+            if (maxAuthAge.isZero() || maxAuthAge.isNegative()
+                    || maxAuthAge.compareTo(MAX_AUTH_AGE_CEILING) > 0) {
+                throw new IllegalArgumentException(
+                        "jobpilot.mini-app.max-auth-age must be positive and at most 24h");
+            }
+            if (enabled && allowedUserIds.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "Mini App API requires at least one allowed numeric Telegram user id when enabled");
+            }
+        }
+
+        public static MiniApp disabled() {
+            return new MiniApp(false, List.of(), DEFAULT_MAX_AUTH_AGE);
+        }
+
+        /** Deny-all when empty; membership is never inferred from anything else. */
+        public boolean allows(long userId) {
+            return allowedUserIds.contains(Long.toString(userId));
+        }
+
+        @Override
+        public String toString() {
+            return "MiniApp[enabled=" + enabled + ", allowedUserIds=" + allowedUserIds.size()
+                    + " configured, maxAuthAge=" + maxAuthAge + "]";
+        }
+
+        private static List<String> normalizeUserIds(List<String> values) {
+            if (values == null) return List.of();
+            List<String> normalized = new java.util.ArrayList<>();
+            for (String value : values) {
+                String candidate = value == null ? "" : value.strip();
+                if (candidate.isEmpty()) continue;
+                if (!validUserId(candidate)) {
+                    throw new IllegalArgumentException(
+                            "Mini App allowed user ids must be positive numeric Telegram user identifiers");
+                }
+                if (normalized.contains(candidate)) {
+                    throw new IllegalArgumentException(
+                            "Mini App allowed user ids must not contain duplicates");
+                }
+                normalized.add(candidate);
+            }
+            return List.copyOf(normalized);
+        }
+
+        private static boolean validUserId(String value) {
+            if (!value.matches("[1-9]\\d{0,18}")) return false;
+            try {
+                Long.parseLong(value);
+                return true;
+            } catch (NumberFormatException invalid) {
+                return false;
+            }
+        }
     }
 }

@@ -14,6 +14,12 @@ interface TelegramWebApp {
   ready(): void;
   expand(): void;
   colorScheme: ColorScheme;
+  /**
+   * The raw, still-signed query string. `initDataUnsafe` is deliberately not declared:
+   * client-parsed identity carries no proof and must never reach an authorization
+   * decision, so nothing in this app can reach for it by accident.
+   */
+  initData: string;
   openLink(url: string): void;
   onEvent(event: 'themeChanged', handler: () => void): void;
   offEvent(event: 'themeChanged', handler: () => void): void;
@@ -34,6 +40,18 @@ const webApp: TelegramWebApp | undefined = (
 ).Telegram?.WebApp;
 
 export const available = webApp !== undefined;
+
+/**
+ * The signed launch payload, passed through untouched for the server to verify.
+ * Empty outside Telegram, and empty when Telegram supplies no launch data — both mean
+ * the app cannot authenticate, which the caller must treat as a hard stop.
+ *
+ * Read on each call rather than cached: Telegram reissues initData when the app is
+ * reopened, and a stale copy would expire against the server's auth-age window.
+ */
+export function initData(): string {
+  return webApp?.initData ?? '';
+}
 
 export function ready(): void {
   webApp?.ready();
