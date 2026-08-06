@@ -7,10 +7,9 @@
     <meta name="color-scheme" content="light dark" />
     <title>JobPilot</title>
     <!--
-      Deploying inside Telegram additionally requires the host SDK:
-      <script src="https://telegram.org/js/telegram-web-app.js"></script>
-      It is omitted here so the mock build stays offline. src/lib/telegram.ts
-      works with or without it.
+      The Telegram host SDK is injected here by the build (see vite.config.ts), so the
+      dev server and the Playwright suite stay offline. src/lib/telegram.ts works with
+      or without it.
     -->
   </head>
   <body>

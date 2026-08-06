@@ -30,23 +30,52 @@ npm install --no-save @rolldown/binding-darwin-arm64 @oxlint/binding-darwin-arm6
 | `npm run build` | Type check, then production build |
 | `npm run typecheck` | `tsc -b`, strict mode |
 | `npm run lint` | oxlint |
-| `npm test` | Playwright smoke tests at 390×844, 430×932 and 1024×768 |
+| `npm test` | Playwright: mock-mode smoke tests at 390×844, 430×932 and 1024×768, plus API-mode specs |
 
-`npm test` starts its own dev server on port 5179.
+`npm test` starts its own dev servers — 5179 in mock mode, 5180 in API mode — and needs
+no backend: the API specs fake Telegram in the page and the API at the network boundary.
 
-## Mock mode
+## Mock mode and API mode
 
-`src/data/repository.ts` implements `JobPilotRepository` against the fixtures in
-`src/data/sample.ts`. Twelve vacancies and eight tracked applications, shaped after the
-candidate profile the backend scorer is calibrated for: early-career Java backend,
-Bucharest, remote-eligible from Romania. Company names are fictional — these are
-fabricated postings and must not be attributable to a real employer.
+The build picks one `JobPilotRepository` implementation from `VITE_JOBPILOT_MODE`:
 
-Loads carry ~420 ms of artificial latency so the loading state is real. Workflow
-mutations are applied optimistically in the client; the repository call only models the
-round trip.
+| Mode | Value | Implementation | Needs |
+| --- | --- | --- | --- |
+| Mock | unset, or `mock` (default) | `src/data/mockRepository.ts` | nothing |
+| API | `api` | `src/data/httpRepository.ts` | JobPilot served same-origin, opened inside Telegram |
 
-Append `?mock=fail` to the URL to make the initial load reject and see the error state.
+```bash
+npm run dev                              # mock
+VITE_JOBPILOT_MODE=api npm run dev       # API
+```
+
+`src/data/repository.ts` is the whole selector. Mock stays the default so `npm run dev`
+and the smoke tests never need a server.
+
+### Mock mode
+
+Fixtures live in `src/data/sample.ts`: twelve vacancies and eight tracked applications,
+shaped after the candidate profile the backend scorer is calibrated for — early-career
+Java backend, Bucharest, remote-eligible from Romania. Company names are fictional; these
+are fabricated postings and must not be attributable to a real employer.
+
+Loads carry ~420 ms of artificial latency so the loading state is real. Append
+`?mock=fail` to reject the initial load, or `?mock=fail-write` to reject mutations and
+watch the optimistic change roll back.
+
+### API mode
+
+Requests go to same-origin relative paths under `/api/mini-app/v1`, so no CORS rule and
+no preflight are involved. Every request carries the raw, still-signed
+`Telegram.WebApp.initData` in an `X-Telegram-Init-Data` header — never a query parameter,
+never a cookie, never `localStorage`, never a log line. Requests abort after 10s.
+
+Outside Telegram, or when Telegram supplies no launch data, API mode **fails closed** with
+"Open JobPilot from Telegram". It never falls back to mock data.
+
+Three fields the mock has are honestly absent in API mode, because serving them would mean
+an LLM call per vacancy or an endpoint that does not exist: `matchSummary` (null — the
+detail sheet says so rather than inventing prose), `requirements` and `activity` (empty).
 
 ## Telegram environment adapter
 
@@ -79,7 +108,7 @@ theme it opens in. Every tinted element resolves to `--accent`.
 
 ## Backend integration boundary
 
-Replacing the mock means implementing two methods in `src/data/types.ts`:
+The whole seam is two methods in `src/data/types.ts`; nothing else talks to a server:
 
 ```ts
 interface JobPilotRepository {
@@ -88,7 +117,82 @@ interface JobPilotRepository {
 }
 ```
 
-Nothing else in the app talks to a server.
+### Endpoints
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/mini-app/v1/snapshot` | Up to 50 active vacancies and the 20 newest tracked applications |
+| `PUT` | `/api/mini-app/v1/jobs/{jobId}/workflow` | Body `{"status":"SAVED\|APPLIED\|DISMISSED\|UNREVIEWED"}`; idempotent |
+
+Errors share the project's `{ "category", "message" }` shape. `httpRepository` maps
+`category` to one of the messages in `FAILURE_MESSAGES`:
+
+| HTTP | `category` | Shown as |
+| --- | --- | --- |
+| 503 | `MINI_APP_DISABLED` | Mini App is switched off |
+| 401 | `UNAUTHENTICATED` | Sign-in details missing |
+| 401 | `INVALID_AUTH` | Sign-in could not be verified |
+| 401 | `EXPIRED_AUTH` | Session expired |
+| 403 | `FORBIDDEN` | Account not allowed |
+| 404 | `JOB_NOT_FOUND` | Vacancy no longer available |
+| 409 | `INVALID_WORKFLOW` | Change was rejected |
+
+The server answers malformed, tampered and wrongly-signed payloads identically, so no
+response reveals which check rejected it.
+
+### Server configuration
+
+| Key | Env | Default | Notes |
+| --- | --- | --- | --- |
+| `jobpilot.mini-app.enabled` | `MINI_APP_API_ENABLED` | `false` | Off returns 503 from every Mini App route |
+| `jobpilot.mini-app.allowed-user-ids` | `MINI_APP_ALLOWED_USER_IDS` | empty | Numeric Telegram **user** ids; empty denies everyone, and enabling without them fails startup |
+| `jobpilot.mini-app.max-auth-age` | `MINI_APP_MAX_AUTH_AGE` | `1h` | Maximum 24h; 5 minutes of forward clock skew is tolerated |
+
+Enabling also requires `TELEGRAM_BOT_TOKEN`, which signs the initData being verified.
+Telegram user ids are not chat ids, so the Mini App keeps its own allow-list rather than
+reusing `TELEGRAM_ALLOWED_CHAT_IDS`.
+
+### Packaging
+
+The production image builds and carries the Mini App itself; there is no separate
+frontend host, no CDN and no static bucket:
+
+```
+Dockerfile
+  node:22-alpine   npm ci → VITE_JOBPILOT_MODE=api npm run build → dist/
+  maven            dist/ → src/main/resources/static/mini-app/ → mvn package
+  temurin JRE      the jar only — no Node, no npm, no node_modules, no sources
+```
+
+`vite.config.ts` sets `base: '/mini-app/'` for builds and injects the Telegram host SDK
+into `index.html`; both apply to `npm run build` only, so `npm run dev` and the Playwright
+suite stay at the root and stay offline.
+
+`MiniAppWebConfig` serves the result:
+
+| Request | Answer |
+| --- | --- |
+| `/mini-app` | Redirect to `/mini-app/` |
+| `/mini-app/` | `index.html` |
+| `/mini-app/assets/**` | The hashed bundles; a miss is a real 404, never HTML |
+| `/mini-app/<anything else>` | `index.html`, so a refresh is not a raw 404 |
+| `/api/mini-app/v1/**` | The API — a controller mapping, matched before any resource handler |
+
+The fallback is scoped to `/mini-app/**`, so it can never answer `/health`, `/internal/**`
+or an API route. `MiniAppRoutingTest` boots a real container and pins that boundary.
+
+### Deployment expectations
+
+- **Same origin.** Frontend and API come out of one Spring Boot container, so relative
+  paths just work. No CORS configuration exists, deliberately.
+- **HTTPS.** Telegram only loads Mini Apps over HTTPS. The container listens on
+  `127.0.0.1:8080`; terminating TLS in front of it is a separate, later step.
+- **BotFather is not part of this change.** The menu button would point at
+  `https://<host>/mini-app/`; no bot configuration was created or modified.
+- **Azure production is unchanged.** `docker-compose.prod.yml` forwards
+  `MINI_APP_API_ENABLED`, `MINI_APP_ALLOWED_USER_IDS` and `MINI_APP_MAX_AUTH_AGE`, and the
+  flag ships `false` in `.env.prod.example`. The assets are served either way; the API is
+  not, until the flag and an allow-list are set.
 
 ### Already served by the backend
 
@@ -112,12 +216,12 @@ rail draws its ticks from them, so those must stay in step.
 
 | Frontend field | Closest existing value | Note |
 | --- | --- | --- |
-| `Job.matchSummary` | `JobAnalysisData.roleSummary` | LLM analysis is per-job and on demand; the review queue needs it inline. |
-| `Job.activity` | `ApplicationStatusHistory` + workflow transitions | Two sources today, one feed in the UI. |
-| `Snapshot` | `JobQueuePage` (paged, per queue) | The app loads one snapshot; a real backend should page. |
+| `Job.matchSummary` | `JobAnalysisData.roleSummary` | LLM analysis is per-job and on demand; loading the queue must not trigger one. Sent as `null`. |
+| `Job.activity` | `ApplicationStatusHistory` + workflow transitions | Two sources today, one feed in the UI. Sent as `[]`. |
+| `Job.requirements` | `JobAnalysisData.mustHaveRequirements` | Same on-demand LLM analysis. Sent as `[]`. |
+| `Application.score` | — | The applications table stores no score; the client borrows it from the matching vacancy when that vacancy is still in the snapshot, and shows `—` otherwise. |
+| Snapshot paging | `JobQueuePage` (paged, per queue) | The Mini App reads one bounded snapshot of 50. Add paging if a real queue outgrows it. |
 | Notification preference | — | The Settings toggle is local state only. |
-
-No backend code was written or modified for this app.
 
 ## Structure
 
@@ -127,7 +231,7 @@ src/
   components/        ScoreRail, JobRow, BottomNav, UndoToast, States, icons
   features/          Discover, Review, Saved, Applications, Settings, JobDetails, JobCard
   lib/               telegram adapter, formatters, useJobPilot store
-  data/              types, mock repository, sample data
+  data/              types, repository selector, mock + HTTP repositories, sample data
   styles/            tokens.css, app.css
 ```
 
@@ -144,3 +248,6 @@ two files did not warrant a directory.
 - Motion is used in five places only: the review card swap, the undo toast, the score
   rail fill, the nav indicator and the applications filter underline. `MotionConfig`
   is set to `reducedMotion="user"`, and the Settings toggle forces `"always"`.
+- Networking is `fetch` plus `AbortSignal.timeout` — no HTTP client dependency.
+- A rejected write rolls the optimistic change back and says so. A decision carries a
+  token so a late rejection cannot undo something the user already undid.

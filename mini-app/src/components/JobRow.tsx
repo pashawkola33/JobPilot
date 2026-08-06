@@ -15,16 +15,17 @@ export function JobRow({
   trailing,
   onOpen,
 }: {
-  score: number;
+  score: number | null;
   title: string;
   meta: string;
   trailing?: ReactNode;
   onOpen?: () => void;
 }) {
+  const scoreLabel = score === null ? 'No score' : `Match score ${score} out of 100.`;
   const body = (
     <>
       <span className="row__score" aria-hidden="true">
-        {score}
+        {score ?? '—'}
       </span>
       <span className="row__body">
         <span className="row__title">{title}</span>
@@ -48,13 +49,13 @@ export function JobRow({
           type="button"
           className="row"
           onClick={onOpen}
-          aria-label={`${title}. ${meta}. Match score ${score} out of 100. Open details.`}
+          aria-label={`${title}. ${meta}. ${scoreLabel} Open details.`}
         >
           {body}
         </button>
       ) : (
         <div className="row">
-          <span className="visually-hidden">Match score {score} out of 100.</span>
+          <span className="visually-hidden">{scoreLabel}</span>
           {body}
         </div>
       )}

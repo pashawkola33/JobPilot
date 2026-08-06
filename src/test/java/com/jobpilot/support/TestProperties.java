@@ -22,6 +22,17 @@ public final class TestProperties {
 
     public static JobPilotProperties create(JobPilotProperties.Telegram telegram,
                                              JobPilotProperties.Llm llm) {
+        return create(telegram, llm, JobPilotProperties.MiniApp.disabled());
+    }
+
+    public static JobPilotProperties create(JobPilotProperties.Telegram telegram,
+                                             JobPilotProperties.MiniApp miniApp) {
+        return create(telegram, JobPilotProperties.Llm.disabled(), miniApp);
+    }
+
+    public static JobPilotProperties create(JobPilotProperties.Telegram telegram,
+                                             JobPilotProperties.Llm llm,
+                                             JobPilotProperties.MiniApp miniApp) {
         return new JobPilotProperties(
                 telegram,
                 new JobPilotProperties.Sources(
@@ -37,6 +48,7 @@ public final class TestProperties {
                         3, 1_048_576, 500, 100_000),
                 llm,
                 new JobPilotProperties.Scheduling("0 0 */6 * * *", "0 0 9 * * *", 30),
+                miniApp,
                 List.of("Java Internship", "Java Developer Intern", "Software Engineer Intern"),
                 List.of("Bucharest", "Romania"));
     }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { mockRepository } from '../data/repository';
-import type { Application, Job, ReviewStats, WorkflowStatus } from '../data/types';
+import { repository } from '../data/repository';
+import type { Application, FailureKind, Job, ReviewStats, WorkflowStatus } from '../data/types';
+import { JobPilotError } from '../data/types';
 import { haptic } from './telegram';
 
 export const UNDO_MS = 6000;
@@ -17,8 +18,15 @@ export interface UndoEntry {
 
 type Phase = 'loading' | 'ready' | 'error';
 
+/** Any rejection that is not already typed is a backend we could not reach. */
+const kindOf = (failure: unknown): FailureKind =>
+  failure instanceof JobPilotError ? failure.kind : 'unavailable';
+
 export function useJobPilot() {
   const [phase, setPhase] = useState<Phase>('loading');
+  const [failure, setFailure] = useState<FailureKind>('unavailable');
+  /** A mutation that the server refused, surfaced without discarding the queue. */
+  const [writeFailure, setWriteFailure] = useState<FailureKind | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [applications, setApplications] = useState<Application[]>([]);
   /** Frozen at load: the queue must not reshuffle under the reviewer after each action. */
@@ -28,10 +36,13 @@ export function useJobPilot() {
   const [direction, setDirection] = useState(1);
   const [undo, setUndo] = useState<UndoEntry | null>(null);
   const undoTimer = useRef<number | undefined>(undefined);
+  /** Identifies the decision whose write is still in flight. */
+  const pending = useRef<symbol | null>(null);
 
   const load = useCallback(() => {
     setPhase('loading');
-    mockRepository.load().then(
+    setWriteFailure(null);
+    repository.load().then(
       (data) => {
         setJobs(data.jobs);
         setApplications(data.applications);
@@ -39,7 +50,10 @@ export function useJobPilot() {
         setCursor(0);
         setPhase('ready');
       },
-      () => setPhase('error'),
+      (error: unknown) => {
+        setFailure(kindOf(error));
+        setPhase('error');
+      },
     );
   }, []);
 
@@ -50,6 +64,18 @@ export function useJobPilot() {
     clearTimeout(undoTimer.current);
     setUndo(entry);
     undoTimer.current = setTimeout(() => setUndo(null), UNDO_MS);
+  }, []);
+
+  /** Undoing the optimistic edit — shared by the Undo button and by a rejected write. */
+  const rollback = useCallback((entry: UndoEntry) => {
+    setJobs((all) =>
+      all.map((j) => (j.id === entry.jobId ? { ...j, workflowStatus: entry.previous } : j)),
+    );
+    if (entry.createdApplication) {
+      setApplications((all) => all.filter((a) => a.jobId !== entry.jobId));
+    }
+    setDirection(-1);
+    setCursor((index) => Math.max(0, index - 1));
   }, []);
 
   const decide = useCallback(
@@ -63,34 +89,49 @@ export function useJobPilot() {
       }
       setDirection(1);
       setCursor((index) => index + 1);
-      armUndo({
+      const entry: UndoEntry = {
         jobId: job.id,
         title: job.title,
         action,
         previous: job.workflowStatus,
         createdApplication,
-      });
+      };
+      armUndo(entry);
       haptic(status === 'DISMISSED' ? 'light' : 'success');
-      void mockRepository.setWorkflowStatus(job.id, status);
+
+      // The token lets a rejected write tell "still mine to undo" from "the user already
+      // undid it", so a late failure never reverts twice.
+      const token = Symbol('decision');
+      pending.current = token;
+      repository.setWorkflowStatus(job.id, status).then(
+        () => {
+          if (pending.current === token) pending.current = null;
+        },
+        (error: unknown) => {
+          if (pending.current !== token) return;
+          pending.current = null;
+          clearTimeout(undoTimer.current);
+          setUndo(null);
+          rollback(entry);
+          setWriteFailure(kindOf(error));
+        },
+      );
     },
-    [applications, armUndo],
+    [applications, armUndo, rollback],
   );
 
   const revert = useCallback(() => {
     if (!undo) return;
     clearTimeout(undoTimer.current);
-    setJobs((all) =>
-      all.map((j) => (j.id === undo.jobId ? { ...j, workflowStatus: undo.previous } : j)),
-    );
-    if (undo.createdApplication) {
-      setApplications((all) => all.filter((a) => a.jobId !== undo.jobId));
-    }
-    setDirection(-1);
-    setCursor((index) => Math.max(0, index - 1));
+    // Claims the decision, so the original write's rejection becomes a no-op.
+    pending.current = null;
+    rollback(undo);
     setUndo(null);
     haptic('warning');
-    void mockRepository.setWorkflowStatus(undo.jobId, undo.previous);
-  }, [undo]);
+    repository.setWorkflowStatus(undo.jobId, undo.previous).catch((error: unknown) =>
+      setWriteFailure(kindOf(error)),
+    );
+  }, [undo, rollback]);
 
   const skipToNext = useCallback(() => {
     setDirection(1);
@@ -101,6 +142,9 @@ export function useJobPilot() {
 
   return {
     phase,
+    failure,
+    writeFailure,
+    dismissWriteFailure: () => setWriteFailure(null),
     jobs,
     applications,
     stats: reviewStats(jobs),

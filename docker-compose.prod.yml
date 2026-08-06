@@ -71,6 +71,13 @@ services:
       TELEGRAM_REVIEW_DIGEST_ENABLED: ${TELEGRAM_REVIEW_DIGEST_ENABLED:-true}
       TELEGRAM_DISCARD_PENDING_ON_FIRST_START: ${TELEGRAM_DISCARD_PENDING_ON_FIRST_START:-true}
 
+      # Telegram Mini App API, served same-origin with the app itself at /mini-app/.
+      # Off by default, and an empty allow-list is a deny-all: enabling the flag without
+      # listing numeric Telegram *user* ids fails startup rather than opening the API.
+      MINI_APP_API_ENABLED: ${MINI_APP_API_ENABLED:-false}
+      MINI_APP_ALLOWED_USER_IDS: ${MINI_APP_ALLOWED_USER_IDS:-}
+      MINI_APP_MAX_AUTH_AGE: ${MINI_APP_MAX_AUTH_AGE:-1h}
+
       GREENHOUSE_BOARD_TOKENS: ${GREENHOUSE_BOARD_TOKENS:-}
       LEVER_COMPANY_IDS: ${LEVER_COMPANY_IDS:-}
       ASHBY_BOARD_NAMES: ${ASHBY_BOARD_NAMES:-}

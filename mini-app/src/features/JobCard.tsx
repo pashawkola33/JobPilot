@@ -36,7 +36,7 @@ export function JobCard({ job, footer }: { job: Job; footer?: React.ReactNode })
 
       <ScoreRail score={job.score} band={job.band} />
 
-      <p className="prose">{job.matchSummary}</p>
+      {job.matchSummary !== null && <p className="prose">{job.matchSummary}</p>}
 
       <dl className="meta">
         <Cell label="Location" value={job.location} />

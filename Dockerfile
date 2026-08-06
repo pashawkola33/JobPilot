@@ -1,8 +1,21 @@
+# Node builds the Mini App only. It never reaches the runtime image: the final stage
+# copies the jar and nothing else, so no npm, no node_modules and no source ship.
+# 22.x satisfies Vite's "20.19+ or 22.12+" floor, matching .github/workflows/ci.yml.
+FROM node:22-alpine AS mini-app
+WORKDIR /mini-app
+COPY mini-app/package.json mini-app/package-lock.json ./
+RUN npm ci
+COPY mini-app/ ./
+# API mode is the only mode worth shipping; the default (mock) would serve fixtures.
+RUN VITE_JOBPILOT_MODE=api npm run build
+
 FROM maven:3.9.11-eclipse-temurin-21-alpine AS build
 WORKDIR /workspace
 COPY pom.xml ./
 RUN mvn -B -DskipTests dependency:go-offline
 COPY src ./src
+# Packaged as an ordinary classpath resource, which is what MiniAppWebConfig serves from.
+COPY --from=mini-app /mini-app/dist ./src/main/resources/static/mini-app
 RUN mvn -B -DskipTests package
 
 FROM eclipse-temurin:21-jre-alpine

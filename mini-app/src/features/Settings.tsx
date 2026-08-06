@@ -1,5 +1,6 @@
 import type { Preferences, ThemeMode } from '../App';
 import { available } from '../lib/telegram';
+import { mode } from '../data/repository';
 
 const THEMES: { id: ThemeMode; label: string }[] = [
   { id: 'telegram', label: 'Telegram' },
@@ -99,8 +100,8 @@ export function Settings({
 
             <div className="diagnostics">
               {`environment  ${available ? 'telegram' : 'browser'}\n`}
-              {`data source  in-memory mock\n`}
-              {`fail switch  add ?mock=fail to the url`}
+              {`data source  ${mode === 'api' ? 'jobpilot api' : 'in-memory mock'}\n`}
+              {`fail switch  add ?mock=fail or ?mock=fail-write to the url`}
             </div>
           </>
         )}

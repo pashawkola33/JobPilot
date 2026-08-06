@@ -10,6 +10,13 @@
 target
 scraper-worker
 data
+# The Mini App is built inside the image from source; host artefacts would only be
+# copied in and overwritten, and node_modules alone is hundreds of megabytes of context.
+mini-app/node_modules
+mini-app/dist
+mini-app/test-results
+mini-app/playwright-report
+mini-app/screenshots
 backups
 *.log
 *.pdf

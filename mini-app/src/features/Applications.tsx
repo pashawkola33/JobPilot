@@ -36,8 +36,10 @@ export function Applications({
 
   const visible =
     filter === 'ALL' ? applications : applications.filter((a) => a.status === filter);
+  // Unscored applications sort last within their stage rather than jumping to the top.
   const ordered = [...visible].sort(
-    (a, b) => STAGES.indexOf(a.status) - STAGES.indexOf(b.status) || b.score - a.score,
+    (a, b) =>
+      STAGES.indexOf(a.status) - STAGES.indexOf(b.status) || (b.score ?? -1) - (a.score ?? -1),
   );
 
   return (

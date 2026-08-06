@@ -79,6 +79,12 @@ jobpilot:
     review-digest-enabled: ${TELEGRAM_REVIEW_DIGEST_ENABLED:true}
     max-jobs-per-message: ${TELEGRAM_MAX_JOBS_PER_MESSAGE:5}
     max-note-length: ${TELEGRAM_MAX_NOTE_LENGTH:500}
+  # Telegram Mini App API. Off by default; an empty allowed-user-ids is a deny-all, so
+  # enabling the flag without listing user ids fails startup rather than opening the API.
+  mini-app:
+    enabled: ${MINI_APP_API_ENABLED:false}
+    allowed-user-ids: ${MINI_APP_ALLOWED_USER_IDS:}
+    max-auth-age: ${MINI_APP_MAX_AUTH_AGE:1h}
   sources:
     greenhouse-board-tokens: ${GREENHOUSE_BOARD_TOKENS:}
     lever-company-ids: ${LEVER_COMPANY_IDS:}

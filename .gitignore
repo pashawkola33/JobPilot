@@ -2,11 +2,13 @@
 .vscode/
 *.iml
 target/
+# Built by the Docker image's Node stage, never by hand.
+src/main/resources/static/mini-app/
 .env
 .env.*
 !.env.example
 !.env.prod.example
-data/
+/data/
 data/documents/
 *.log
 *.pdf
