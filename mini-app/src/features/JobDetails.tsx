@@ -37,7 +37,13 @@ export function JobDetails({
     if (!element) return;
     if (job) {
       setShown(job);
-      if (!element.open) element.showModal();
+      if (!element.open) {
+        element.showModal();
+        // The body outlives the dialog and keeps its offset, so a reopen would resume
+        // wherever the last vacancy was left. Only a shown dialog has a scroll box to
+        // reset, which is why this follows showModal() rather than preceding it.
+        element.querySelector('.sheet__body')?.scrollTo(0, 0);
+      }
     } else if (element.open) {
       element.close();
     }
