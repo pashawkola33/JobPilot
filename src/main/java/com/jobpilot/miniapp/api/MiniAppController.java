@@ -1,8 +1,9 @@
 package com.jobpilot.miniapp.api;
 
 import com.jobpilot.jobreview.application.JobReviewException;
-import com.jobpilot.jobreview.application.JobReviewService;
-import com.jobpilot.jobreview.application.WorkflowView;
+import com.jobpilot.applications.application.ApplicationTrackingException;
+import com.jobpilot.miniapp.application.MiniAppWorkflowResult;
+import com.jobpilot.miniapp.application.MiniAppWorkflowService;
 import com.jobpilot.miniapp.application.MiniAppSnapshotService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Positive;
@@ -32,11 +33,11 @@ public class MiniAppController {
     public static final String BASE = "/api/mini-app/v1";
 
     private final MiniAppSnapshotService snapshots;
-    private final JobReviewService review;
+    private final MiniAppWorkflowService workflows;
 
-    public MiniAppController(MiniAppSnapshotService snapshots, JobReviewService review) {
+    public MiniAppController(MiniAppSnapshotService snapshots, MiniAppWorkflowService workflows) {
         this.snapshots = snapshots;
-        this.review = review;
+        this.workflows = workflows;
     }
 
     @GetMapping("/snapshot")
@@ -51,14 +52,23 @@ public class MiniAppController {
     @PutMapping("/jobs/{jobId}/workflow")
     public MiniAppWorkflowResponse workflow(@PathVariable @Positive long jobId,
                                             @Valid @RequestBody MiniAppWorkflowRequest request) {
-        WorkflowView view = switch (request.status()) {
-            case SAVED -> review.save(jobId);
-            case APPLIED -> review.applied(jobId);
-            case DISMISSED -> review.dismiss(jobId);
-            case UNREVIEWED -> review.reset(jobId);
+        MiniAppWorkflowResult result = workflows.change(jobId, request.status());
+        var view = result.workflow();
+        return new MiniAppWorkflowResponse(view.jobId(), view.status().name(), result.changed(),
+                view.updatedAt(), result.snapshot());
+    }
+
+    @ExceptionHandler(ApplicationTrackingException.class)
+    public ResponseEntity<MiniAppApiError> applicationFailure(ApplicationTrackingException failure) {
+        HttpStatus status = switch (failure.getCategory()) {
+            case JOB_NOT_FOUND, APPLICATION_NOT_FOUND -> HttpStatus.NOT_FOUND;
+            case INVALID_TRANSITION, CONFLICT -> HttpStatus.CONFLICT;
+            case INVALID_VALUE -> HttpStatus.BAD_REQUEST;
         };
-        return new MiniAppWorkflowResponse(view.jobId(), view.status().name(), view.changed(),
-                view.updatedAt());
+        String category = status == HttpStatus.NOT_FOUND
+                ? MiniAppApiError.JOB_NOT_FOUND : MiniAppApiError.INVALID_WORKFLOW;
+        return ResponseEntity.status(status)
+                .body(new MiniAppApiError(category, failure.getMessage()));
     }
 
     @ExceptionHandler(JobReviewException.class)
@@ -77,6 +87,6 @@ public class MiniAppController {
 
     /** The authoritative state after the change, so the client can drop its optimistic guess. */
     public record MiniAppWorkflowResponse(long jobId, String status, boolean changed,
-                                          Instant updatedAt) {
+                                          Instant updatedAt, MiniAppSnapshot snapshot) {
     }
 }

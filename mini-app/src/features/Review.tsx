@@ -11,7 +11,10 @@ import { JobCard } from './JobCard';
 export function Review({
   job,
   position,
-  total,
+  loadedCount,
+  remaining,
+  limit,
+  truncated,
   direction,
   undo,
   writeFailure,
@@ -19,12 +22,16 @@ export function Review({
   onUndo,
   onDismissWriteFailure,
   onNext,
+  onLoadNext,
   onDetails,
   onGoSaved,
 }: {
   job: Job | null;
   position: number;
-  total: number;
+  loadedCount: number;
+  remaining: number;
+  limit: number;
+  truncated: boolean;
   direction: number;
   undo: UndoEntry | null;
   writeFailure: FailureKind | null;
@@ -32,6 +39,7 @@ export function Review({
   onUndo: () => void;
   onDismissWriteFailure: () => void;
   onNext: () => void;
+  onLoadNext: () => void;
   onDetails: (job: Job) => void;
   onGoSaved: () => void;
 }) {
@@ -41,8 +49,12 @@ export function Review({
         <h1 className="topbar__title">Review</h1>
         {job && (
           <span style={{ display: 'flex', alignItems: 'center', gap: 'var(--s3)' }}>
-            <span className="eyebrow num">
-              {position} of {total}
+            <span
+              className="eyebrow num"
+              aria-label={`${position} of ${loadedCount} loaded; ${remaining} waiting`}
+            >
+              {position} of {loadedCount}
+              {truncated && ` loaded · ${remaining} waiting`}
             </span>
             <button
               type="button"
@@ -83,16 +95,34 @@ export function Review({
       ) : (
         <State
           mark={<IconEmpty />}
-          title={total === 0 ? 'No vacancies to review' : 'Queue cleared'}
+          title={
+            remaining > 0
+              ? 'More vacancies are ready'
+              : loadedCount === 0
+                ? 'No vacancies to review'
+                : 'Queue cleared'
+          }
           text={
-            total === 0
+            remaining > 0
+              ? `You reviewed the ${loadedCount} vacancies loaded in this batch. ${remaining} ${remaining === 1 ? 'vacancy is' : 'vacancies are'} still waiting. Load the next window of up to ${limit}.`
+              : loadedCount === 0
               ? 'Nothing has been screened since your last session. New matches arrive as sources are fetched.'
-              : `You reviewed all ${total} vacancies in this session. The next batch appears after the following fetch.`
+              : 'You reviewed every vacancy in this batch. No vacancies are waiting.'
           }
           action={
-            <button type="button" className="btn btn--quiet" onClick={onGoSaved}>
-              Go to saved
-            </button>
+            remaining > 0 ? (
+              <button
+                type="button"
+                className="btn btn--primary"
+                onClick={onLoadNext}
+              >
+                Load next batch
+              </button>
+            ) : (
+              <button type="button" className="btn btn--quiet" onClick={onGoSaved}>
+                Go to saved
+              </button>
+            )
           }
         />
       )}

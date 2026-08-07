@@ -26,16 +26,16 @@ const TIMEOUT_MS = 10_000;
 export const httpRepository: JobPilotRepository = {
   async load(): Promise<Snapshot> {
     const body = (await call('/snapshot')) as ApiSnapshot;
-    const jobs = body.jobs.map(job);
-    return { jobs, applications: body.applications.map((entry) => application(entry, jobs)) };
+    return snapshot(body);
   },
 
-  async setWorkflowStatus(jobId: number, status: WorkflowStatus): Promise<void> {
-    await call(`/jobs/${jobId}/workflow`, {
+  async setWorkflowStatus(jobId: number, status: WorkflowStatus): Promise<Snapshot> {
+    const response = (await call(`/jobs/${jobId}/workflow`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ status }),
-    });
+    })) as ApiWorkflowResponse;
+    return snapshot(response.snapshot);
   },
 };
 
@@ -103,8 +103,22 @@ async function failureKind(response: Response): Promise<FailureKind> {
 // ---------------------------------------------------------------- wire shape
 
 interface ApiSnapshot {
-  jobs: ApiJob[];
-  applications: ApiApplication[];
+  reviewQueue: ApiPage<ApiJob>;
+  saved: ApiPage<ApiJob>;
+  applications: ApiPage<ApiApplication>;
+  workflowCounts: Snapshot['workflowCounts'];
+  applicationCounts: Snapshot['applicationCounts'];
+}
+
+interface ApiWorkflowResponse {
+  snapshot: ApiSnapshot;
+}
+
+interface ApiPage<T> {
+  items: T[];
+  total: number;
+  limit: number;
+  truncated: boolean;
 }
 
 interface ApiJob {
@@ -135,6 +149,7 @@ interface ApiApplication {
   updatedAt: string;
   appliedAt: string | null;
   nextFollowUpDate: string | null;
+  job: ApiJob | null;
 }
 
 const BANDS: ScoreBand[] = [
@@ -199,5 +214,25 @@ function application(row: ApiApplication, jobs: Job[]): Application {
     updatedAt: row.updatedAt,
     appliedAt: row.appliedAt,
     nextFollowUpDate: row.nextFollowUpDate,
+  };
+}
+
+function snapshot(body: ApiSnapshot): Snapshot {
+  const review = body.reviewQueue.items.map(job);
+  const saved = body.saved.items.map(job);
+  const applicationJobs = body.applications.items.flatMap((entry) =>
+    entry.job ? [job(entry.job)] : [],
+  );
+  const jobs = [...review, ...saved, ...applicationJobs];
+  return {
+    reviewQueue: { ...body.reviewQueue, items: review },
+    saved: { ...body.saved, items: saved },
+    applications: {
+      ...body.applications,
+      items: body.applications.items.map((entry) => application(entry, jobs)),
+    },
+    applicationJobs,
+    workflowCounts: body.workflowCounts,
+    applicationCounts: body.applicationCounts,
   };
 }

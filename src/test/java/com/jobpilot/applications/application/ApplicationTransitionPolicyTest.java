@@ -28,4 +28,14 @@ class ApplicationTransitionPolicyTest {
         assertThat(policy.canTransition(ApplicationStatus.REJECTED, ApplicationStatus.OFFER)).isFalse();
         assertThat(policy.canTransition(ApplicationStatus.WITHDRAWN, ApplicationStatus.SAVED)).isFalse();
     }
+
+    /**
+     * P0-A boundary. The Mini App hides Undo after Applied precisely because this edge does not
+     * exist. Adding it here would silently re-enable a reversal with no defined ownership of the
+     * application row or its history; a deliberate reversal command is P0-B's to introduce.
+     */
+    @Test
+    void appliedIsNotReversibleToSaved() {
+        assertThat(policy.canTransition(ApplicationStatus.APPLIED, ApplicationStatus.SAVED)).isFalse();
+    }
 }

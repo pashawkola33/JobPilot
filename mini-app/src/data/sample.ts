@@ -529,6 +529,39 @@ export const applications: Application[] = [
 ];
 
 export const snapshot = (): Snapshot => ({
-  jobs: structuredClone(jobs),
-  applications: structuredClone(applications),
+  reviewQueue: page(jobs.filter((job) => job.workflowStatus === 'UNREVIEWED')),
+  saved: page(jobs.filter((job) => job.workflowStatus === 'SAVED')),
+  applications: page(applications, 20),
+  applicationJobs: jobs.filter((job) =>
+    applications.some((application) => application.jobId === job.id),
+  ),
+  workflowCounts: {
+    unreviewedMatch: jobs.filter(
+      (job) => job.workflowStatus === 'UNREVIEWED' && job.disposition === 'MATCH',
+    ).length,
+    unreviewedReview: jobs.filter(
+      (job) => job.workflowStatus === 'UNREVIEWED' && job.disposition === 'REVIEW',
+    ).length,
+    saved: jobs.filter((job) => job.workflowStatus === 'SAVED').length,
+    applied: jobs.filter((job) => job.workflowStatus === 'APPLIED').length,
+    dismissed: jobs.filter((job) => job.workflowStatus === 'DISMISSED').length,
+  },
+  applicationCounts: {
+    total: applications.length,
+    saved: applications.filter((entry) => entry.status === 'SAVED').length,
+    applied: applications.filter((entry) => entry.status === 'APPLIED').length,
+    interview: applications.filter((entry) => entry.status === 'INTERVIEW').length,
+    offer: applications.filter((entry) => entry.status === 'OFFER').length,
+    rejected: applications.filter((entry) => entry.status === 'REJECTED').length,
+    withdrawn: applications.filter((entry) => entry.status === 'WITHDRAWN').length,
+  },
 });
+
+function page<T>(all: T[], limit = 50) {
+  return {
+    items: structuredClone(all.slice(0, limit)),
+    total: all.length,
+    limit,
+    truncated: all.length > limit,
+  };
+}

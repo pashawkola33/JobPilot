@@ -44,7 +44,7 @@ export function App() {
   /** Telegram's own back button closes the sheet; elsewhere Esc already does. */
   useEffect(() => setBackButton(details ? () => setDetails(null) : null), [details]);
 
-  const queueLeft = store.total - store.position + (store.current ? 1 : 0);
+  const queueLeft = store.reviewTotal;
 
   return (
     <MotionConfig reducedMotion={preferences.reduceMotion ? 'always' : 'user'}>
@@ -82,7 +82,7 @@ export function App() {
                   <Discover
                     stats={store.stats}
                     jobs={store.jobs}
-                    applications={store.applications}
+                    applicationCounts={store.applicationCounts}
                     onReview={() => setScreen('review')}
                     onDetails={setDetails}
                     onApplications={() => setScreen('applications')}
@@ -92,7 +92,10 @@ export function App() {
                   <Review
                     job={store.current}
                     position={store.position}
-                    total={store.total}
+                    loadedCount={store.reviewLoadedCount}
+                    remaining={store.reviewTotal}
+                    limit={store.reviewLimit}
+                    truncated={store.reviewTruncated}
                     direction={store.direction}
                     undo={store.undo}
                     writeFailure={store.writeFailure}
@@ -100,13 +103,16 @@ export function App() {
                     onUndo={store.revert}
                     onDismissWriteFailure={store.dismissWriteFailure}
                     onNext={store.skipToNext}
+                    onLoadNext={store.reload}
                     onDetails={setDetails}
                     onGoSaved={() => setScreen('saved')}
                   />
                 )}
                 {screen === 'saved' && (
                   <Saved
-                    jobs={store.jobs}
+                    jobs={store.savedJobs}
+                    total={store.savedTotal}
+                    truncated={store.savedTruncated}
                     onDetails={setDetails}
                     onReview={() => setScreen('review')}
                   />
@@ -114,6 +120,9 @@ export function App() {
                 {screen === 'applications' && (
                   <Applications
                     applications={store.applications}
+                    counts={store.applicationCounts}
+                    total={store.applicationTotal}
+                    truncated={store.applicationsTruncated}
                     jobs={store.jobs}
                     onDetails={setDetails}
                     onReview={() => setScreen('review')}

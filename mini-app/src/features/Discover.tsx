@@ -1,4 +1,4 @@
-import type { Application, Job, ReviewStats } from '../data/types';
+import type { ApplicationCounts, Job, ReviewStats } from '../data/types';
 import { applicationLabel, remoteLabel } from '../lib/format';
 import { IconChevronRight } from '../components/icons';
 import { JobRow } from '../components/JobRow';
@@ -9,14 +9,14 @@ const STAGES = ['SAVED', 'APPLIED', 'INTERVIEW', 'OFFER'] as const;
 export function Discover({
   stats,
   jobs,
-  applications,
+  applicationCounts,
   onReview,
   onDetails,
   onApplications,
 }: {
   stats: ReviewStats;
   jobs: Job[];
-  applications: Application[];
+  applicationCounts: ApplicationCounts;
   onReview: () => void;
   onDetails: (job: Job) => void;
   onApplications: () => void;
@@ -29,7 +29,7 @@ export function Discover({
 
   const counts = STAGES.map((stage) => ({
     stage,
-    count: applications.filter((a) => a.status === stage).length,
+    count: applicationCounts[stage.toLowerCase() as Lowercase<(typeof STAGES)[number]>],
   }));
   const tracked = counts.reduce((sum, entry) => sum + entry.count, 0);
 
