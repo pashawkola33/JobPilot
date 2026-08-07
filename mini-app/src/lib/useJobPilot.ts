@@ -103,9 +103,17 @@ export function useJobPilot() {
   /** Per-job machine. A job here is either mid-write or in an honest unknown. */
   const [jobStates, setJobStates] = useState<Record<number, JobState>>({});
   const undoTimer = useRef<number | undefined>(undefined);
-  const queueRef = useRef(createJobQueue());
+  /** Lazily created once. Passing createJobQueue() to useRef would allocate on every render. */
+  const jobQueue = useMemo(() => createJobQueue(), []);
   /** Set once the first read lands, so a mutation cannot be issued against nothing. */
   const resetQueueOnNextRead = useRef(true);
+  /**
+   * Mirrors state that failure handling needs to read. State updaters must stay pure — React
+   * may call them twice — so branching on `phase` or `queue` inside one would double the side
+   * effects it guards.
+   */
+  const hasLoaded = useRef(false);
+  const queueIds = useRef<number[]>([]);
 
   const applySnapshot = useCallback((data: Snapshot) => {
     setReviewJobs(data.reviewQueue.items);
@@ -119,8 +127,10 @@ export function useJobPilot() {
     setApplicationsTruncated(data.applications.truncated);
     setStats(data.workflowCounts);
     setApplicationCounts(data.applicationCounts);
+    hasLoaded.current = true;
     if (resetQueueOnNextRead.current) {
       resetQueueOnNextRead.current = false;
+      queueIds.current = data.reviewQueue.items.map((job) => job.id);
       setReviewLimit(data.reviewQueue.limit);
       setReviewTruncated(data.reviewQueue.truncated);
       setReviewLoadedCount(data.reviewQueue.items.length);
@@ -135,15 +145,14 @@ export function useJobPilot() {
       () => repository.load(),
       applySnapshot,
       (error: unknown) => {
-        // Only a read that has never succeeded can take the whole app to the error screen.
-        setPhase((existing) => {
-          if (existing === 'ready') {
-            setWriteFailure(failureKind(error));
-            return existing;
-          }
-          setFailure(failureKind(error));
-          return 'error';
-        });
+        // Only a read that has never succeeded can take the whole app to the error screen; a
+        // later one that fails is a write-surface problem, not a dead app.
+        if (hasLoaded.current) {
+          setWriteFailure(failureKind(error));
+          return;
+        }
+        setFailure(failureKind(error));
+        setPhase('error');
       },
     ),
     [applySnapshot],
@@ -165,14 +174,10 @@ export function useJobPilot() {
 
   /** Puts the reviewer back on a specific vacancy, used when its write did not settle cleanly. */
   const focusJob = useCallback((jobId: number) => {
-    setQueue((all) => {
-      const index = all.indexOf(jobId);
-      if (index >= 0) {
-        setDirection(-1);
-        setCursor(index);
-      }
-      return all;
-    });
+    const index = queueIds.current.indexOf(jobId);
+    if (index < 0) return;
+    setDirection(-1);
+    setCursor(index);
   }, []);
 
   const armUndo = useCallback((entry: UndoEntry) => {
@@ -221,7 +226,7 @@ export function useJobPilot() {
 
       const mutationId = newMutationId();
       const pending: UndoEntry = { jobId: job.id, title: job.title, action, undoToken: '' };
-      void queueRef.current.run(job.id, () =>
+      void jobQueue.run(job.id, () =>
         sendWithRecovery(() => repository.setWorkflowStatus(job.id, status, mutationId)).then(
           (outcome) => settle(outcome, pending),
           (error: unknown) => {
@@ -246,7 +251,7 @@ export function useJobPilot() {
         ),
       );
     },
-    [disarmUndo, focusJob, jobStates, pipeline, setJob, settle],
+    [disarmUndo, focusJob, jobQueue, jobStates, pipeline, setJob, settle],
   );
 
   /** Reversal is a server operation; the client sends a capability, never a state. */
@@ -260,7 +265,7 @@ export function useJobPilot() {
     setCursor((index) => Math.max(0, index - 1));
 
     const mutationId = newMutationId();
-    void queueRef.current.run(target.jobId, () =>
+    void jobQueue.run(target.jobId, () =>
       sendWithRecovery(() => repository.undo(mutationId, target.undoToken)).then(
         (outcome) => settle(outcome, null),
         (error: unknown) => {
@@ -275,7 +280,7 @@ export function useJobPilot() {
         },
       ),
     );
-  }, [disarmUndo, focusJob, pipeline, setJob, settle, undo]);
+  }, [disarmUndo, focusJob, jobQueue, pipeline, setJob, settle, undo]);
 
   /** The deterministic retry offered for a job in the unknown state. */
   const reconcileJob = useCallback((jobId: number) => {

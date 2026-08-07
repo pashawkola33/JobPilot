@@ -14,6 +14,7 @@ import com.jobpilot.jobreview.domain.WorkflowStatus;
 import com.jobpilot.jobreview.repository.JobReviewQueryRepository;
 import com.jobpilot.jobs.domain.ScreeningDisposition;
 import com.jobpilot.miniapp.api.MiniAppSnapshot;
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -421,6 +422,36 @@ class MiniAppConsistencyIT {
         assertThat(applicationStatus(jobId)).isEqualTo("APPLIED");
         assertThat(historyStatuses(jobId)).containsExactly("SAVED", "APPLIED");
         assertThat(workflowStatus(jobId)).isEqualTo("SAVED");
+    }
+
+    /**
+     * The mirror of the deletion case: a Reset removes the workflow row, so reversing it has to
+     * put one back. Restoring only ever *updated* an existing row, which made every Reset
+     * permanently unundoable behind a conflict that described nothing real.
+     */
+    @Test
+    void undoOfAResetRecreatesTheWorkflowRowItDeleted() {
+        long jobId = active("undo-reset", 73);
+        change(jobId, WorkflowStatus.APPLIED);
+        assertThat(workflowStatus(jobId)).isEqualTo("APPLIED");
+        Instant appliedAt = jdbc.queryForObject(
+                "select applied_at from job_workflow_state where job_id = ?", Instant.class, jobId);
+
+        var reset = change(jobId, WorkflowStatus.UNREVIEWED);
+        assertThat(count("job_workflow_state", "job_id", jobId)).isZero();
+
+        var undone = workflows.undo(newMutationId(), reset.undoToken());
+
+        assertThat(undone.status()).isEqualTo(WorkflowStatus.APPLIED);
+        assertThat(count("job_workflow_state", "job_id", jobId)).isEqualTo(1);
+        assertThat(workflowStatus(jobId)).isEqualTo("APPLIED");
+        // The recorded applied-at is put back, not re-derived from the reversal's own clock.
+        assertThat(jdbc.queryForObject(
+                "select applied_at from job_workflow_state where job_id = ?", Instant.class, jobId))
+                .isEqualTo(appliedAt);
+        // Reset never touched tracking, so reversing it does not either.
+        assertThat(count("applications", "job_id", jobId)).isEqualTo(1);
+        assertThat(historyStatuses(jobId)).containsExactly("APPLIED");
     }
 
     @Test

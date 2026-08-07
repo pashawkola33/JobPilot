@@ -7,6 +7,8 @@ import com.jobpilot.applications.repository.ApplicationStatusHistoryRepository;
 import com.jobpilot.jobreview.domain.JobWorkflowState;
 import com.jobpilot.jobreview.domain.WorkflowStatus;
 import com.jobpilot.jobreview.repository.JobWorkflowStateRepository;
+import com.jobpilot.jobs.domain.Job;
+import com.jobpilot.jobs.repository.JobRepository;
 import com.jobpilot.miniapp.domain.MiniAppMutation;
 import java.time.Instant;
 import java.util.Objects;
@@ -29,13 +31,16 @@ public class MiniAppReversal {
     private final JobWorkflowStateRepository workflowStates;
     private final ApplicationRepository applications;
     private final ApplicationStatusHistoryRepository history;
+    private final JobRepository jobs;
 
     public MiniAppReversal(JobWorkflowStateRepository workflowStates,
                            ApplicationRepository applications,
-                           ApplicationStatusHistoryRepository history) {
+                           ApplicationStatusHistoryRepository history,
+                           JobRepository jobs) {
         this.workflowStates = workflowStates;
         this.applications = applications;
         this.history = history;
+        this.jobs = jobs;
     }
 
     /**
@@ -111,7 +116,14 @@ public class MiniAppReversal {
         return application.getStatus();
     }
 
-    /** Null previous status means the job had no workflow row at all, so the row is removed. */
+    /**
+     * Puts the workflow row back exactly as recorded — including recreating it.
+     *
+     * <p>Null previous status means the job had no row, so reversal removes the one the mutation
+     * added. The mirror case matters just as much: a mutation that reset a job to UNREVIEWED
+     * <em>deleted</em> its row, so reversing it has to insert one again. Refusing there would
+     * make every Reset permanently unundoable behind a conflict that describes nothing real.
+     */
     private void restoreWorkflow(MiniAppMutation mutation, JobWorkflowState workflow, Instant now) {
         WorkflowStatus previous = mutation.getPreviousWorkflowStatus();
         if (previous == null) {
@@ -122,10 +134,15 @@ public class MiniAppReversal {
             }
             return;
         }
-        if (workflow == null) {
-            throw MiniAppMutationException.undoStale();
+        JobWorkflowState target = workflow;
+        if (target == null) {
+            Job job = jobs.findById(mutation.getJobId())
+                    .orElseThrow(MiniAppMutationException::undoStale);
+            // create(...) derives applied-at from the status; restore below overwrites it with
+            // the recorded value, which is the only one that is true.
+            target = workflowStates.save(JobWorkflowState.create(job, previous, null, now));
         }
-        workflow.restore(previous, mutation.getPreviousWorkflowNote(),
+        target.restore(previous, mutation.getPreviousWorkflowNote(),
                 mutation.getPreviousWorkflowAppliedAt(), now);
         workflowStates.flush();
     }
