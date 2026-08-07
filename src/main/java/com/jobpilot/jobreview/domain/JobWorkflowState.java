@@ -72,6 +72,25 @@ public class JobWorkflowState {
         return true;
     }
 
+    /**
+     * Puts a recorded earlier state back verbatim. Mini App reversal only.
+     *
+     * <p>Distinct from {@link #update} because update <em>derives</em> {@code appliedAt} from
+     * the target status: restoring APPLIED through it would stamp the reversal's own clock over
+     * the original applied-at, and restoring anything else would silently null it. A reversal
+     * puts back what was recorded — it never recomputes.
+     */
+    public void restore(WorkflowStatus previous, String previousNote, Instant previousAppliedAt,
+                        Instant now) {
+        if (previous == null || !previous.persisted()) {
+            throw new IllegalArgumentException("Persisted workflow status is required");
+        }
+        status = previous;
+        note = previousNote;
+        appliedAt = previousAppliedAt;
+        updatedAt = now;
+    }
+
     public Long getJobId() { return jobId; }
     public Job getJob() { return job; }
     public WorkflowStatus getStatus() { return status; }
