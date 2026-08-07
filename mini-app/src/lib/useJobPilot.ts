@@ -277,21 +277,29 @@ export function useJobPilot() {
   const revert = useCallback(() => {
     if (!undo) return;
     const target = undo;
+    // A job with an undecided operation takes no new writes, reversal included.
+    if (isBlocked(jobStatesRef.current[target.jobId])) return;
     disarmUndo();
     haptic('warning');
     setJob(target.jobId, { phase: 'mutating', error: null });
     setDirection(-1);
     setCursor((index) => Math.max(0, index - 1));
 
-    const mutationId = newMutationId();
+    // Same rule as a forward mutation: the identity is fixed here and re-sent unchanged by
+    // every later attempt, so a lost reversal is recoverable rather than a dead end.
+    const recovery: RecoveryDescriptor = {
+      kind: 'undo', mutationId: newMutationId(), jobId: target.jobId, undoToken: target.undoToken,
+    };
     void jobQueue.run(target.jobId, () =>
-      sendWithRecovery(() => repository.undo(mutationId, target.undoToken)).then(
+      sendWithRecovery(sendFor(repository, recovery)).then(
         (outcome) => settle(outcome, null),
         (error: unknown) => {
+          const unknown = isAmbiguous(error);
           setJob(target.jobId, {
-            phase: isAmbiguous(error) ? 'unknown' : 'idle',
+            phase: unknown ? 'unknown' : 'idle',
             undoToken: null,
             error: failureKind(error),
+            recovery: unknown ? recovery : null,
           });
           setWriteFailure(failureKind(error));
           focusJob(target.jobId);

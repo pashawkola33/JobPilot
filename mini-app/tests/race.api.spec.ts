@@ -242,6 +242,44 @@ test('a second Check again while one is running starts no second resolution', as
   expect(server.historyFor(8000)).toHaveLength(1);
 });
 
+/**
+ * A lost reversal is recoverable too. Undo is a mutation like any other, so it must carry a
+ * descriptor as well — without one the job would enter unknown with nothing to re-send, leaving
+ * a dead retry button and a job blocked for the rest of the session.
+ */
+test('an unresolved Undo is recovered by its own mutation id', async ({ browser }) => {
+  const server = new SyntheticServer(queue(2));
+  const page = await (await context(browser, server)).newPage();
+  await openReview(page);
+
+  await actions(page).getByRole('button', { name: 'Save' }).click();
+  await expect(undoButton(page)).toBeVisible();
+  await expect.poll(() => server.jobs[0]!.status).toBe('SAVED');
+  const beforeUndo = server.deliveries.length;
+
+  // Both deliveries of the reversal die.
+  server.dropNextWrites(2);
+  await undoButton(page).click();
+  await expect(page.getByRole('alert')).toContainText('Not sure this saved');
+
+  const undoDeliveries = server.deliveries.slice(beforeUndo);
+  expect(undoDeliveries).toHaveLength(2);
+  const undoId = undoDeliveries[0]!.mutationId;
+  expect(undoDeliveries[1]!.mutationId).toBe(undoId);
+  // The Save is untouched: the reversal never reached the server.
+  expect(server.jobs[0]!.status).toBe('SAVED');
+
+  await page.getByRole('button', { name: 'Check again' }).click();
+
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  // Recovered as the same reversal, and it reversed exactly once.
+  expect(server.deliveries.at(-1)!.mutationId).toBe(undoId);
+  expect(server.deliveries.at(-1)!.kind).toBe('undo');
+  await expect.poll(() => server.jobs[0]!.status).toBe('UNREVIEWED');
+  expect(server.applications.size).toBe(0);
+  expect(server.historyFor(8000)).toHaveLength(0);
+});
+
 /** D. An unresolved job accepts no new decisions — no new ids, no extra writes. */
 test('an unresolved job refuses new decisions entirely', async ({ browser }) => {
   const server = new SyntheticServer(queue(3));
