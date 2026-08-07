@@ -53,7 +53,7 @@ class DocumentContactPolicyTest {
         return new DocumentContactPolicy(new DocumentProperties(true,
                 Path.of("data/documents"), 2_097_152, 2_097_152,
                 "resume-v1", "cover-v1", "renderer-v1", 4_000,
-                Duration.ofMinutes(10),
+                Duration.ofMinutes(10), Duration.ofSeconds(15),
                 "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
                 new DocumentProperties.Contact(email, phone, github, linkedin, portfolio)));
     }

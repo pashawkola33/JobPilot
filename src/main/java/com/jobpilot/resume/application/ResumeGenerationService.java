@@ -641,8 +641,9 @@ public class ResumeGenerationService {
                 storage.isValid(value.artifact(format), format));
     }
 
+    /** Waits out the request that won the cache-key race; see DocumentProperties for the budget. */
     private ResumeVersion awaitCompletedResume(String cacheKey) {
-        long deadline = System.nanoTime() + java.time.Duration.ofSeconds(5).toNanos();
+        long deadline = System.nanoTime() + properties.concurrentCompletionTimeout().toNanos();
         while (System.nanoTime() < deadline) {
             ResumeVersion value = transactions.execute(status ->
                     resumes.findByCacheKey(cacheKey).orElse(null));
@@ -656,7 +657,7 @@ public class ResumeGenerationService {
     }
 
     private CoverNote awaitCompletedCoverNote(String cacheKey) {
-        long deadline = System.nanoTime() + java.time.Duration.ofSeconds(5).toNanos();
+        long deadline = System.nanoTime() + properties.concurrentCompletionTimeout().toNanos();
         while (System.nanoTime() < deadline) {
             CoverNote value = transactions.execute(status ->
                     coverNotes.findByCacheKey(cacheKey).orElse(null));

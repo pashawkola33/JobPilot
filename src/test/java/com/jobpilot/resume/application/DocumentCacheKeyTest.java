@@ -65,7 +65,8 @@ class DocumentCacheKeyTest {
     private DocumentProperties properties(String resumeTemplate, String renderer) {
         return new DocumentProperties(true, Path.of("data/documents"), 2_097_152,
                 2_097_152, resumeTemplate, "cover-v1", renderer, 4_000,
-                Duration.ofMinutes(10), HMAC_KEY, new DocumentProperties.Contact(
+                Duration.ofMinutes(10), Duration.ofSeconds(15), HMAC_KEY,
+                new DocumentProperties.Contact(
                 "student@example.test", "", "", "", ""));
     }
 }

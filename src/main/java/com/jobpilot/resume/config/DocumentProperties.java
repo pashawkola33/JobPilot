@@ -17,11 +17,30 @@ public record DocumentProperties(
         String rendererVersion,
         int maxPreviewCharacters,
         Duration staleAfter,
+        Duration concurrentCompletionTimeout,
         String contactCacheHmacKey,
         Contact contact) {
 
     private static final long MIN_ARTIFACT_BYTES = 1_024;
     private static final long MAX_ARTIFACT_BYTES = 20L * 1_024 * 1_024;
+
+    /**
+     * How long a duplicate request waits for whichever request won the cache-key race to finish
+     * rendering, before giving up and reporting a generation failure.
+     *
+     * <p>Deliberately not {@code staleAfter}: that answers "when may an abandoned in-progress row
+     * be reclaimed?", defaults to ten minutes and is floored at two. As a duplicate-request wait
+     * it would pin an HTTP worker, or the Telegram poll thread, for minutes.
+     *
+     * <p>Fifteen seconds by default. Rendering DOCX and PDF on a cold host takes several seconds
+     * — the five seconds this replaces was exceeded on ordinary CI runners — so the budget needs
+     * real margin. It stays under {@code spring.lifecycle.timeout-per-shutdown-phase} (20s), so a
+     * waiter still finishes, or is cleanly interrupted, inside the graceful-shutdown window.
+     * Configuring it above that trades duplicate-request success for slower shutdowns.
+     */
+    private static final Duration DEFAULT_CONCURRENT_COMPLETION_TIMEOUT = Duration.ofSeconds(15);
+    private static final Duration MIN_CONCURRENT_COMPLETION_TIMEOUT = Duration.ofSeconds(1);
+    private static final Duration MAX_CONCURRENT_COMPLETION_TIMEOUT = Duration.ofMinutes(2);
 
     public DocumentProperties {
         storageRoot = storageRoot == null ? Path.of("./data/documents") : storageRoot;
@@ -29,13 +48,17 @@ public record DocumentProperties(
         coverNoteTemplateVersion = boundedToken(coverNoteTemplateVersion, "cover-note-v1");
         rendererVersion = boundedToken(rendererVersion, "apache-v1");
         staleAfter = staleAfter == null ? Duration.ofMinutes(10) : staleAfter;
+        concurrentCompletionTimeout = concurrentCompletionTimeout == null
+                ? DEFAULT_CONCURRENT_COMPLETION_TIMEOUT : concurrentCompletionTimeout;
         contactCacheHmacKey = contactCacheHmacKey == null ? "" : contactCacheHmacKey.strip();
         contact = contact == null ? new Contact("", "", "", "", "") : contact;
         if (maxDocxBytes < MIN_ARTIFACT_BYTES || maxDocxBytes > MAX_ARTIFACT_BYTES
                 || maxPdfBytes < MIN_ARTIFACT_BYTES || maxPdfBytes > MAX_ARTIFACT_BYTES
                 || maxPreviewCharacters < 500 || maxPreviewCharacters > 20_000
                 || staleAfter.compareTo(Duration.ofMinutes(2)) < 0
-                || staleAfter.compareTo(Duration.ofHours(24)) > 0) {
+                || staleAfter.compareTo(Duration.ofHours(24)) > 0
+                || concurrentCompletionTimeout.compareTo(MIN_CONCURRENT_COMPLETION_TIMEOUT) < 0
+                || concurrentCompletionTimeout.compareTo(MAX_CONCURRENT_COMPLETION_TIMEOUT) > 0) {
             throw new IllegalArgumentException("Document limits are outside their safe bounds");
         }
         if (enabled) validateContactCacheHmacKey(contactCacheHmacKey);
@@ -44,7 +67,8 @@ public record DocumentProperties(
     public static DocumentProperties disabled() {
         return new DocumentProperties(false, Path.of("./data/documents"), 2_097_152,
                 2_097_152, "resume-v1", "cover-note-v1", "apache-v1", 4_000,
-                Duration.ofMinutes(10), "", new Contact("", "", "", "", ""));
+                Duration.ofMinutes(10), DEFAULT_CONCURRENT_COMPLETION_TIMEOUT, "",
+                new Contact("", "", "", "", ""));
     }
 
     public byte[] decodedContactCacheHmacKey() {
