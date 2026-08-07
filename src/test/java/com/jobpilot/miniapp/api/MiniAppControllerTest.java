@@ -14,14 +14,16 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jobpilot.applications.application.ApplicationTrackerService;
 import com.jobpilot.applications.domain.ApplicationStatus;
 import com.jobpilot.config.JobPilotProperties;
 import com.jobpilot.jobreview.application.JobReviewException;
-import com.jobpilot.jobreview.application.JobReviewService;
 import com.jobpilot.jobreview.application.WorkflowView;
 import com.jobpilot.jobreview.domain.WorkflowStatus;
 import com.jobpilot.jobs.domain.ScreeningDisposition;
 import com.jobpilot.miniapp.application.MiniAppSnapshotService;
+import com.jobpilot.miniapp.application.MiniAppWorkflowResult;
+import com.jobpilot.miniapp.application.MiniAppWorkflowService;
 import com.jobpilot.miniapp.auth.MiniAppAuthInterceptor;
 import com.jobpilot.miniapp.auth.TelegramInitDataFixture;
 import com.jobpilot.miniapp.auth.TelegramInitDataValidator;
@@ -47,13 +49,13 @@ class MiniAppControllerTest {
 
     private final Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
     private final MiniAppSnapshotService snapshots = mock(MiniAppSnapshotService.class);
-    private final JobReviewService review = mock(JobReviewService.class);
+    private final MiniAppWorkflowService workflows = mock(MiniAppWorkflowService.class);
 
     private MockMvc mvcWith(JobPilotProperties properties) {
         ObjectMapper objectMapper = new ObjectMapper();
         MiniAppAuthInterceptor interceptor = new MiniAppAuthInterceptor(properties,
                 new TelegramInitDataValidator(properties, objectMapper, clock), objectMapper);
-        return MockMvcBuilders.standaloneSetup(new MiniAppController(snapshots, review))
+        return MockMvcBuilders.standaloneSetup(new MiniAppController(snapshots, workflows))
                 .addInterceptors(interceptor).build();
     }
 
@@ -94,7 +96,7 @@ class MiniAppControllerTest {
                         .content("{\"status\":\"SAVED\"}"))
                 .andExpect(status().isServiceUnavailable());
 
-        verifyNoInteractions(review);
+        verifyNoInteractions(workflows);
     }
 
     // ---------------------------------------------------------------- authentication
@@ -175,14 +177,14 @@ class MiniAppControllerTest {
                         .content("{\"status\":\"DISMISSED\"}"))
                 .andExpect(status().isForbidden());
 
-        verify(review, never()).dismiss(anyLong());
+        verify(workflows, never()).change(anyLong(), org.mockito.ArgumentMatchers.any());
     }
 
     // ------------------------------------------------------------------------- reads
 
     @Test
     void servesTheSnapshotToAnAuthorizedUser() throws Exception {
-        when(snapshots.snapshot()).thenReturn(new MiniAppSnapshot(
+        when(snapshots.snapshot()).thenReturn(snapshot(
                 List.of(new MiniAppSnapshot.MiniAppJob(7L, "Junior Java Engineer", "Northsail",
                         "Bucharest, Romania", "HYBRID", "JUNIOR", "Full-time", 91, "EXCELLENT_MATCH",
                         ScreeningDisposition.MATCH, WorkflowStatus.UNREVIEWED, "greenhouse",
@@ -190,21 +192,21 @@ class MiniAppControllerTest {
                         List.of("Spring Boot"), List.of("On-call"))),
                 List.of(new MiniAppSnapshot.MiniAppApplication(7L, "Junior Java Engineer",
                         "Northsail", ApplicationStatus.APPLIED, "https://boards.example/jobs/7",
-                        NOW, NOW, null))));
+                        NOW, NOW, null, null))));
 
         enabled().perform(get(BASE + "/snapshot")
                         .header(MiniAppAuthInterceptor.HEADER, initDataFor(ALLOWED_USER)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.jobs[0].id").value(7))
-                .andExpect(jsonPath("$.jobs[0].score").value(91))
-                .andExpect(jsonPath("$.jobs[0].band").value("EXCELLENT_MATCH"))
-                .andExpect(jsonPath("$.jobs[0].workflowStatus").value("UNREVIEWED"))
-                .andExpect(jsonPath("$.applications[0].status").value("APPLIED"));
+                .andExpect(jsonPath("$.reviewQueue.items[0].id").value(7))
+                .andExpect(jsonPath("$.reviewQueue.items[0].score").value(91))
+                .andExpect(jsonPath("$.reviewQueue.items[0].band").value("EXCELLENT_MATCH"))
+                .andExpect(jsonPath("$.reviewQueue.items[0].workflowStatus").value("UNREVIEWED"))
+                .andExpect(jsonPath("$.applications.items[0].status").value("APPLIED"));
     }
 
     @Test
     void neverExposesTenantOrIngestionMetadataInTheSnapshot() throws Exception {
-        when(snapshots.snapshot()).thenReturn(new MiniAppSnapshot(
+        when(snapshots.snapshot()).thenReturn(snapshot(
                 List.of(new MiniAppSnapshot.MiniAppJob(7L, "Junior Java Engineer", "Northsail",
                         "Bucharest", "HYBRID", "JUNIOR", null, 91, "EXCELLENT_MATCH",
                         ScreeningDisposition.MATCH, WorkflowStatus.UNREVIEWED, "greenhouse",
@@ -223,13 +225,11 @@ class MiniAppControllerTest {
 
     @ParameterizedTest
     @CsvSource({"SAVED", "APPLIED", "DISMISSED", "UNREVIEWED"})
-    void appliesEveryWorkflowActionThroughTheExistingReviewService(String status) throws Exception {
+    void appliesEveryWorkflowActionThroughTheMiniAppOrchestrator(String status) throws Exception {
         WorkflowStatus target = WorkflowStatus.valueOf(status);
         WorkflowView view = new WorkflowView(7L, target, null, null, NOW, true);
-        when(review.save(7L)).thenReturn(view);
-        when(review.applied(7L)).thenReturn(view);
-        when(review.dismiss(7L)).thenReturn(view);
-        when(review.reset(7L)).thenReturn(view);
+        when(workflows.change(7L, target)).thenReturn(
+                new MiniAppWorkflowResult(view, true, snapshot(List.of(), List.of())));
 
         enabled().perform(put(BASE + "/jobs/7/workflow")
                         .header(MiniAppAuthInterceptor.HEADER, initDataFor(ALLOWED_USER))
@@ -238,20 +238,17 @@ class MiniAppControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.jobId").value(7))
                 .andExpect(jsonPath("$.status").value(status))
-                .andExpect(jsonPath("$.changed").value(true));
+                .andExpect(jsonPath("$.changed").value(true))
+                .andExpect(jsonPath("$.snapshot.workflowCounts.saved").value(0));
 
-        switch (target) {
-            case SAVED -> verify(review).save(7L);
-            case APPLIED -> verify(review).applied(7L);
-            case DISMISSED -> verify(review).dismiss(7L);
-            case UNREVIEWED -> verify(review).reset(7L);
-        }
+        verify(workflows).change(7L, target);
     }
 
     @Test
     void reportsARepeatedActionAsUnchangedRatherThanFailing() throws Exception {
-        when(review.save(7L)).thenReturn(
-                new WorkflowView(7L, WorkflowStatus.SAVED, null, null, NOW, false));
+        var view = new WorkflowView(7L, WorkflowStatus.SAVED, null, null, NOW, false);
+        when(workflows.change(7L, WorkflowStatus.SAVED)).thenReturn(
+                new MiniAppWorkflowResult(view, false, snapshot(List.of(), List.of())));
 
         enabled().perform(put(BASE + "/jobs/7/workflow")
                         .header(MiniAppAuthInterceptor.HEADER, initDataFor(ALLOWED_USER))
@@ -269,12 +266,12 @@ class MiniAppControllerTest {
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isBadRequest());
 
-        verifyNoInteractions(review);
+        verifyNoInteractions(workflows);
     }
 
     @Test
     void reportsAMissingJobAsNotFound() throws Exception {
-        when(review.save(404L)).thenThrow(new JobReviewException(
+        when(workflows.change(404L, WorkflowStatus.SAVED)).thenThrow(new JobReviewException(
                 JobReviewException.Category.JOB_NOT_FOUND,
                 "That vacancy is not in the review queue."));
 
@@ -288,7 +285,7 @@ class MiniAppControllerTest {
 
     @Test
     void reportsAnInvalidWorkflowChangeAsAConflict() throws Exception {
-        when(review.applied(7L)).thenThrow(new JobReviewException(
+        when(workflows.change(7L, WorkflowStatus.APPLIED)).thenThrow(new JobReviewException(
                 JobReviewException.Category.INVALID_WORKFLOW, "Note must contain at most 1000 characters."));
 
         enabled().perform(put(BASE + "/jobs/7/workflow")
@@ -300,6 +297,25 @@ class MiniAppControllerTest {
     }
 
     /**
+     * An exhausted concurrency retry must reach the client as the same typed 409 as any other
+     * refused change — never as an untyped 500 carrying UnexpectedRollbackException.
+     */
+    @Test
+    void reportsAnExhaustedConcurrencyRetryAsATypedConflict() throws Exception {
+        when(workflows.change(7L, WorkflowStatus.SAVED))
+                .thenThrow(ApplicationTrackerService.conflict());
+
+        enabled().perform(put(BASE + "/jobs/7/workflow")
+                        .header(MiniAppAuthInterceptor.HEADER, initDataFor(ALLOWED_USER))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"SAVED\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.category").value(MiniAppApiError.INVALID_WORKFLOW))
+                .andExpect(jsonPath("$.message")
+                        .value("The application changed concurrently. Please retry."));
+    }
+
+    /**
      * {@code @Positive} on the path variable is the first guard in the running application,
      * but standaloneSetup builds no method-validation proxy, so it cannot be exercised here.
      * The guard that always applies is JobReviewService's own {@code jobId <= 0} check, and
@@ -307,7 +323,7 @@ class MiniAppControllerTest {
      */
     @Test
     void reportsANonPositiveJobIdAsNotFound() throws Exception {
-        when(review.save(0L)).thenThrow(new JobReviewException(
+        when(workflows.change(0L, WorkflowStatus.SAVED)).thenThrow(new JobReviewException(
                 JobReviewException.Category.JOB_NOT_FOUND,
                 "That vacancy is not in the review queue."));
 
@@ -335,5 +351,18 @@ class MiniAppControllerTest {
             assertThat(body).doesNotContain(BOT_TOKEN, initData, "hash", "WebAppData",
                     Long.toString(OTHER_USER));
         }
+    }
+
+    private static MiniAppSnapshot snapshot(
+            List<MiniAppSnapshot.MiniAppJob> review,
+            List<MiniAppSnapshot.MiniAppApplication> applications) {
+        return new MiniAppSnapshot(
+                new MiniAppSnapshot.MiniAppJobPage(review, review.size(), 50, false),
+                new MiniAppSnapshot.MiniAppJobPage(List.of(), 0, 50, false),
+                new MiniAppSnapshot.MiniAppApplicationPage(
+                        applications, applications.size(), 20, false),
+                new MiniAppSnapshot.MiniAppWorkflowCounts(review.size(), 0, 0, 0, 0),
+                new MiniAppSnapshot.MiniAppApplicationCounts(
+                        applications.size(), 0, applications.size(), 0, 0, 0, 0));
     }
 }

@@ -113,7 +113,7 @@ The whole seam is two methods in `src/data/types.ts`; nothing else talks to a se
 ```ts
 interface JobPilotRepository {
   load(): Promise<Snapshot>;
-  setWorkflowStatus(jobId: number, status: WorkflowStatus): Promise<void>;
+  setWorkflowStatus(jobId: number, status: WorkflowStatus): Promise<Snapshot>;
 }
 ```
 
@@ -121,8 +121,58 @@ interface JobPilotRepository {
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/api/mini-app/v1/snapshot` | Up to 50 active vacancies and the 20 newest tracked applications |
+| `GET` | `/api/mini-app/v1/snapshot` | Separate bounded review (50), saved (50), and application (20) projections with authoritative totals |
 | `PUT` | `/api/mini-app/v1/jobs/{jobId}/workflow` | Body `{"status":"SAVED\|APPLIED\|DISMISSED\|UNREVIEWED"}`; idempotent |
+
+Every idempotent workflow mutation returns the new authoritative snapshot in its response.
+
+### Durable workflow invariant
+
+`SAVED` and `APPLIED` are committed through one Spring transaction. The workflow row and
+the application tracker transition therefore both commit, or both roll back. Tracker
+updates continue to use `ApplicationTransitionPolicy`, so idempotency, legal transitions,
+timestamps and status history have one existing source of truth rather than a Mini App
+special case.
+
+`MiniAppWorkflowService` owns that transaction and the conflict retry around it. Each
+attempt runs in a `REQUIRES_NEW` transaction covering the whole mutation — workflow,
+application and snapshot — so a rolled-back attempt is discarded together with its
+persistence context before the next one begins. Retrying *inside* a caller's transaction
+cannot work: the failed attempt has already marked that transaction rollback-only, so the
+retry can only fail again, surfacing as `UnexpectedRollbackException` or a Hibernate
+`AssertionFailure` rather than a recoverable outcome. `ApplicationTrackerService` keeps its
+own retry for standalone callers — the Telegram bot and `ApplicationController` — and
+offers `transitionInCurrentTransaction` for callers that already hold a transaction.
+Either way an exhausted retry raises `ApplicationTrackingException(CONFLICT)`, which the
+controller already maps to `409 INVALID_WORKFLOW`.
+
+Every successful mutation returns a fresh snapshot from that same transaction. The client
+may move a card optimistically, but then replaces all bounded rows, totals and status
+counts with the server response. A reload or a second browser context therefore observes
+the same PostgreSQL state.
+
+`UNREVIEWED` deliberately resets only the review workflow. It never deletes an existing
+application or its history. Consequently, Undo after Save restores the vacancy to the
+review queue while the tracked Saved application remains visible. Redesigning that
+product behaviour and the current single global pending-action token belongs to P0-B.
+
+### Undo boundary in P0-A
+
+Save and Dismiss are undoable. **Applied is not**, and no Undo is offered after it —
+selecting Applied also clears an Undo still armed for an earlier vacancy. The reason is
+structural rather than cosmetic: `ApplicationTransitionPolicy` has no `APPLIED → SAVED`
+edge, so an Undo could only ever be refused, leaving the client showing a state the server
+had rejected. That edge is deliberately **not** added here, because reversing an
+application raises questions this phase does not answer — who owns the application row,
+and what becomes of its status history. Nothing is deleted, rewritten or compensated.
+
+Every Undo that remains possible reconciles before it complains: when the write is
+refused, the client re-reads the authoritative snapshot and reconciles jobs, Saved,
+Applications, totals and counters, and only then shows the typed failure. The optimistic
+rollback is never left on screen.
+
+Deterministic Applied reversal — an explicit reversal command with defined ownership of
+the application row and its history — belongs to P0-B.
 
 Errors share the project's `{ "category", "message" }` shape. `httpRepository` maps
 `category` to one of the messages in `FAILURE_MESSAGES`:
@@ -206,7 +256,7 @@ or an API route. `MiniAppRoutingTest` boots a real container and pins that bound
 | `Job.remoteType`, `seniority`, `employmentType` | `Job` entity columns |
 | `Job.canonicalUrl` | `JobDetailView.canonicalUrl`, filtered by `TelegramMessageRenderer.safeUrl` |
 | `Job.diagnostics.screeningReasons` | `JobReasonView` (stage / code / message) |
-| `Application.*` | `ApplicationView`, `ApplicationStatus` |
+| `Application.*` | `ApplicationView`, `ApplicationStatus`; active vacancy details are bulk-projected for the bounded application page |
 | `ReviewStats` | `JobReviewStats` |
 
 `BAND_THRESHOLDS` mirrors the 55 / 70 / 85 cut-offs in `JobMatchingService`. The score
@@ -219,8 +269,8 @@ rail draws its ticks from them, so those must stay in step.
 | `Job.matchSummary` | `JobAnalysisData.roleSummary` | LLM analysis is per-job and on demand; loading the queue must not trigger one. Sent as `null`. |
 | `Job.activity` | `ApplicationStatusHistory` + workflow transitions | Two sources today, one feed in the UI. Sent as `[]`. |
 | `Job.requirements` | `JobAnalysisData.mustHaveRequirements` | Same on-demand LLM analysis. Sent as `[]`. |
-| `Application.score` | — | The applications table stores no score; the client borrows it from the matching vacancy when that vacancy is still in the snapshot, and shows `—` otherwise. |
-| Snapshot paging | `JobQueuePage` (paged, per queue) | The Mini App reads one bounded snapshot of 50. Add paging if a real queue outgrows it. |
+| `Application.score` | — | The applications table stores no score; active vacancy details carry the current score for the bounded application page, and the UI shows `—` when that job is no longer active. |
+| Full snapshot paging | `JobQueuePage` (paged, per queue) | Review and Saved return at most 50 rows and Applications at most 20. Each projection carries `total`, `limit` and `truncated`; Review offers an explicit next-batch reload when its bounded window is exhausted, while general interactive pagination remains deferred. |
 | Notification preference | — | The Settings toggle is local state only. |
 
 ## Structure

@@ -13,7 +13,7 @@ const FAKE_INIT_DATA =
 
 const USER_ID = '4242';
 
-const SNAPSHOT = {
+const DATA = {
   jobs: [
     {
       id: 4821,
@@ -62,8 +62,31 @@ const SNAPSHOT = {
       updatedAt: new Date(Date.now() - 9 * 86_400_000).toISOString(),
       appliedAt: new Date(Date.now() - 16 * 86_400_000).toISOString(),
       nextFollowUpDate: null,
+      job: null,
     },
   ],
+};
+
+const SNAPSHOT = {
+  reviewQueue: { items: DATA.jobs, total: 2, limit: 50, truncated: false },
+  saved: { items: [], total: 0, limit: 50, truncated: false },
+  applications: { items: DATA.applications, total: 1, limit: 20, truncated: false },
+  workflowCounts: {
+    unreviewedMatch: 2,
+    unreviewedReview: 0,
+    saved: 0,
+    applied: 0,
+    dismissed: 0,
+  },
+  applicationCounts: {
+    total: 1,
+    saved: 0,
+    applied: 0,
+    interview: 1,
+    offer: 0,
+    rejected: 0,
+    withdrawn: 0,
+  },
 };
 
 /** Injects a Telegram host that exposes only what the adapter is allowed to read. */
@@ -105,7 +128,13 @@ async function stubApi(
     }
     const stub = options.workflow ?? {
       status: 200,
-      body: { jobId: 4821, status: 'SAVED', changed: true, updatedAt: new Date().toISOString() },
+      body: {
+        jobId: 4821,
+        status: 'SAVED',
+        changed: true,
+        updatedAt: new Date().toISOString(),
+        snapshot: SNAPSHOT,
+      },
     };
     return json(route, stub.status, stub.body);
   });
@@ -235,7 +264,11 @@ test('sends a workflow change as a PUT carrying only the status', async ({ page 
     if (request.url().includes('/snapshot')) return json(route, 200, SNAPSHOT);
     writes.push({ url: request.url(), body: request.postData(), method: request.method() });
     return json(route, 200, {
-      jobId: 4821, status: 'SAVED', changed: true, updatedAt: new Date().toISOString(),
+      jobId: 4821,
+      status: 'SAVED',
+      changed: true,
+      updatedAt: new Date().toISOString(),
+      snapshot: SNAPSHOT,
     });
   });
 

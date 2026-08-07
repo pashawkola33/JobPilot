@@ -122,9 +122,32 @@ export interface ReviewStats {
   dismissed: number;
 }
 
+export interface ApplicationCounts {
+  total: number;
+  saved: number;
+  applied: number;
+  interview: number;
+  offer: number;
+  rejected: number;
+  withdrawn: number;
+}
+
+export interface BoundedPage<T> {
+  items: T[];
+  /** Complete durable count, not merely the number of returned rows. */
+  total: number;
+  limit: number;
+  truncated: boolean;
+}
+
 export interface Snapshot {
-  jobs: Job[];
-  applications: Application[];
+  reviewQueue: BoundedPage<Job>;
+  saved: BoundedPage<Job>;
+  applications: BoundedPage<Application>;
+  /** Active job details carried by the bounded application page, for opening its rows. */
+  applicationJobs: Job[];
+  workflowCounts: ReviewStats;
+  applicationCounts: ApplicationCounts;
 }
 
 /**
@@ -133,7 +156,7 @@ export interface Snapshot {
  */
 export interface JobPilotRepository {
   load(): Promise<Snapshot>;
-  setWorkflowStatus(jobId: number, status: WorkflowStatus): Promise<void>;
+  setWorkflowStatus(jobId: number, status: WorkflowStatus): Promise<Snapshot>;
 }
 
 /** Every way a repository call can fail, each with its own user-facing message. */

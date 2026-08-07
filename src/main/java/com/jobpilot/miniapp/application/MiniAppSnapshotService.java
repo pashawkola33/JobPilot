@@ -1,26 +1,32 @@
 package com.jobpilot.miniapp.application;
 
+import com.jobpilot.applications.application.ApplicationSnapshotView;
 import com.jobpilot.applications.application.ApplicationTrackerService;
 import com.jobpilot.applications.application.ApplicationView;
+import com.jobpilot.jobreview.application.JobQueueItem;
+import com.jobpilot.jobreview.application.JobReviewStats;
 import com.jobpilot.jobreview.repository.JobReviewQueryRepository;
 import com.jobpilot.jobreview.repository.JobReviewQueryRepository.MiniAppJobRow;
 import com.jobpilot.miniapp.api.MiniAppSnapshot;
 import com.jobpilot.miniapp.api.MiniAppSnapshot.MiniAppApplication;
+import com.jobpilot.miniapp.api.MiniAppSnapshot.MiniAppApplicationCounts;
+import com.jobpilot.miniapp.api.MiniAppSnapshot.MiniAppApplicationPage;
 import com.jobpilot.miniapp.api.MiniAppSnapshot.MiniAppJob;
-import com.jobpilot.jobreview.application.JobQueueItem;
+import com.jobpilot.miniapp.api.MiniAppSnapshot.MiniAppJobPage;
+import com.jobpilot.miniapp.api.MiniAppSnapshot.MiniAppWorkflowCounts;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Projects the existing read models into the Mini App contract. It owns no domain rules. */
+/** Projects existing durable read models into the Mini App contract. It owns no domain rules. */
 @Service
 public class MiniAppSnapshotService {
-    /**
-     * One session's worth of triage. Deliberately not paginated: the Mini App reviews a
-     * queue rather than browsing an archive, and an unbounded read is the failure mode
-     * worth designing out. Add paging here if a real queue ever outgrows this.
-     */
-    public static final int MAX_JOBS = 50;
+    public static final int MAX_REVIEW_JOBS = 50;
+    public static final int MAX_SAVED_JOBS = 50;
+    public static final int MAX_APPLICATIONS = 20;
 
     private final JobReviewQueryRepository queries;
     private final ApplicationTrackerService applications;
@@ -33,12 +39,31 @@ public class MiniAppSnapshotService {
 
     @Transactional(readOnly = true)
     public MiniAppSnapshot snapshot() {
-        List<MiniAppJob> jobs = queries.findMiniAppJobs(MAX_JOBS).stream()
+        JobReviewStats workflow = queries.stats();
+        List<MiniAppJob> review = queries.findMiniAppReviewJobs(MAX_REVIEW_JOBS).stream()
                 .map(MiniAppSnapshotService::job).toList();
-        // ApplicationTrackerService.list already bounds itself to the newest 20.
-        List<MiniAppApplication> tracked = applications.list(null).stream()
-                .map(MiniAppSnapshotService::application).toList();
-        return new MiniAppSnapshot(jobs, tracked);
+        List<MiniAppJob> saved = queries.findMiniAppSavedJobs(MAX_SAVED_JOBS).stream()
+                .map(MiniAppSnapshotService::job).toList();
+        ApplicationSnapshotView tracked = applications.snapshot(MAX_APPLICATIONS);
+        Map<Long, MiniAppJob> applicationJobs = queries.findMiniAppJobsByIds(
+                        tracked.items().stream().map(ApplicationView::jobId).toList()).stream()
+                .map(MiniAppSnapshotService::job)
+                .collect(Collectors.toMap(MiniAppJob::id, Function.identity()));
+        List<MiniAppApplication> applicationItems = tracked.items().stream()
+                .map(view -> application(view, applicationJobs.get(view.jobId()))).toList();
+        long reviewTotal = workflow.unreviewedMatch() + workflow.unreviewedReview();
+        ApplicationSnapshotView.Counts counts = tracked.counts();
+        return new MiniAppSnapshot(
+                new MiniAppJobPage(review, reviewTotal, MAX_REVIEW_JOBS,
+                        reviewTotal > review.size()),
+                new MiniAppJobPage(saved, workflow.saved(), MAX_SAVED_JOBS,
+                        workflow.saved() > saved.size()),
+                new MiniAppApplicationPage(applicationItems, tracked.total(), tracked.limit(),
+                        tracked.truncated()),
+                new MiniAppWorkflowCounts(workflow.unreviewedMatch(), workflow.unreviewedReview(),
+                        workflow.saved(), workflow.applied(), workflow.dismissed()),
+                new MiniAppApplicationCounts(counts.total(), counts.saved(), counts.applied(),
+                        counts.interview(), counts.offer(), counts.rejected(), counts.withdrawn()));
     }
 
     private static MiniAppJob job(MiniAppJobRow row) {
@@ -50,9 +75,9 @@ public class MiniAppSnapshotService {
                 row.strengths(), row.risks());
     }
 
-    private static MiniAppApplication application(ApplicationView view) {
+    private static MiniAppApplication application(ApplicationView view, MiniAppJob job) {
         return new MiniAppApplication(view.jobId(), view.title(), view.company(), view.status(),
                 view.canonicalUrl(), view.updatedAt(), view.applicationDate(),
-                view.nextFollowUpDate() == null ? null : view.nextFollowUpDate().toString());
+                view.nextFollowUpDate() == null ? null : view.nextFollowUpDate().toString(), job);
     }
 }

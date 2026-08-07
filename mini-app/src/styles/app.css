@@ -767,6 +767,12 @@ p {
   background: var(--accent);
 }
 
+.bounded-note {
+  margin: var(--s3) var(--s4);
+  color: var(--muted);
+  font-size: 13px;
+}
+
 /* --------------------------------------------------------------- sheet
    A native <dialog>: focus trap, Esc to close, inert background and
    ::backdrop come free. Enter and exit are CSS, no JS animation.

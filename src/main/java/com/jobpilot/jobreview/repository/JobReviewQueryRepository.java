@@ -94,22 +94,41 @@ public class JobReviewQueryRepository {
                 .stream().findFirst();
     }
 
-    /**
-     * One bounded page of active vacancies for the Mini App, in the same order the triage
-     * queues use. Everything selected already lives in jobs or job_scores: no LLM analysis
-     * is loaded, and nothing here fans out into a per-row query.
-     */
-    public List<MiniAppJobRow> findMiniAppJobs(int limit) {
+    /** Active vacancies that still need a decision; saved jobs never consume this window. */
+    public List<MiniAppJobRow> findMiniAppReviewJobs(int limit) {
+        return findMiniAppJobs(" and w.job_id is null", limit);
+    }
+
+    /** Durable saved vacancies in their own window, independent of review queue size. */
+    public List<MiniAppJobRow> findMiniAppSavedJobs(int limit) {
+        return findMiniAppJobs(" and w.status = 'SAVED'", limit);
+    }
+
+    /** Active detail rows for the bounded application page, loaded in one query. */
+    public List<MiniAppJobRow> findMiniAppJobsByIds(Collection<Long> jobIds) {
+        if (jobIds.isEmpty()) return List.of();
         String sql = COLUMNS + ", j.remote_type, j.seniority_level, j.employment_type, "
-                + "s.band, s.strengths, s.risks" + FROM + " where " + ACTIVE + ORDER
+                + "s.band, s.strengths, s.risks" + FROM + " where " + ACTIVE
+                + " and j.id in (:ids)" + ORDER;
+        return jdbc.query(sql, new MapSqlParameterSource("ids", jobIds), miniAppMapper());
+    }
+
+    /** Everything selected is already in jobs/job_scores; no LLM or per-row query is involved. */
+    private List<MiniAppJobRow> findMiniAppJobs(String condition, int limit) {
+        String sql = COLUMNS + ", j.remote_type, j.seniority_level, j.employment_type, "
+                + "s.band, s.strengths, s.risks" + FROM + " where " + ACTIVE + condition + ORDER
                 + " limit :limit";
+        return jdbc.query(sql, new MapSqlParameterSource("limit", limit), miniAppMapper());
+    }
+
+    private RowMapper<MiniAppJobRow> miniAppMapper() {
         RowMapper<JobQueueItem> items = itemMapper();
-        return jdbc.query(sql, new MapSqlParameterSource("limit", limit), (rs, row) ->
+        return (rs, row) ->
                 new MiniAppJobRow(items.mapRow(rs, row),
                         rs.getString("remote_type"), rs.getString("seniority_level"),
                         rs.getString("employment_type"), rs.getString("band"),
                         pipeSeparated(rs.getString("strengths")),
-                        pipeSeparated(rs.getString("risks"))));
+                        pipeSeparated(rs.getString("risks")));
     }
 
     /** The queue projection plus the columns only the Mini App card needs. */

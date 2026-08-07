@@ -5,10 +5,14 @@ import { State } from '../components/States';
 
 export function Saved({
   jobs,
+  total,
+  truncated,
   onDetails,
   onReview,
 }: {
   jobs: Job[];
+  total: number;
+  truncated: boolean;
   onDetails: (job: Job) => void;
   onReview: () => void;
 }) {
@@ -20,7 +24,7 @@ export function Saved({
     <>
       <header className="topbar">
         <h1 className="topbar__title">Saved</h1>
-        <span className="eyebrow num">{saved.length}</span>
+        <span className="eyebrow num">{total}</span>
       </header>
 
       {saved.length === 0 ? (
@@ -36,6 +40,9 @@ export function Saved({
         />
       ) : (
         <div className="scroll">
+          {truncated && (
+            <p className="bounded-note">Showing {saved.length} of {total} saved vacancies</p>
+          )}
           <ul className="rows">
             {saved.map((job) => (
               <JobRow

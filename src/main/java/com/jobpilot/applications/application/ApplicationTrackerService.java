@@ -19,13 +19,21 @@ import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 public class ApplicationTrackerService {
     public static final int MAX_NOTES_LENGTH = 2000;
     public static final int MAX_REJECTION_REASON_LENGTH = 1000;
-    private static final int MAX_CONFLICT_ATTEMPTS = 3;
+    /** Shared with callers that run their own retry around a whole caller-owned transaction. */
+    public static final int MAX_CONFLICT_ATTEMPTS = 3;
+
+    /** The one conflict exception every retry path exhausts into, so the 409 contract is uniform. */
+    public static ApplicationTrackingException conflict() {
+        return new ApplicationTrackingException(ApplicationTrackingException.Category.CONFLICT,
+                "The application changed concurrently. Please retry.");
+    }
 
     private final ApplicationRepository applications;
     private final ApplicationStatusHistoryRepository history;
@@ -48,49 +56,87 @@ public class ApplicationTrackerService {
         this.transactions = new TransactionTemplate(transactionManager);
     }
 
+    /**
+     * The standalone entry point: owns its transaction and retries conflicts itself. Every
+     * attempt begins a transaction of its own, so a rolled-back attempt never leaks into the
+     * next one.
+     *
+     * <p>Callers that already hold a transaction must use
+     * {@link #transitionInCurrentTransaction} instead — retrying inside a caller's transaction
+     * cannot work, because the failed attempt has already marked that transaction rollback-only.
+     */
     public ApplicationMutationResult transition(long jobId, ApplicationStatus requested,
                                                 Instant interviewAt, String rejectionReason,
                                                 ApplicationStatusChangeSource source) {
+        String reason = validated(requested, interviewAt, rejectionReason, source);
+        return retryConflicts(() -> transactions.execute(
+                status -> transitionOnce(jobId, requested, interviewAt, reason, source)));
+    }
+
+    /**
+     * Exactly one attempt, joined to the transaction the caller already owns, with no retry of
+     * its own. A conflict propagates to the caller, whose job it is to abandon the whole
+     * transaction and start a fresh one — see MiniAppWorkflowService.
+     */
+    public ApplicationMutationResult transitionInCurrentTransaction(
+            long jobId, ApplicationStatus requested, Instant interviewAt,
+            String rejectionReason, ApplicationStatusChangeSource source) {
+        if (!TransactionSynchronizationManager.isActualTransactionActive()) {
+            throw new IllegalStateException("transitionInCurrentTransaction requires an active "
+                    + "transaction; standalone callers must use transition(...)");
+        }
+        String reason = validated(requested, interviewAt, rejectionReason, source);
+        return transitionOnce(jobId, requested, interviewAt, reason, source);
+    }
+
+    /** Shared argument checks. Returns the normalized rejection reason. */
+    private String validated(ApplicationStatus requested, Instant interviewAt,
+                             String rejectionReason, ApplicationStatusChangeSource source) {
         if (requested == null || source == null) throw invalid("Status and source are required.");
         String reason = normalize(rejectionReason, MAX_REJECTION_REASON_LENGTH, "Rejection reason");
         if (requested == ApplicationStatus.INTERVIEW && interviewAt == null) {
             throw invalid("Interview date and UTC offset are required.");
         }
-        return retryConflicts(() -> transactions.execute(status -> {
-            Instant now = clock.instant();
-            Job job = jobs.findById(jobId).orElseThrow(() -> new ApplicationTrackingException(
-                    ApplicationTrackingException.Category.JOB_NOT_FOUND, "Job was not found."));
-            ApplicationRecord existing = applications.findByJobId(jobId).orElse(null);
-            if (existing == null) {
-                if (!transitions.canCreate(requested)) {
-                    throw new ApplicationTrackingException(
-                            ApplicationTrackingException.Category.INVALID_TRANSITION,
-                            "Create the application as SAVED or APPLIED first.");
-                }
-                ApplicationRecord created = ApplicationRecord.create(job, requested, now);
-                created = applications.saveAndFlush(created);
-                history.save(new ApplicationStatusHistory(
-                        created, null, requested, now, source));
-                return new ApplicationMutationResult(view(created), true);
-            }
-            ApplicationStatus previous = existing.getStatus();
-            if (previous == requested) {
-                if (requested != ApplicationStatus.INTERVIEW
-                        || Objects.equals(existing.getInterviewDate(), interviewAt)) {
-                    return new ApplicationMutationResult(view(existing), false);
-                }
-            }
-            if (!transitions.canTransition(previous, requested)) {
+        return reason;
+    }
+
+    /** One transition against whichever transaction is current. Never retries. */
+    private ApplicationMutationResult transitionOnce(long jobId, ApplicationStatus requested,
+                                                     Instant interviewAt, String reason,
+                                                     ApplicationStatusChangeSource source) {
+        Instant now = clock.instant();
+        Job job = jobs.findById(jobId).orElseThrow(() -> new ApplicationTrackingException(
+                ApplicationTrackingException.Category.JOB_NOT_FOUND, "Job was not found."));
+        ApplicationRecord existing = applications.findByJobId(jobId).orElse(null);
+        if (existing == null) {
+            if (!transitions.canCreate(requested)) {
                 throw new ApplicationTrackingException(
                         ApplicationTrackingException.Category.INVALID_TRANSITION,
-                        "That application status transition is not allowed.");
+                        "Create the application as SAVED or APPLIED first.");
             }
-            existing.transitionTo(requested, interviewAt, reason, now);
-            applications.saveAndFlush(existing);
+            ApplicationRecord created = ApplicationRecord.create(job, requested, now);
+            created = applications.saveAndFlush(created);
             history.save(new ApplicationStatusHistory(
-                    existing, previous, requested, now, source));
-            return new ApplicationMutationResult(view(existing), true);
-        }));
+                    created, null, requested, now, source));
+            return new ApplicationMutationResult(view(created), true);
+        }
+        ApplicationStatus previous = existing.getStatus();
+        if (previous == requested) {
+            if (requested != ApplicationStatus.INTERVIEW
+                    || Objects.equals(existing.getInterviewDate(), interviewAt)) {
+                return new ApplicationMutationResult(view(existing), false);
+            }
+        }
+        if (!transitions.canTransition(previous, requested)) {
+            throw new ApplicationTrackingException(
+                    ApplicationTrackingException.Category.INVALID_TRANSITION,
+                    "That application status transition is not allowed.");
+        }
+        existing.transitionTo(requested, interviewAt, reason, now);
+        applications.saveAndFlush(existing);
+        history.save(new ApplicationStatusHistory(
+                existing, previous, requested, now, source));
+        return new ApplicationMutationResult(view(existing), true);
     }
 
     public ApplicationMutationResult changeFollowUpDate(long jobId, LocalDate date) {
@@ -132,6 +178,29 @@ public class ApplicationTrackerService {
         });
     }
 
+    /**
+     * One bounded Mini App page plus totals that describe the complete durable collection.
+     * The enclosing Mini App snapshot transaction is joined when this is called from there.
+     */
+    public ApplicationSnapshotView snapshot(int requestedLimit) {
+        int limit = Math.clamp(requestedLimit, 1, 100);
+        return transactions.execute(status -> {
+            List<ApplicationView> items = applications
+                    .findAllByOrderByUpdatedAtDesc(PageRequest.of(0, limit)).stream()
+                    .map(this::view).toList();
+            long total = applications.count();
+            return new ApplicationSnapshotView(items, total, limit,
+                    new ApplicationSnapshotView.Counts(
+                            total,
+                            applications.countByStatus(ApplicationStatus.SAVED),
+                            applications.countByStatus(ApplicationStatus.APPLIED),
+                            applications.countByStatus(ApplicationStatus.INTERVIEW),
+                            applications.countByStatus(ApplicationStatus.OFFER),
+                            applications.countByStatus(ApplicationStatus.REJECTED),
+                            applications.countByStatus(ApplicationStatus.WITHDRAWN)));
+        });
+    }
+
     public List<ApplicationHistoryView> history(long jobId) {
         return transactions.execute(status -> {
             ApplicationRecord application = requiredApplication(jobId);
@@ -162,11 +231,7 @@ public class ApplicationTrackerService {
             try {
                 return operation.get();
             } catch (DataIntegrityViolationException | OptimisticLockingFailureException conflict) {
-                if (attempt == MAX_CONFLICT_ATTEMPTS) {
-                    throw new ApplicationTrackingException(
-                            ApplicationTrackingException.Category.CONFLICT,
-                            "The application changed concurrently. Please retry.");
-                }
+                if (attempt == MAX_CONFLICT_ATTEMPTS) throw conflict();
             }
         }
         throw new IllegalStateException("Unreachable conflict retry state");

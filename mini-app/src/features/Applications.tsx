@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { motion } from 'motion/react';
-import type { Application, ApplicationStatus, Job } from '../data/types';
+import type { Application, ApplicationCounts, ApplicationStatus, Job } from '../data/types';
 import { applicationLabel, shortDate, until } from '../lib/format';
 import { IconApplications } from '../components/icons';
 import { JobRow } from '../components/JobRow';
@@ -23,11 +23,17 @@ type Filter = ApplicationStatus | 'ALL';
 
 export function Applications({
   applications,
+  counts,
+  total,
+  truncated,
   jobs,
   onDetails,
   onReview,
 }: {
   applications: Application[];
+  counts: ApplicationCounts;
+  total: number;
+  truncated: boolean;
   jobs: Job[];
   onDetails: (job: Job) => void;
   onReview: () => void;
@@ -46,10 +52,10 @@ export function Applications({
     <>
       <header className="topbar">
         <h1 className="topbar__title">Applications</h1>
-        <span className="eyebrow num">{applications.length}</span>
+        <span className="eyebrow num">{total}</span>
       </header>
 
-      {applications.length === 0 ? (
+      {total === 0 ? (
         <State
           mark={<IconApplications size={32} />}
           title="No applications tracked"
@@ -66,8 +72,8 @@ export function Applications({
             {(['ALL', ...STAGES] as Filter[]).map((stage) => {
               const count =
                 stage === 'ALL'
-                  ? applications.length
-                  : applications.filter((a) => a.status === stage).length;
+                  ? counts.total
+                  : counts[stage.toLowerCase() as Lowercase<ApplicationStatus>];
               const active = filter === stage;
               return (
                 <button
@@ -92,6 +98,9 @@ export function Applications({
           </div>
 
           <div className="scroll">
+            {truncated && (
+              <p className="bounded-note">Showing {applications.length} of {total} applications</p>
+            )}
             {ordered.length === 0 ? (
               <State
                 mark={<IconApplications size={32} />}
