@@ -151,12 +151,45 @@ export interface Snapshot {
 }
 
 /**
+ * What one mutation authoritatively decided — about its own job, and nothing else.
+ *
+ * There is deliberately no snapshot here. `mutationRevision` orders Mini App mutations
+ * against each other, but ingestion, the Telegram bot and the applications API all change
+ * what the snapshot shows without advancing it, so a higher revision does not make this
+ * reply's view of the world newer. Treating it as a global version is precisely the bug P0-B
+ * removes; global state converges only through `load()`.
+ */
+export interface MutationOutcome {
+  mutationId: string;
+  mutationRevision: number;
+  /** True when the server resolved a duplicate delivery instead of executing it again. */
+  replayed: boolean;
+  jobId: number;
+  status: WorkflowStatus;
+  changed: boolean;
+  applicationStatus: ApplicationStatus | null;
+  /** A live reversal capability, or null when none exists now. Never reconstructed here. */
+  undoToken: string | null;
+}
+
+/**
  * The single seam between UI and backend. Both implementations reject with
  * {@link JobPilotError}; nothing else in the app talks to a server.
  */
 export interface JobPilotRepository {
   load(): Promise<Snapshot>;
-  setWorkflowStatus(jobId: number, status: WorkflowStatus): Promise<Snapshot>;
+  /**
+   * @param mutationId stable across retries of one user action, fresh for a new one. Re-sending
+   *   the same id resolves the original operation instead of performing a second one, which is
+   *   what makes an ambiguous timeout recoverable without guessing whether it committed.
+   */
+  setWorkflowStatus(
+    jobId: number,
+    status: WorkflowStatus,
+    mutationId: string,
+  ): Promise<MutationOutcome>;
+  /** Server-owned reversal: the client supplies a capability, never a state to restore. */
+  undo(mutationId: string, undoToken: string): Promise<MutationOutcome>;
 }
 
 /** Every way a repository call can fail, each with its own user-facing message. */
@@ -169,6 +202,7 @@ export type FailureKind =
   | 'forbidden'
   | 'not-found'
   | 'conflict'
+  | 'undo-stale'
   | 'unavailable';
 
 export const FAILURE_MESSAGES: Record<FailureKind, { title: string; text: string }> = {
@@ -203,6 +237,10 @@ export const FAILURE_MESSAGES: Record<FailureKind, { title: string; text: string
   conflict: {
     title: 'Change was rejected',
     text: 'JobPilot could not apply that change to this vacancy.',
+  },
+  'undo-stale': {
+    title: 'Too late to undo',
+    text: 'This vacancy changed after that action, so undoing it would overwrite the newer change. Showing the latest state.',
   },
   unavailable: {
     title: 'JobPilot is unreachable',

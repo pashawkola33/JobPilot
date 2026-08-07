@@ -2,14 +2,15 @@ import { expect, test, type Page } from '@playwright/test';
 import { SyntheticServer, context, review } from './synthetic';
 
 /**
- * P0-A Undo boundary.
+ * P0-B Undo: a server-owned reversal addressed by an opaque capability.
  *
- * Applied is not reversible in P0-A: the application transition policy has no APPLIED to SAVED
- * edge, so offering Undo could only ever produce a rejected write and a UI that disagrees with
- * the server. Save and Dismiss stay undoable, and any Undo that is still possible must end with
- * the client showing authoritative state even when the write is refused.
+ * The client stores a token and nothing else. It never records what to restore, because only
+ * the server knows whether the tracking row a reversal would remove pre-existed the action or
+ * was created by it — and deleting on a guess is how a pre-existing application disappears.
  *
- * Deterministic Applied reversal belongs to P0-B.
+ * Applied is reversible here, unlike P0-A. It was disabled then because reversal went through
+ * the forward transition policy, which has no APPLIED to SAVED edge; P0-B reverses through an
+ * explicit path against recorded state instead, so the policy still needs no backwards edge.
  */
 
 const queue = (count: number) =>
@@ -50,72 +51,100 @@ test('Dismiss exposes Undo', async ({ browser }) => {
   await expect(undoButton(page)).toBeVisible();
 });
 
-test('Applied does not expose Undo', async ({ browser }) => {
+test('Applied is reversible and Undo restores the previous durable state', async ({ browser }) => {
   const server = new SyntheticServer(queue(2));
   const page = await (await context(browser, server)).newPage();
   await openReview(page);
 
   await page.locator('.actions').getByRole('button', { name: 'Applied' }).click();
+  await expect(undoButton(page)).toBeVisible();
+  await expect.poll(() => server.jobs[0]!.status).toBe('APPLIED');
+  expect(server.applications.has(7000)).toBe(true);
 
-  await expect(page.getByRole('heading', { name: 'Undo vacancy 2' })).toBeVisible();
-  await expect(undoButton(page)).toHaveCount(0);
-  // The decision still reached the server and is reflected authoritatively.
-  await expect.poll(() => server.jobs[0].status).toBe('APPLIED');
+  await undoButton(page).click();
+
+  // The Mini App created that tracking row, so reversing removes exactly what it created.
+  await expect.poll(() => server.jobs[0]!.status).toBe('UNREVIEWED');
+  await expect.poll(() => server.applications.has(7000)).toBe(false);
+  expect(server.historyFor(7000)).toHaveLength(0);
 });
 
-test('selecting Applied clears a previously armed Undo', async ({ browser }) => {
+test('an Undo on a pre-existing application restores it rather than deleting it', async ({
+  browser,
+}) => {
+  const server = new SyntheticServer(queue(2));
+  // The vacancy was already tracked before the Mini App touched it — by the bot, say.
+  server.externalTransition(7000, 'SAVED');
+  const page = await (await context(browser, server)).newPage();
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Saved', exact: true }).click();
+  await expect(page.getByRole('button', { name: /Undo vacancy 1/ })).toBeVisible();
+
+  // Nothing was deleted and the pre-existing history row survives.
+  expect(server.applications.get(7000)?.status).toBe('SAVED');
+  expect(server.historyFor(7000)).toHaveLength(1);
+});
+
+/**
+ * Only one action is undoable at a time. The reviewer moves on after each decision, so a toast
+ * left over from an earlier vacancy would reverse something they have already passed.
+ */
+test('a newer action retires the previous Undo', async ({ browser }) => {
   const server = new SyntheticServer(queue(3));
   const page = await (await context(browser, server)).newPage();
   await openReview(page);
 
   await page.locator('.actions').getByRole('button', { name: 'Save' }).click();
-  await expect(undoButton(page)).toBeVisible();
+  await expect(toast(page)).toContainText('Saved');
+  await expect(toast(page)).toContainText('Undo vacancy 1');
 
   await page.locator('.actions').getByRole('button', { name: 'Applied' }).click();
 
-  await expect(undoButton(page)).toHaveCount(0);
-  await expect(toast(page)).toHaveCount(0);
+  // Exactly one toast, and it belongs to the newer action on the newer vacancy.
+  await expect(toast(page)).toHaveCount(1);
+  await expect(toast(page)).toContainText('Marked as applied');
+  await expect(toast(page)).toContainText('Undo vacancy 2');
+  await expect(toast(page)).not.toContainText('Saved');
 });
 
-test('a rejected Undo reconciles the UI from authoritative server state', async ({ browser }) => {
+test('an Undo invalidated by an external writer is refused without destroying anything', async ({
+  browser,
+}) => {
   const server = new SyntheticServer(queue(2));
   const page = await (await context(browser, server)).newPage();
   await openReview(page);
 
   await page.locator('.actions').getByRole('button', { name: 'Save' }).click();
   await expect(undoButton(page)).toBeVisible();
-  await expect.poll(() => server.jobs[0].status).toBe('SAVED');
+  await expect.poll(() => server.jobs[0]!.status).toBe('SAVED');
 
-  server.rejectNext();
+  // The Telegram bot moves the same vacancy on. This advances no Mini App revision at all,
+  // so only the recorded fingerprint can catch it.
+  server.externalTransition(7000, 'APPLIED');
   await undoButton(page).click();
 
-  // The typed failure is shown ...
-  await expect(page.getByRole('alert')).toContainText('Change was rejected');
-  // ... and the optimistic rollback is gone: the server still has it saved, so the client does.
-  expect(server.jobs[0].status).toBe('SAVED');
-  await page.getByRole('button', { name: 'Saved', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('Too late to undo');
+  // The newer external action stands: nothing rolled back, nothing deleted.
+  expect(server.jobs[0]!.status).toBe('APPLIED');
+  expect(server.applications.get(7000)?.status).toBe('APPLIED');
+  // And the client reconciled rather than keeping its own guess.
+  await page.getByRole('button', { name: 'Track' }).click();
   await expect(page.getByRole('button', { name: /Undo vacancy 1/ })).toBeVisible();
 });
 
-test('the UI and the server do not diverge after a failed Undo', async ({ browser }) => {
+test('the UI and the server do not diverge after a refused write', async ({ browser }) => {
   const server = new SyntheticServer(queue(2));
   const page = await (await context(browser, server)).newPage();
   await openReview(page);
 
-  await page.locator('.actions').getByRole('button', { name: 'Skip' }).click();
-  await expect(undoButton(page)).toBeVisible();
-  await expect.poll(() => server.jobs[0].status).toBe('DISMISSED');
-
   server.rejectNext();
-  await undoButton(page).click();
+  await page.locator('.actions').getByRole('button', { name: 'Skip' }).click();
   await expect(page.getByRole('alert')).toBeVisible();
 
-  // Whatever the client is now showing must match a fresh authoritative read. A dismissed
-  // vacancy is in neither the review window nor Saved, so it must appear in neither.
-  const snapshot = server.snapshot();
-  expect(snapshot.reviewQueue.items.map((job) => job.id)).not.toContain(7000);
-  expect(snapshot.saved.items.map((job) => job.id)).not.toContain(7000);
-  await expect(page.getByRole('heading', { name: 'Undo vacancy 1' })).toHaveCount(0);
+  // Whatever the client shows must match a fresh authoritative read. The refusal changed
+  // nothing, so the vacancy is still unreviewed and still in the review window.
+  expect(server.jobs[0]!.status).toBe('UNREVIEWED');
+  expect(server.snapshot().reviewQueue.items.map((job) => job.id)).toContain(7000);
   await page.getByRole('button', { name: 'Saved', exact: true }).click();
   await expect(page.getByRole('button', { name: /Undo vacancy 1/ })).toHaveCount(0);
 });

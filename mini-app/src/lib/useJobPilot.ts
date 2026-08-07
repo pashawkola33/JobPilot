@@ -1,15 +1,24 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { repository } from '../data/repository';
 import type {
   Application,
   ApplicationCounts,
   FailureKind,
   Job,
+  MutationOutcome,
   ReviewStats,
   Snapshot,
   WorkflowStatus,
 } from '../data/types';
-import { JobPilotError } from '../data/types';
+import { createReadPipeline } from './readPipeline';
+import {
+  createJobQueue,
+  failureKind,
+  isAmbiguous,
+  sendWithRecovery,
+  type JobState,
+  IDLE,
+} from './jobMutations';
 import { haptic } from './telegram';
 
 export const UNDO_MS = 6000;
@@ -32,27 +41,43 @@ const EMPTY_APPLICATION_COUNTS: ApplicationCounts = {
   withdrawn: 0,
 };
 
+/**
+ * A live, server-issued reversal capability. The client stores the token and nothing else: it
+ * never records what to restore, because only the server knows whether the tracking row it would
+ * remove pre-existed the action or was created by it.
+ */
 export interface UndoEntry {
   jobId: number;
   title: string;
-  job: Job;
   /** "Saved", "Skipped", "Marked as applied" — the verb already in the past tense. */
   action: string;
-  previous: WorkflowStatus;
-  /** Recorded explicitly so P0-B never guesses whether a tracked application pre-dated Undo. */
-  applicationExisted: boolean;
+  undoToken: string;
 }
 
 type Phase = 'loading' | 'ready' | 'error';
 
-/** Any rejection that is not already typed is a backend we could not reach. */
-const kindOf = (failure: unknown): FailureKind =>
-  failure instanceof JobPilotError ? failure.kind : 'unavailable';
+const newMutationId = () =>
+  globalThis.crypto?.randomUUID?.() ?? `m-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
+/**
+ * Two kinds of state, deliberately not mixed.
+ *
+ * **Global** — the Review, Saved and Applications projections and their counts. Written *only*
+ * by the read pipeline. A mutation reply never touches them, whatever revision it carries,
+ * because its transaction may have read the world before an ingestion or Telegram write that a
+ * concurrent read already returned.
+ *
+ * **Per job** — phase, live undo token, last error. Written from the operation result for the
+ * one job that mutation held locked. Same-job actions serialize; different jobs never block each
+ * other.
+ *
+ * The two connect in one direction: a settled mutation *requests* reconciliation, and never
+ * writes global state itself.
+ */
 export function useJobPilot() {
   const [phase, setPhase] = useState<Phase>('loading');
   const [failure, setFailure] = useState<FailureKind>('unavailable');
-  /** A mutation that the server refused, surfaced without discarding the queue. */
+  /** A mutation the server refused, surfaced without discarding the queue. */
   const [writeFailure, setWriteFailure] = useState<FailureKind | null>(null);
   const [reviewJobs, setReviewJobs] = useState<Job[]>([]);
   const [reviewTotal, setReviewTotal] = useState(0);
@@ -75,11 +100,14 @@ export function useJobPilot() {
   /** 1 forward, -1 after an undo — the card transition travels the way the queue moved. */
   const [direction, setDirection] = useState(1);
   const [undo, setUndo] = useState<UndoEntry | null>(null);
+  /** Per-job machine. A job here is either mid-write or in an honest unknown. */
+  const [jobStates, setJobStates] = useState<Record<number, JobState>>({});
   const undoTimer = useRef<number | undefined>(undefined);
-  /** Identifies the decision whose write is still in flight; P0-B will make this per-job. */
-  const pending = useRef<symbol | null>(null);
+  const queueRef = useRef(createJobQueue());
+  /** Set once the first read lands, so a mutation cannot be issued against nothing. */
+  const resetQueueOnNextRead = useRef(true);
 
-  const reconcile = useCallback((data: Snapshot, resetQueue: boolean) => {
+  const applySnapshot = useCallback((data: Snapshot) => {
     setReviewJobs(data.reviewQueue.items);
     setReviewTotal(data.reviewQueue.total);
     setSavedJobs(data.saved.items);
@@ -91,32 +119,61 @@ export function useJobPilot() {
     setApplicationsTruncated(data.applications.truncated);
     setStats(data.workflowCounts);
     setApplicationCounts(data.applicationCounts);
-    if (resetQueue) {
+    if (resetQueueOnNextRead.current) {
+      resetQueueOnNextRead.current = false;
       setReviewLimit(data.reviewQueue.limit);
       setReviewTruncated(data.reviewQueue.truncated);
       setReviewLoadedCount(data.reviewQueue.items.length);
       setQueue(data.reviewQueue.items.map((job) => job.id));
       setCursor(0);
     }
+    setPhase('ready');
   }, []);
 
+  const pipeline = useMemo(
+    () => createReadPipeline(
+      () => repository.load(),
+      applySnapshot,
+      (error: unknown) => {
+        // Only a read that has never succeeded can take the whole app to the error screen.
+        setPhase((existing) => {
+          if (existing === 'ready') {
+            setWriteFailure(failureKind(error));
+            return existing;
+          }
+          setFailure(failureKind(error));
+          return 'error';
+        });
+      },
+    ),
+    [applySnapshot],
+  );
+
   const load = useCallback(() => {
+    resetQueueOnNextRead.current = true;
     setPhase('loading');
     setWriteFailure(null);
-    repository.load().then(
-      (data) => {
-        reconcile(data, true);
-        setPhase('ready');
-      },
-      (error: unknown) => {
-        setFailure(kindOf(error));
-        setPhase('error');
-      },
-    );
-  }, [reconcile]);
+    void pipeline.reconcile();
+  }, [pipeline]);
 
   useEffect(load, [load]);
   useEffect(() => () => clearTimeout(undoTimer.current), []);
+
+  const setJob = useCallback((jobId: number, next: Partial<JobState>) => {
+    setJobStates((all) => ({ ...all, [jobId]: { ...(all[jobId] ?? IDLE), ...next } }));
+  }, []);
+
+  /** Puts the reviewer back on a specific vacancy, used when its write did not settle cleanly. */
+  const focusJob = useCallback((jobId: number) => {
+    setQueue((all) => {
+      const index = all.indexOf(jobId);
+      if (index >= 0) {
+        setDirection(-1);
+        setCursor(index);
+      }
+      return all;
+    });
+  }, []);
 
   const armUndo = useCallback((entry: UndoEntry) => {
     clearTimeout(undoTimer.current);
@@ -129,31 +186,25 @@ export function useJobPilot() {
     setUndo(null);
   }, []);
 
-  /** Undoing the optimistic queue edit; durable application rows are never deleted here. */
-  const rollback = useCallback((entry: UndoEntry) => {
-    const restored = { ...entry.job, workflowStatus: entry.previous };
-    setReviewJobs((all) => {
-      const without = all.filter((job) => job.id !== entry.jobId);
-      return entry.previous === 'UNREVIEWED' ? [restored, ...without] : without;
-    });
-    setSavedJobs((all) => {
-      const without = all.filter((job) => job.id !== entry.jobId);
-      return entry.previous === 'SAVED' ? [restored, ...without] : without;
-    });
-    setDirection(-1);
-    setCursor((index) => Math.max(0, index - 1));
-  }, []);
+  /**
+   * Applies an operation result to the one job it is authoritative for, then asks the read
+   * pipeline for fresh global state. It never writes the lists itself.
+   */
+  const settle = useCallback((outcome: MutationOutcome, entry: UndoEntry | null) => {
+    setJob(outcome.jobId, { phase: 'idle', undoToken: outcome.undoToken, error: null });
+    const patch = (all: Job[]) =>
+      all.map((job) => (job.id === outcome.jobId ? { ...job, workflowStatus: outcome.status } : job));
+    setReviewJobs(patch);
+    setSavedJobs(patch);
+    if (entry && outcome.undoToken) armUndo({ ...entry, undoToken: outcome.undoToken });
+    else if (entry) disarmUndo();
+    void pipeline.reconcile();
+  }, [armUndo, disarmUndo, pipeline, setJob]);
 
   const decide = useCallback(
     (job: Job, status: WorkflowStatus, action: string) => {
-      const entry: UndoEntry = {
-        jobId: job.id,
-        title: job.title,
-        job,
-        action,
-        previous: job.workflowStatus,
-        applicationExisted: applications.some((application) => application.jobId === job.id),
-      };
+      // An unknown job accepts no further writes until it is resolved (I9).
+      if (jobStates[job.id]?.phase === 'unknown') return;
 
       setReviewJobs((all) =>
         all.map((candidate) =>
@@ -162,61 +213,76 @@ export function useJobPilot() {
       );
       setDirection(1);
       setCursor((index) => index + 1);
-      // P0-A: Applied is not reversible. The application transition policy has no APPLIED to
-      // SAVED edge, so an Undo here could only ever be rejected. Selecting Applied also drops
-      // an Undo still armed for an earlier vacancy, which would otherwise reverse a decision
-      // the user has already moved past. Deterministic Applied reversal belongs to P0-B.
-      if (status === 'APPLIED') disarmUndo();
-      else armUndo(entry);
+      // Any new action retires the toast for the previous one; the server decides whether this
+      // action gets its own, and settle() arms it only if a live token came back.
+      disarmUndo();
       haptic(status === 'DISMISSED' ? 'light' : 'success');
+      setJob(job.id, { phase: 'mutating', error: null });
 
-      // P0-A keeps the existing single pending token. P0-B owns full mutation ordering.
-      const token = Symbol('decision');
-      pending.current = token;
-      repository.setWorkflowStatus(job.id, status).then(
-        (authoritative) => {
-          if (pending.current !== token) return;
-          pending.current = null;
-          reconcile(authoritative, false);
-        },
-        (error: unknown) => {
-          if (pending.current !== token) return;
-          pending.current = null;
-          clearTimeout(undoTimer.current);
-          setUndo(null);
-          rollback(entry);
-          setWriteFailure(kindOf(error));
-        },
+      const mutationId = newMutationId();
+      const pending: UndoEntry = { jobId: job.id, title: job.title, action, undoToken: '' };
+      void queueRef.current.run(job.id, () =>
+        sendWithRecovery(() => repository.setWorkflowStatus(job.id, status, mutationId)).then(
+          (outcome) => settle(outcome, pending),
+          (error: unknown) => {
+            // Ambiguous here means the mutation *and* its same-id resolution both failed, so
+            // nothing is known: not the optimistic state, not a rollback. Say so (I9).
+            const unknown = isAmbiguous(error);
+            setJob(job.id, {
+              phase: unknown ? 'unknown' : 'idle',
+              undoToken: null,
+              error: failureKind(error),
+            });
+            disarmUndo();
+            setWriteFailure(failureKind(error));
+            // The optimistic advance already moved past this vacancy. Leaving the reviewer on
+            // the next one would show a warning about a job they can no longer see, and would
+            // put the retry out of reach — so step back to the job the message is about.
+            focusJob(job.id);
+            // A refused write leaves durable state we have not seen; a lost one may or may not
+            // have landed. Either way the lists are only trustworthy after a fresh read.
+            void pipeline.reconcile();
+          },
+        ),
       );
     },
-    [applications, armUndo, disarmUndo, reconcile, rollback],
+    [disarmUndo, focusJob, jobStates, pipeline, setJob, settle],
   );
 
+  /** Reversal is a server operation; the client sends a capability, never a state. */
   const revert = useCallback(() => {
     if (!undo) return;
-    clearTimeout(undoTimer.current);
-    // Claims the decision, so the original write's rejection becomes a no-op.
-    pending.current = null;
-    rollback(undo);
-    setUndo(null);
+    const target = undo;
+    disarmUndo();
     haptic('warning');
-    repository.setWorkflowStatus(undo.jobId, undo.previous).then(
-      (authoritative) => reconcile(authoritative, false),
-      (error: unknown) => {
-        // The optimistic rollback above is already on screen, so leaving it there would show a
-        // state the server rejected. Re-read the authoritative snapshot first, then report the
-        // failure, so the toast never accompanies a queue that disagrees with the server.
-        const kind = kindOf(error);
-        repository.load().then(
-          (authoritative) => {
-            reconcile(authoritative, false);
-            setWriteFailure(kind);
-          },
-          () => setWriteFailure(kind),
-        );
-      },
+    setJob(target.jobId, { phase: 'mutating', error: null });
+    setDirection(-1);
+    setCursor((index) => Math.max(0, index - 1));
+
+    const mutationId = newMutationId();
+    void queueRef.current.run(target.jobId, () =>
+      sendWithRecovery(() => repository.undo(mutationId, target.undoToken)).then(
+        (outcome) => settle(outcome, null),
+        (error: unknown) => {
+          setJob(target.jobId, {
+            phase: isAmbiguous(error) ? 'unknown' : 'idle',
+            undoToken: null,
+            error: failureKind(error),
+          });
+          setWriteFailure(failureKind(error));
+          focusJob(target.jobId);
+          void pipeline.reconcile();
+        },
+      ),
     );
-  }, [reconcile, rollback, undo]);
+  }, [disarmUndo, focusJob, pipeline, setJob, settle, undo]);
+
+  /** The deterministic retry offered for a job in the unknown state. */
+  const reconcileJob = useCallback((jobId: number) => {
+    setJob(jobId, { phase: 'idle', error: null });
+    setWriteFailure(null);
+    void pipeline.reconcile();
+  }, [pipeline, setJob]);
 
   const skipToNext = useCallback(() => {
     setDirection(1);
@@ -249,8 +315,14 @@ export function useJobPilot() {
     position: Math.min(cursor + 1, queue.length),
     direction,
     undo,
+    jobStates,
+    /** Jobs whose durable state is unknown until a resolution or read confirms it. */
+    unknownJobs: Object.entries(jobStates)
+      .filter(([, state]) => state.phase === 'unknown')
+      .map(([id]) => Number(id)),
     decide,
     revert,
+    reconcileJob,
     skipToNext,
     dismissUndo: () => setUndo(null),
     reload: load,

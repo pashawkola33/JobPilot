@@ -27,13 +27,17 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
   projects: [
-    { name: 'mobile-390', testIgnore: /api\.spec\.ts/, use: mobile(390, 844) },
-    { name: 'mobile-430', testIgnore: /api\.spec\.ts/, use: mobile(430, 932) },
+    { name: 'mobile-390', testIgnore: /(api|unit)\.spec\.ts/, use: mobile(390, 844) },
+    { name: 'mobile-430', testIgnore: /(api|unit)\.spec\.ts/, use: mobile(430, 932) },
     {
       name: 'desktop-1024',
-      testIgnore: /api\.spec\.ts/,
+      testIgnore: /(api|unit)\.spec\.ts/,
       use: { viewport: { width: 1024, height: 768 } },
     },
+    // The per-job queue and read pipeline are pure modules. The UI cannot issue two concurrent
+    // mutations for one job — it advances the card on the first — so their ordering guarantees
+    // are exercised where they live, in Node, with no browser involved.
+    { name: 'unit', testMatch: /unit\.spec\.ts/ },
     {
       name: 'api',
       testMatch: /api\.spec\.ts/,

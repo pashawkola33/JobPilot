@@ -256,19 +256,23 @@ test('names the feature flag when the server has the Mini App switched off', asy
 
 // ---------------------------------------------------------------------- mutations
 
-test('sends a workflow change as a PUT carrying only the status', async ({ page }) => {
+test('sends a workflow change as a PUT carrying the status and a mutation id', async ({ page }) => {
   const writes: { url: string; body: string | null; method: string }[] = [];
   await withTelegram(page);
   await page.route('**/api/mini-app/v1/**', async (route) => {
     const request = route.request();
     if (request.url().includes('/snapshot')) return json(route, 200, SNAPSHOT);
     writes.push({ url: request.url(), body: request.postData(), method: request.method() });
+    const sent = JSON.parse(request.postData() ?? '{}') as { mutationId: string };
     return json(route, 200, {
+      mutationId: sent.mutationId,
+      mutationRevision: 1,
+      replayed: false,
       jobId: 4821,
       status: 'SAVED',
       changed: true,
-      updatedAt: new Date().toISOString(),
-      snapshot: SNAPSHOT,
+      applicationStatus: 'SAVED',
+      undoToken: 'undo-1',
     });
   });
 
@@ -279,7 +283,12 @@ test('sends a workflow change as a PUT carrying only the status', async ({ page 
   await expect.poll(() => writes.length).toBe(1);
   expect(writes[0]!.method).toBe('PUT');
   expect(writes[0]!.url).toContain('/api/mini-app/v1/jobs/4821/workflow');
-  expect(JSON.parse(writes[0]!.body ?? '{}')).toEqual({ status: 'SAVED' });
+  // The mutation id is what makes an ambiguous timeout resolvable, so it must reach the wire —
+  // and nothing else may, since the acting user comes from initData and never from the body.
+  const body = JSON.parse(writes[0]!.body ?? '{}') as Record<string, unknown>;
+  expect(Object.keys(body).sort()).toEqual(['mutationId', 'status']);
+  expect(body.status).toBe('SAVED');
+  expect(String(body.mutationId).length).toBeGreaterThanOrEqual(8);
 
   // The optimistic advance stands because the write succeeded.
   await expect(page.getByRole('heading', { name: 'Backend Developer, Platform' })).toBeVisible();

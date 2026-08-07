@@ -18,9 +18,11 @@ export function Review({
   direction,
   undo,
   writeFailure,
+  unknown,
   onDecide,
   onUndo,
   onDismissWriteFailure,
+  onReconcile,
   onNext,
   onLoadNext,
   onDetails,
@@ -35,9 +37,12 @@ export function Review({
   direction: number;
   undo: UndoEntry | null;
   writeFailure: FailureKind | null;
+  /** This job's durable state could not be confirmed; no state may be presented as known. */
+  unknown: boolean;
   onDecide: (job: Job, status: WorkflowStatus, action: string) => void;
   onUndo: () => void;
   onDismissWriteFailure: () => void;
+  onReconcile: () => void;
   onNext: () => void;
   onLoadNext: () => void;
   onDetails: (job: Job) => void;
@@ -129,9 +134,22 @@ export function Review({
 
       {/* The footer anchors the undo toast whether or not the action bar is present. */}
       <div className="review__foot">
-        {writeFailure ? (
-          // A rejected write has already been rolled back; this says so and gets out of
-          // the way. role="alert" because it appears without the user asking.
+        {unknown ? (
+          // The mutation and its same-id resolution both failed, so the durable state is
+          // genuinely unknown. Saying "not saved" would be a guess, and the optimistic state is
+          // no safer a guess — so this claims neither and offers the retry instead (I9).
+          <div className="toast" role="alert">
+            <span className="toast__text">
+              Not sure this saved
+              <span className="toast__title">JobPilot could not confirm your change.</span>
+            </span>
+            <button type="button" className="toast__undo" onClick={onReconcile}>
+              Check again
+            </button>
+          </div>
+        ) : writeFailure ? (
+          // A refused write is a definite answer from a server that was reached, so this one
+          // may say the change did not land. role="alert" because it appears without asking.
           <div className="toast" role="alert">
             <span className="toast__text">
               {FAILURE_MESSAGES[writeFailure].title}
