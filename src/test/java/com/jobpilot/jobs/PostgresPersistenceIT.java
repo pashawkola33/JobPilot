@@ -179,9 +179,14 @@ class PostgresPersistenceIT {
 
     @Test
     void flywayMigratesTheSchemaOnRealPostgres() {
-        Integer applied = jdbcTemplate.queryForObject(
-                "select count(*) from flyway_schema_history where success", Integer.class);
-        assertThat(applied).isEqualTo(12);
+        // Every migration succeeded, and the tables below exist. A pinned count asserted the
+        // repository's migration total instead, which any new migration invalidates.
+        assertThat(jdbcTemplate.queryForObject(
+                "select count(*) from flyway_schema_history where not success", Integer.class))
+                .isZero();
+        assertThat(jdbcTemplate.queryForObject(
+                "select count(*) from flyway_schema_history where success", Integer.class))
+                .isGreaterThanOrEqualTo(12);
         assertThat(jdbcTemplate.queryForList(
                 "select table_name from information_schema.tables where table_schema = 'public'",
                 String.class))

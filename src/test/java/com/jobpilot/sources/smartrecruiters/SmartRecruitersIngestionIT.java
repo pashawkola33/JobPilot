@@ -100,9 +100,10 @@ class SmartRecruitersIngestionIT {
         assertThat(jdbc.queryForObject(
                 "select count(*) from jobs j join job_scores s on s.job_id = j.id "
                         + "where j.screening_disposition = 'REJECT'", Integer.class)).isZero();
+        // Migrated cleanly; the exact number of migrations is not what this test is about.
         assertThat(jdbc.queryForObject(
-                "select count(*) from flyway_schema_history where success", Integer.class))
-                .isEqualTo(12);
+                "select count(*) from flyway_schema_history where not success", Integer.class))
+                .isZero();
     }
 
     private Object response(String url) {
