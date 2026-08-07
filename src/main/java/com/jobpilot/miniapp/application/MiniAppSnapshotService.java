@@ -14,11 +14,14 @@ import com.jobpilot.miniapp.api.MiniAppSnapshot.MiniAppApplicationPage;
 import com.jobpilot.miniapp.api.MiniAppSnapshot.MiniAppJob;
 import com.jobpilot.miniapp.api.MiniAppSnapshot.MiniAppJobPage;
 import com.jobpilot.miniapp.api.MiniAppSnapshot.MiniAppWorkflowCounts;
+import com.jobpilot.miniapp.domain.MiniAppState;
+import com.jobpilot.miniapp.repository.MiniAppStateRepository;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 /** Projects existing durable read models into the Mini App contract. It owns no domain rules. */
@@ -30,14 +33,31 @@ public class MiniAppSnapshotService {
 
     private final JobReviewQueryRepository queries;
     private final ApplicationTrackerService applications;
+    private final MiniAppStateRepository states;
 
     public MiniAppSnapshotService(JobReviewQueryRepository queries,
-                                  ApplicationTrackerService applications) {
+                                  ApplicationTrackerService applications,
+                                  MiniAppStateRepository states) {
         this.queries = queries;
         this.applications = applications;
+        this.states = states;
     }
 
-    @Transactional(readOnly = true)
+    /**
+     * The authoritative read, and the <em>only</em> path that may replace global projections.
+     *
+     * <p>REPEATABLE READ is load-bearing here, not decoration. This method issues roughly a
+     * dozen statements; at the default READ COMMITTED each one sees a fresh database moment, so
+     * a commit landing midway through is half-visible — counts from after it, rows from before —
+     * and the response describes a state that never existed. One snapshot must be one moment.
+     *
+     * <p>It takes no locks and never touches {@code mini_app_state}: a read must not queue
+     * behind a mutation, and ordering reads against each other is the client read generation's
+     * job. The mutation path deliberately runs at READ COMMITTED for the opposite reason — see
+     * {@link MiniAppWorkflowService} on why copying this isolation there would break duplicate
+     * handling.
+     */
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public MiniAppSnapshot snapshot() {
         JobReviewStats workflow = queries.stats();
         List<MiniAppJob> review = queries.findMiniAppReviewJobs(MAX_REVIEW_JOBS).stream()
@@ -54,6 +74,10 @@ public class MiniAppSnapshotService {
         long reviewTotal = workflow.unreviewedMatch() + workflow.unreviewedReview();
         ApplicationSnapshotView.Counts counts = tracked.counts();
         return new MiniAppSnapshot(
+                // Read, never locked: a snapshot must not queue behind a mutation. Inside this
+                // REPEATABLE READ transaction it is the same moment as every row above.
+                states.findById(MiniAppState.SINGLETON_ID)
+                        .map(MiniAppState::getMutationRevision).orElse(0L),
                 new MiniAppJobPage(review, reviewTotal, MAX_REVIEW_JOBS,
                         reviewTotal > review.size()),
                 new MiniAppJobPage(saved, workflow.saved(), MAX_SAVED_JOBS,

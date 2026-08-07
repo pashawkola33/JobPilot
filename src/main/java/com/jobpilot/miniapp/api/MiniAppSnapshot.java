@@ -10,8 +10,16 @@ import java.util.List;
  * Authoritative Mini App read model. Review, saved, and application rows have independent
  * bounded windows; every window carries its complete durable total so it is never mistaken
  * for the whole collection.
+ *
+ * @param mutationRevision the Mini App mutation count this snapshot was taken after — an
+ *     <em>as-of</em> marker and nothing more. It does not order snapshots against each other:
+ *     ingestion, the Telegram command path and ApplicationController all change the data below
+ *     without advancing it, so two genuinely different states can carry the same number.
+ *     Clients order reads by their own read generation and must never compare this field to
+ *     decide which of two responses is newer. See docs/mini-app-p0b-consistency-model.md.
  */
 public record MiniAppSnapshot(
+        long mutationRevision,
         MiniAppJobPage reviewQueue,
         MiniAppJobPage saved,
         MiniAppApplicationPage applications,

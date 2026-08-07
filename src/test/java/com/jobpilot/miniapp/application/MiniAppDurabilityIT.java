@@ -14,6 +14,7 @@ import com.jobpilot.jobs.domain.ScreeningDisposition;
 import com.jobpilot.miniapp.api.MiniAppSnapshot.MiniAppApplication;
 import com.jobpilot.miniapp.api.MiniAppSnapshot.MiniAppJob;
 import java.time.Instant;
+import java.util.UUID;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -62,6 +63,10 @@ class MiniAppDurabilityIT {
 
     @BeforeEach
     void clean() {
+        // The ledger and its revision counter are shared state too: without resetting them the
+        // Spring context carries revisions across methods and absolute assertions drift.
+        jdbc.update("delete from mini_app_mutation");
+        jdbc.update("update mini_app_state set mutation_revision = 0");
         jdbc.update("delete from application_status_history");
         jdbc.update("delete from applications");
         jdbc.update("delete from telegram_job_delivery");
@@ -74,13 +79,15 @@ class MiniAppDurabilityIT {
     void saveSurvivesReloadAndASecondContext() {
         long jobId = active("saved", 91);
 
-        MiniAppWorkflowResult response = workflows.change(jobId, WorkflowStatus.SAVED);
+        MiniAppOperation response = change(jobId, WorkflowStatus.SAVED);
         var reloaded = snapshots.snapshot();
         var secondContext = snapshots.snapshot();
 
-        assertThat(response.workflow().status()).isEqualTo(WorkflowStatus.SAVED);
-        assertThat(response.snapshot().saved().items())
-                .extracting(MiniAppJob::id).containsExactly(jobId);
+        // The mutation is authoritative about this job; the read path is authoritative about the
+        // lists. P0-B deliberately gives the operation result no global projection to assert on.
+        assertThat(response.status()).isEqualTo(WorkflowStatus.SAVED);
+        assertThat(response.applicationStatus()).isEqualTo(ApplicationStatus.SAVED);
+        assertThat(response.mutationRevision()).isEqualTo(1);
         assertThat(reloaded.saved().items()).extracting(MiniAppJob::id).containsExactly(jobId);
         assertThat(secondContext.saved().items()).extracting(MiniAppJob::id).containsExactly(jobId);
         assertThat(reloaded.applications().items())
@@ -93,7 +100,7 @@ class MiniAppDurabilityIT {
     void appliedSurvivesReloadAndASecondContext() {
         long jobId = active("applied", 88);
 
-        workflows.change(jobId, WorkflowStatus.APPLIED);
+        change(jobId, WorkflowStatus.APPLIED);
         var reloaded = snapshots.snapshot();
         var secondContext = snapshots.snapshot();
 
@@ -124,7 +131,7 @@ class MiniAppDurabilityIT {
     @Test
     void savedDoesNotCompeteWithFiftyOneUnreviewedVacancies() {
         long saved = active("durable-saved", 1);
-        workflows.change(saved, WorkflowStatus.SAVED);
+        change(saved, WorkflowStatus.SAVED);
         IntStream.range(0, 51).forEach(index -> active("unreviewed-" + index, 100 - index));
 
         var snapshot = snapshots.snapshot();
@@ -159,10 +166,10 @@ class MiniAppDurabilityIT {
     void repeatedSavedAndAppliedCommandsAreIdempotent() {
         long jobId = active("idempotent", 84);
 
-        assertThat(workflows.change(jobId, WorkflowStatus.SAVED).changed()).isTrue();
-        assertThat(workflows.change(jobId, WorkflowStatus.SAVED).changed()).isFalse();
-        assertThat(workflows.change(jobId, WorkflowStatus.APPLIED).changed()).isTrue();
-        assertThat(workflows.change(jobId, WorkflowStatus.APPLIED).changed()).isFalse();
+        assertThat(change(jobId, WorkflowStatus.SAVED).changed()).isTrue();
+        assertThat(change(jobId, WorkflowStatus.SAVED).changed()).isFalse();
+        assertThat(change(jobId, WorkflowStatus.APPLIED).changed()).isTrue();
+        assertThat(change(jobId, WorkflowStatus.APPLIED).changed()).isFalse();
 
         assertThat(count("applications", "job_id", jobId)).isEqualTo(1);
         assertThat(count("job_workflow_state", "job_id", jobId)).isEqualTo(1);
@@ -186,7 +193,7 @@ class MiniAppDurabilityIT {
                         eq(ApplicationStatus.SAVED), isNull(Instant.class), isNull(String.class),
                         eq(ApplicationStatusChangeSource.INTERNAL));
 
-        assertThatThrownBy(() -> workflows.change(jobId, WorkflowStatus.SAVED))
+        assertThatThrownBy(() -> change(jobId, WorkflowStatus.SAVED))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("synthetic application persistence failure");
 
@@ -200,7 +207,7 @@ class MiniAppDurabilityIT {
         applications.transition(jobId, ApplicationStatus.SAVED, null, null,
                 ApplicationStatusChangeSource.INTERNAL);
 
-        workflows.change(jobId, WorkflowStatus.APPLIED);
+        change(jobId, WorkflowStatus.APPLIED);
 
         assertThat(jdbc.queryForList("""
                 select h.new_status from application_status_history h
@@ -212,14 +219,14 @@ class MiniAppDurabilityIT {
     @Test
     void resetNeverDeletesAPreExistingTrackedApplication() {
         long jobId = active("undo-boundary", 77);
-        workflows.change(jobId, WorkflowStatus.SAVED);
+        change(jobId, WorkflowStatus.SAVED);
         int historyBeforeReset = jdbc.queryForObject("""
                 select count(*) from application_status_history h
                 join applications a on a.id = h.application_id
                 where a.job_id = ?
                 """, Integer.class, jobId);
 
-        workflows.change(jobId, WorkflowStatus.UNREVIEWED);
+        change(jobId, WorkflowStatus.UNREVIEWED);
 
         assertThat(count("job_workflow_state", "job_id", jobId)).isZero();
         assertThat(count("applications", "job_id", jobId)).isEqualTo(1);
@@ -228,6 +235,11 @@ class MiniAppDurabilityIT {
                 join applications a on a.id = h.application_id
                 where a.job_id = ?
                 """, Integer.class, jobId)).isEqualTo(historyBeforeReset);
+    }
+
+    /** Each call is a distinct user action, so each gets its own idempotency key. */
+    private MiniAppOperation change(long jobId, WorkflowStatus status) {
+        return workflows.change(UUID.randomUUID().toString(), jobId, status);
     }
 
     private long active(String externalId, int score) {

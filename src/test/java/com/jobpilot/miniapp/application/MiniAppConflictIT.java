@@ -5,7 +5,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.verify;
 
 import com.jobpilot.applications.application.ApplicationTrackerService;
 import com.jobpilot.applications.application.ApplicationTrackingException;
@@ -14,6 +16,7 @@ import com.jobpilot.applications.domain.ApplicationStatus;
 import com.jobpilot.applications.domain.ApplicationStatusChangeSource;
 import com.jobpilot.jobreview.domain.WorkflowStatus;
 import com.jobpilot.jobs.domain.ScreeningDisposition;
+import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -78,6 +81,10 @@ class MiniAppConflictIT {
     @BeforeEach
     void clean() {
         reset(transitionPolicy, snapshots);
+        // The ledger and its revision counter are shared state too: without resetting them the
+        // Spring context carries revisions across methods and absolute assertions drift.
+        jdbc.update("delete from mini_app_mutation");
+        jdbc.update("update mini_app_state set mutation_revision = 0");
         jdbc.update("delete from application_status_history");
         jdbc.update("delete from applications");
         jdbc.update("delete from telegram_job_delivery");
@@ -116,15 +123,17 @@ class MiniAppConflictIT {
         long jobId = active("fresh-transaction", 80);
         AtomicInteger attempts = failFirst(1);
 
-        var result = workflows.change(jobId, WorkflowStatus.SAVED);
+        var result = change(jobId, WorkflowStatus.SAVED);
 
         assertThat(attempts.get()).as("the first attempt failed and a second one ran").isEqualTo(2);
-        assertThat(result.workflow().status()).isEqualTo(WorkflowStatus.SAVED);
+        assertThat(result.status()).isEqualTo(WorkflowStatus.SAVED);
         // The abandoned attempt left nothing behind and the surviving one committed both halves.
         assertThat(count("job_workflow_state", "job_id", jobId)).isEqualTo(1);
         assertThat(count("applications", "job_id", jobId)).isEqualTo(1);
         assertThat(historyRows(jobId)).isEqualTo(1);
-        assertThat(result.snapshot().saved().items()).hasSize(1);
+        // The rolled-back attempt published no revision: exactly one committed mutation exists.
+        assertThat(result.mutationRevision()).isEqualTo(1);
+        assertThat(count("mini_app_mutation", "job_id", jobId)).isEqualTo(1);
     }
 
     @Test
@@ -133,7 +142,7 @@ class MiniAppConflictIT {
         AtomicInteger attempts = failFirst(ApplicationTrackerService.MAX_CONFLICT_ATTEMPTS);
 
         Throwable thrown = org.assertj.core.api.Assertions
-                .catchThrowable(() -> workflows.change(jobId, WorkflowStatus.SAVED));
+                .catchThrowable(() -> change(jobId, WorkflowStatus.SAVED));
 
         assertThat(attempts.get()).isEqualTo(ApplicationTrackerService.MAX_CONFLICT_ATTEMPTS);
         assertThat(thrown)
@@ -173,7 +182,7 @@ class MiniAppConflictIT {
         AtomicReference<Throwable> miniAppFailure = new AtomicReference<>();
         Thread miniApp = new Thread(() -> {
             try {
-                workflows.change(jobId, WorkflowStatus.SAVED);
+                change(jobId, WorkflowStatus.SAVED);
             } catch (Throwable failure) {
                 miniAppFailure.set(failure);
             }
@@ -203,18 +212,28 @@ class MiniAppConflictIT {
                 String.class, jobId)).isEqualTo("SAVED");
     }
 
+    /**
+     * P0-A built the global snapshot inside the mutation transaction, so a snapshot failure
+     * rolled the whole mutation back. P0-B severs that coupling: a mutation response carries no
+     * global state, so the read model is never assembled while the global row lock is held.
+     *
+     * <p>Asserting the absence matters twice over — a mutation that consulted the snapshot would
+     * both stretch the lock window across ~12 extra queries and reintroduce the ordering hazard
+     * Correction A exists to delete. The stub is armed to explode precisely so a regression here
+     * fails loudly rather than quietly costing correctness.
+     */
     @Test
-    void snapshotFailureRollsBackBothHalvesOfTheMutation() {
-        long jobId = active("snapshot-failure", 80);
-        doThrow(new IllegalStateException("synthetic snapshot failure")).when(snapshots).snapshot();
+    void aMutationNeverBuildsTheGlobalSnapshot() {
+        long jobId = active("no-snapshot-in-mutation", 80);
+        doThrow(new IllegalStateException("a mutation must not read the global snapshot"))
+                .when(snapshots).snapshot();
 
-        assertThatThrownBy(() -> workflows.change(jobId, WorkflowStatus.SAVED))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessage("synthetic snapshot failure");
+        var result = change(jobId, WorkflowStatus.SAVED);
 
-        assertThat(count("job_workflow_state", "job_id", jobId)).isZero();
-        assertThat(count("applications", "job_id", jobId)).isZero();
-        assertThat(historyRows(jobId)).isZero();
+        assertThat(result.status()).isEqualTo(WorkflowStatus.SAVED);
+        verify(snapshots, never()).snapshot();
+        assertThat(count("job_workflow_state", "job_id", jobId)).isEqualTo(1);
+        assertThat(count("applications", "job_id", jobId)).isEqualTo(1);
     }
 
     @Test
@@ -235,6 +254,11 @@ class MiniAppConflictIT {
                 join applications a on a.id = h.application_id
                 where a.job_id = ?
                 """, Integer.class, jobId);
+    }
+
+    /** Each call is a distinct user action, so each gets its own idempotency key. */
+    private MiniAppOperation change(long jobId, WorkflowStatus status) {
+        return workflows.change(UUID.randomUUID().toString(), jobId, status);
     }
 
     private long active(String externalId, int score) {
