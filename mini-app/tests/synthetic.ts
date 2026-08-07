@@ -82,6 +82,12 @@ export class SyntheticServer {
   revision = 0;
   /** Every workflow/undo request the server actually processed, in order. */
   readonly writes: { mutationId: string; jobId: number; kind: 'workflow' | 'undo' }[] = [];
+  /**
+   * Every delivery that *arrived*, including ones deliberately dropped before they applied.
+   * Recovery is about identity, so the test has to see the ids on the wire, not just the ids
+   * that survived to commit.
+   */
+  readonly deliveries: { mutationId: string; kind: 'workflow' | 'undo' }[] = [];
   snapshotReads = 0;
 
   private rejectNextWrite: { status: number; category: string } | null = null;
@@ -193,6 +199,7 @@ export class SyntheticServer {
 
   private async workflow(route: Route, jobId: number) {
     const body = route.request().postDataJSON() as { status: WorkflowStatus; mutationId: string };
+    this.deliveries.push({ mutationId: body.mutationId, kind: 'workflow' });
 
     if (this.heldWriteArrived) {
       const arrived = this.heldWriteArrived;
@@ -289,6 +296,7 @@ export class SyntheticServer {
 
   private async undo(route: Route) {
     const body = route.request().postDataJSON() as { mutationId: string; undoToken: string };
+    this.deliveries.push({ mutationId: body.mutationId, kind: 'undo' });
 
     if (this.heldWriteArrived) {
       const arrived = this.heldWriteArrived;

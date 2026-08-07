@@ -19,6 +19,7 @@ export function Review({
   undo,
   writeFailure,
   unknown,
+  recovering,
   onDecide,
   onUndo,
   onDismissWriteFailure,
@@ -39,6 +40,8 @@ export function Review({
   writeFailure: FailureKind | null;
   /** This job's durable state could not be confirmed; no state may be presented as known. */
   unknown: boolean;
+  /** A resolution for this job is in flight, so the retry must not be offered a second time. */
+  recovering: boolean;
   onDecide: (job: Job, status: WorkflowStatus, action: string) => void;
   onUndo: () => void;
   onDismissWriteFailure: () => void;
@@ -143,8 +146,13 @@ export function Review({
               Not sure this saved
               <span className="toast__title">JobPilot could not confirm your change.</span>
             </span>
-            <button type="button" className="toast__undo" onClick={onReconcile}>
-              Check again
+            <button
+              type="button"
+              className="toast__undo"
+              onClick={onReconcile}
+              disabled={recovering}
+            >
+              {recovering ? 'Checking…' : 'Check again'}
             </button>
           </div>
         ) : writeFailure ? (

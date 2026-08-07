@@ -138,10 +138,17 @@ Revision is not used to order reads at all, so an out-of-band change at equal re
 applied normally, while a delayed earlier read is dropped because a later generation exists.
 
 Reads are **single-flight**. Any number of callers may request reconciliation; while one is
-in flight the rest coalesce onto it, and a request arriving mid-flight schedules exactly one
-follow-up read rather than queueing per caller. An older read can therefore never overwrite a
-newer reconciliation, and reconciliation cannot starve under repeated requests. Mutations on
-unrelated jobs are never blocked by this — the single-flight rule governs reads only (I2).
+in flight the rest coalesce onto exactly one follow-up read rather than queueing per caller. An
+older read can therefore never overwrite a newer reconciliation, and reconciliation cannot starve
+under repeated requests. Mutations on unrelated jobs are never blocked by this — the
+single-flight rule governs reads only (I2).
+
+`reconcile()` resolves only once **a read that started after the request** has been applied, not
+when the read already in flight happens to finish. Returning the in-flight read would hand the
+caller a promise that settles on data fetched *before* they asked — so an awaited reconciliation
+could complete without ever seeing the change it was called to pick up. Callers arriving during
+the follow-up open the next gate rather than being stranded on the current one, and a failed read
+settles its waiters instead of wedging them.
 
 The P0-A `snapshot` field is **removed** from the mutation response rather than kept for
 compatibility. Keeping it would preserve the exact footgun this section exists to delete, and
@@ -295,15 +302,32 @@ old Mini App Undo arrives
 
 Provenance alone would happily delete H1 and the application row, erasing a later external
 action. So the ledger also records a **fingerprint of the state the mutation produced**:
-`resulting_workflow_status`, `resulting_application_version` (the JPA `@Version`) and
-`resulting_history_id` (the history frontier). A reversal is valid only while all three
-still match, checked under row locks on the workflow and application rows.
+`resulting_workflow_status`, `resulting_workflow_version` (the JPA `@Version` on
+`job_workflow_state`), `resulting_application_version` (the `@Version` on `applications`) and
+`resulting_history_id` (the history frontier). A reversal is valid only while all of them still
+match, checked under row locks on the workflow and application rows.
 
-Any later writer moves at least one: a Telegram or API transition bumps `@Version` and
-appends history; a notes/follow-up change bumps `@Version`; a newer Mini App mutation moves
-the ledger frontier. So an old Undo is stale deterministically, with no timestamps involved,
-and it refuses with a typed conflict plus an authoritative snapshot rather than deleting
-anything.
+### Workflow-only writers count too
+
+The application `@Version` does **not** protect workflow-only writes, and assuming it did was a
+real hole. `TelegramCommandDispatcher` supports `NOTE`, which calls `review.note(...)`:
+
+```
+Mini App Save     -> workflow SAVED, undo token issued
+Telegram /note    -> job_workflow_state.note rewritten
+old Mini App Undo
+```
+
+That write changes neither the workflow *status* nor any application row, so a fingerprint built
+from status plus application state sees nothing at all — and the reversal would restore the old
+note straight over the newer one. `job_workflow_state` therefore carries its own `@Version`,
+which every writer of that row moves, including a note that changes nothing else.
+
+Every later writer now moves at least one field: a Telegram or API transition bumps the
+application `@Version` and appends history; a note bumps the workflow `@Version`; a
+notes/follow-up change on the application bumps its `@Version`; a newer Mini App mutation moves
+the ledger frontier. So an old Undo is stale deterministically, with no timestamps involved, and
+it refuses with a typed conflict rather than deleting anything.
 
 `ApplicationTransitionPolicy` is **not** given an `APPLIED → SAVED` edge. Reversal is a
 distinct operation with a distinct source, so a normal forward transition still cannot walk
@@ -353,9 +377,33 @@ Only once `mutationId` has a **terminal known outcome** does the client queue an
 snapshot reconciliation, and only then is the affected job authoritative again. A read is
 useful *after* mutation identity resolves — never instead of it.
 
-If the same-id resolution also fails, the job enters *reconciliation required* (I9): no
-confirmed state, no further mutations for that job, an explicit retry affordance, and the
-rest of the app stays usable.
+### An unresolved operation keeps its identity
+
+If the same-id resolution also fails, the job enters *reconciliation required* (I9): no confirmed
+state, no further mutations for that job, an explicit retry affordance, and the rest of the app
+stays usable.
+
+Crucially, the job keeps a **recovery descriptor** — the mutation id plus the exact payload:
+
+```
+{ kind: 'workflow', mutationId, jobId, status }
+{ kind: 'undo',     mutationId, jobId, undoToken }
+```
+
+It is written once when the operation is first issued and never rewritten, and it is the *only*
+way an operation is sent — first attempt and every later retry alike. That makes "never mint a
+fresh id for a recovery" a property of the code rather than a rule to remember: there is no send
+path that takes a mutation id separately from the operation it identifies.
+
+So *Check again* re-asks about the same operation, however many times it takes. The job stays
+blocked for the whole attempt; a failed attempt keeps the descriptor for the next press; a
+terminal verdict — success, replay, or a typed refusal — is what clears it.
+
+**A successful snapshot read never clears unknown.** A read is authoritative about its own
+database moment and says nothing about whether the unresolved PUT is about to commit a moment
+later, so treating a successful read as a resolution is the same mistake as §"A read is not a
+commit-status oracle", one step further along. Reconciliation runs freely while a job is unknown;
+it just answers a different question.
 
 ## Frontend state machine
 
@@ -407,6 +455,15 @@ proof. The concurrency-sensitive subset runs 20 consecutive times.
 | Undo | Applied reversal is explicit, no APPLIED→SAVED policy edge | E |
 | Undo | stale after a newer Mini App action | I7 |
 | Undo | stale after an external Telegram/API transition | I7 |
+| Undo | stale after a workflow-only external note, which moves no application state | I7 |
+| Undo | still applies when no external write happened | I7 |
+| Recovery | *Check again* resends the original id and resolves the operation | I9 |
+| Recovery | a failed *Check again* keeps the job unknown and the same descriptor | I9 |
+| Recovery | a second *Check again* mid-flight starts no second resolution | I9 |
+| Recovery | an unresolved job refuses new decisions entirely | I9 |
+| Recovery | a successful snapshot read never clears unknown | I9 |
+| Reads | a caller arriving mid-read waits for the follow-up, not the in-flight read | I3 |
+| Reads | a failed follow-up settles its waiters and leaves the pipeline usable | I3 |
 | Undo | replay of a successful undo does not reverse twice | I6 |
 | Existing | MiniAppConflictIT, 49/50/51 Review boundaries, Telegram iOS sheet suite | — |
 

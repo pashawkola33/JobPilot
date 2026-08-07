@@ -135,6 +135,129 @@ test('a double failure propagates so the caller can mark the job unknown', async
 
 // -------------------------------------------------------------------- read pipeline
 
+/**
+ * The contract that makes an awaited reconciliation mean something. A caller arriving during a
+ * read cannot be satisfied by that read — its body was already fetched before they asked — so
+ * its promise must stay pending until a genuinely later read lands.
+ */
+test('a caller arriving during a read waits for the follow-up, not the in-flight read', async () => {
+  const gates = [deferred<Snapshot>(), deferred<Snapshot>()];
+  let reads = 0;
+  const pipeline = createReadPipeline(
+    () => gates[reads++]!.promise,
+    () => {},
+    () => {},
+  );
+
+  const first = pipeline.reconcile();
+  let firstSettled = false;
+  void first.then(() => { firstSettled = true; });
+
+  const second = pipeline.reconcile();
+  let secondSettled = false;
+  void second.then(() => { secondSettled = true; });
+
+  gates[0]!.resolve(snapshotWithTotal(1));
+  await first;
+  await new Promise((resolve) => setImmediate(resolve));
+
+  expect(firstSettled).toBe(true);
+  // The read it asked for has not happened yet, so it must not be resolved.
+  expect(secondSettled).toBe(false);
+  expect(reads).toBe(2);
+
+  gates[1]!.resolve(snapshotWithTotal(2));
+  await second;
+  expect(secondSettled).toBe(true);
+  expect(pipeline.appliedGeneration()).toBe(2);
+});
+
+test('every caller arriving during a read is released by the same follow-up', async () => {
+  const gates = [deferred<Snapshot>(), deferred<Snapshot>(), deferred<Snapshot>()];
+  let reads = 0;
+  const pipeline = createReadPipeline(
+    () => gates[reads++]!.promise,
+    () => {},
+    () => {},
+  );
+
+  const first = pipeline.reconcile();
+  const waiters = [pipeline.reconcile(), pipeline.reconcile(), pipeline.reconcile()];
+  const settled = waiters.map(() => false);
+  waiters.forEach((waiter, index) => void waiter.then(() => { settled[index] = true; }));
+
+  gates[0]!.resolve(snapshotWithTotal(1));
+  await first;
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(settled).toEqual([false, false, false]);
+  // Three callers, one follow-up — not one read each.
+  expect(reads).toBe(2);
+
+  gates[1]!.resolve(snapshotWithTotal(2));
+  await Promise.all(waiters);
+  expect(settled).toEqual([true, true, true]);
+  expect(reads).toBe(2);
+});
+
+test('a caller arriving during the follow-up gets a later read rather than being stranded', async () => {
+  const gates = [deferred<Snapshot>(), deferred<Snapshot>(), deferred<Snapshot>()];
+  let reads = 0;
+  const pipeline = createReadPipeline(
+    () => gates[reads++]!.promise,
+    () => {},
+    () => {},
+  );
+
+  const first = pipeline.reconcile();
+  const duringFirst = pipeline.reconcile();
+  gates[0]!.resolve(snapshotWithTotal(1));
+  await first;
+  await new Promise((resolve) => setImmediate(resolve));
+
+  // The follow-up is now the in-flight read; this caller needs one after it.
+  const duringFollowUp = pipeline.reconcile();
+  let strandedCheck = false;
+  void duringFollowUp.then(() => { strandedCheck = true; });
+
+  gates[1]!.resolve(snapshotWithTotal(2));
+  await duringFirst;
+  await new Promise((resolve) => setImmediate(resolve));
+  expect(strandedCheck).toBe(false);
+
+  gates[2]!.resolve(snapshotWithTotal(3));
+  await duringFollowUp;
+  expect(strandedCheck).toBe(true);
+  expect(reads).toBe(3);
+});
+
+test('a failed follow-up settles its waiters and leaves the pipeline usable', async () => {
+  const gates = [deferred<Snapshot>(), deferred<Snapshot>(), deferred<Snapshot>()];
+  let reads = 0;
+  const errors: unknown[] = [];
+  const pipeline = createReadPipeline(
+    () => gates[reads++]!.promise,
+    () => {},
+    (error) => errors.push(error),
+  );
+
+  const first = pipeline.reconcile();
+  const waiter = pipeline.reconcile();
+  gates[0]!.resolve(snapshotWithTotal(1));
+  await first;
+  await new Promise((resolve) => setImmediate(resolve));
+
+  gates[1]!.reject(new JobPilotError('unavailable'));
+  // Deterministically settled rather than left hanging: a wedged await would freeze the caller.
+  await expect(waiter).resolves.toBeUndefined();
+  expect(errors).toHaveLength(1);
+
+  // And a later reconciliation still works.
+  const third = pipeline.reconcile();
+  gates[2]!.resolve(snapshotWithTotal(9));
+  await third;
+  expect(pipeline.appliedGeneration()).toBe(3);
+});
+
 test('concurrent reconcile requests coalesce onto one read plus one follow-up', async () => {
   const gates = [deferred<Snapshot>(), deferred<Snapshot>()];
   let reads = 0;

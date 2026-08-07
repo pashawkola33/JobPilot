@@ -10,6 +10,7 @@ import com.jobpilot.applications.application.ApplicationTrackerService;
 import com.jobpilot.applications.application.ApplicationTransitionPolicy;
 import com.jobpilot.applications.domain.ApplicationStatus;
 import com.jobpilot.applications.domain.ApplicationStatusChangeSource;
+import com.jobpilot.jobreview.application.JobReviewService;
 import com.jobpilot.jobreview.domain.WorkflowStatus;
 import com.jobpilot.jobreview.repository.JobReviewQueryRepository;
 import com.jobpilot.jobs.domain.ScreeningDisposition;
@@ -66,6 +67,10 @@ class MiniAppConsistencyIT {
 
     @Autowired
     private ApplicationTrackerService tracker;
+
+    /** The Telegram command path's own collaborator, used here as the external writer. */
+    @Autowired
+    private JobReviewService review;
 
     /** A concrete collaborator consulted from inside the mutation transaction — the park point. */
     @SpyBean
@@ -454,6 +459,50 @@ class MiniAppConsistencyIT {
         assertThat(historyStatuses(jobId)).containsExactly("APPLIED");
     }
 
+    /**
+     * The workflow-only external write. {@code /note} changes {@code job_workflow_state.note}
+     * and nothing else: the status is untouched and the application is never opened, so neither
+     * the workflow status nor the application {@code @Version} moves. Only a workflow-side
+     * version can catch it — and without one, reversing here would silently overwrite a note
+     * the user had just written from Telegram.
+     */
+    @Test
+    void anExternalNoteMakesTheUndoStaleWithoutDestroyingIt() {
+        long jobId = active("undo-external-note", 72);
+        var saved = change(jobId, WorkflowStatus.SAVED);
+        long revisionBefore = committedRevision();
+
+        review.note(jobId, "Recruiter replied, call on Thursday");
+        assertThat(committedRevision()).as("an external note advances no Mini App revision")
+                .isEqualTo(revisionBefore);
+
+        assertThatThrownBy(() -> workflows.undo(newMutationId(), saved.undoToken()))
+                .isInstanceOf(MiniAppMutationException.class)
+                .satisfies(failure -> assertThat(((MiniAppMutationException) failure).getCategory())
+                        .isEqualTo(MiniAppMutationException.Category.UNDO_STALE));
+
+        // The newer note survives, and nothing else was rolled back either.
+        assertThat(workflowNote(jobId)).isEqualTo("Recruiter replied, call on Thursday");
+        assertThat(workflowStatus(jobId)).isEqualTo("SAVED");
+        assertThat(count("applications", "job_id", jobId)).isEqualTo(1);
+        assertThat(historyStatuses(jobId)).containsExactly("SAVED");
+        assertThat(committedRevision()).isEqualTo(revisionBefore);
+    }
+
+    /** The inverse: with no external write, the same Undo still applies normally. */
+    @Test
+    void anUndoStillAppliesWhenNoExternalWriteHappened() {
+        long jobId = active("undo-no-external-note", 71);
+        var saved = change(jobId, WorkflowStatus.SAVED);
+
+        var undone = workflows.undo(newMutationId(), saved.undoToken());
+
+        assertThat(undone.status()).isEqualTo(WorkflowStatus.UNREVIEWED);
+        assertThat(count("job_workflow_state", "job_id", jobId)).isZero();
+        assertThat(count("applications", "job_id", jobId)).isZero();
+        assertThat(historyRows(jobId)).isZero();
+    }
+
     @Test
     void replayingASuccessfulUndoDoesNotReverseTwice() {
         long jobId = active("undo-replay", 74);
@@ -604,6 +653,11 @@ class MiniAppConsistencyIT {
 
     private int ledgerRows() {
         return jdbc.queryForObject("select count(*) from mini_app_mutation", Integer.class);
+    }
+
+    private String workflowNote(long jobId) {
+        return jdbc.queryForObject(
+                "select note from job_workflow_state where job_id = ?", String.class, jobId);
     }
 
     private String workflowStatus(long jobId) {

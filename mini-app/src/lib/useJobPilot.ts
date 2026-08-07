@@ -15,8 +15,11 @@ import {
   createJobQueue,
   failureKind,
   isAmbiguous,
+  isBlocked,
+  sendFor,
   sendWithRecovery,
   type JobState,
+  type RecoveryDescriptor,
   IDLE,
 } from './jobMutations';
 import { haptic } from './telegram';
@@ -114,6 +117,12 @@ export function useJobPilot() {
    */
   const hasLoaded = useRef(false);
   const queueIds = useRef<number[]>([]);
+  /**
+   * Recovery reads job state through this rather than through the render closure: the
+   * re-entrancy guard must see the phase set by the press it is guarding against, which a
+   * captured value from an earlier render would not.
+   */
+  const jobStatesRef = useRef<Record<number, JobState>>({});
 
   const applySnapshot = useCallback((data: Snapshot) => {
     setReviewJobs(data.reviewQueue.items);
@@ -169,7 +178,9 @@ export function useJobPilot() {
   useEffect(() => () => clearTimeout(undoTimer.current), []);
 
   const setJob = useCallback((jobId: number, next: Partial<JobState>) => {
-    setJobStates((all) => ({ ...all, [jobId]: { ...(all[jobId] ?? IDLE), ...next } }));
+    const merged = { ...(jobStatesRef.current[jobId] ?? IDLE), ...next };
+    jobStatesRef.current = { ...jobStatesRef.current, [jobId]: merged };
+    setJobStates(jobStatesRef.current);
   }, []);
 
   /** Puts the reviewer back on a specific vacancy, used when its write did not settle cleanly. */
@@ -196,7 +207,9 @@ export function useJobPilot() {
    * pipeline for fresh global state. It never writes the lists itself.
    */
   const settle = useCallback((outcome: MutationOutcome, entry: UndoEntry | null) => {
-    setJob(outcome.jobId, { phase: 'idle', undoToken: outcome.undoToken, error: null });
+    setJob(outcome.jobId, {
+      phase: 'idle', undoToken: outcome.undoToken, error: null, recovery: null,
+    });
     const patch = (all: Job[]) =>
       all.map((job) => (job.id === outcome.jobId ? { ...job, workflowStatus: outcome.status } : job));
     setReviewJobs(patch);
@@ -208,8 +221,8 @@ export function useJobPilot() {
 
   const decide = useCallback(
     (job: Job, status: WorkflowStatus, action: string) => {
-      // An unknown job accepts no further writes until it is resolved (I9).
-      if (jobStates[job.id]?.phase === 'unknown') return;
+      // An unresolved job accepts no further writes until its own operation has a verdict (I9).
+      if (isBlocked(jobStates[job.id])) return;
 
       setReviewJobs((all) =>
         all.map((candidate) =>
@@ -224,10 +237,13 @@ export function useJobPilot() {
       haptic(status === 'DISMISSED' ? 'light' : 'success');
       setJob(job.id, { phase: 'mutating', error: null });
 
-      const mutationId = newMutationId();
+      // Written once here and never rewritten: every later attempt re-sends this exact identity.
+      const recovery: RecoveryDescriptor = {
+        kind: 'workflow', mutationId: newMutationId(), jobId: job.id, status,
+      };
       const pending: UndoEntry = { jobId: job.id, title: job.title, action, undoToken: '' };
       void jobQueue.run(job.id, () =>
-        sendWithRecovery(() => repository.setWorkflowStatus(job.id, status, mutationId)).then(
+        sendWithRecovery(sendFor(repository, recovery)).then(
           (outcome) => settle(outcome, pending),
           (error: unknown) => {
             // Ambiguous here means the mutation *and* its same-id resolution both failed, so
@@ -237,6 +253,9 @@ export function useJobPilot() {
               phase: unknown ? 'unknown' : 'idle',
               undoToken: null,
               error: failureKind(error),
+              // Kept verbatim while unknown: resolving this later means re-asking about *this*
+              // operation, which is the only question whose answer settles it.
+              recovery: unknown ? recovery : null,
             });
             disarmUndo();
             setWriteFailure(failureKind(error));
@@ -282,12 +301,48 @@ export function useJobPilot() {
     );
   }, [disarmUndo, focusJob, jobQueue, pipeline, setJob, settle, undo]);
 
-  /** The deterministic retry offered for a job in the unknown state. */
-  const reconcileJob = useCallback((jobId: number) => {
-    setJob(jobId, { phase: 'idle', error: null });
+  /**
+   * The deterministic retry for an unresolved job — and the only thing that can clear its
+   * unknown state.
+   *
+   * It re-sends the recorded operation, id and payload unchanged, because a snapshot read cannot
+   * answer the question being asked. A GET is authoritative about its own database moment and
+   * says nothing about whether the original PUT is about to commit a moment later, so clearing
+   * unknown on a successful read would just be guessing with extra steps.
+   *
+   * The job stays blocked for the whole attempt, and a failed attempt keeps the descriptor so
+   * the next press asks about the same operation again.
+   */
+  const recoverJob = useCallback((jobId: number) => {
+    const recovery = jobStatesRef.current[jobId]?.recovery;
+    // Re-entrancy guard: a second press while one resolution is in flight is a no-op, so a
+    // double-click cannot start two resolutions of the same operation.
+    if (!recovery || jobStatesRef.current[jobId]?.phase === 'recovering') return;
+
+    setJob(jobId, { phase: 'recovering', error: null });
     setWriteFailure(null);
-    void pipeline.reconcile();
-  }, [pipeline, setJob]);
+    void jobQueue.run(jobId, () =>
+      sendWithRecovery(sendFor(repository, recovery)).then(
+        (outcome) => {
+          // Terminal verdict on this operation: settle it, then reconcile global state.
+          settle(outcome, null);
+        },
+        (error: unknown) => {
+          const unknown = isAmbiguous(error);
+          setJob(jobId, {
+            phase: unknown ? 'unknown' : 'idle',
+            undoToken: null,
+            error: failureKind(error),
+            // Still unresolved, so the same descriptor is kept for the next attempt. A definite
+            // refusal is an answer, and releases the job.
+            recovery: unknown ? recovery : null,
+          });
+          setWriteFailure(failureKind(error));
+          void pipeline.reconcile();
+        },
+      ),
+    );
+  }, [jobQueue, pipeline, setJob, settle]);
 
   const skipToNext = useCallback(() => {
     setDirection(1);
@@ -321,13 +376,17 @@ export function useJobPilot() {
     direction,
     undo,
     jobStates,
-    /** Jobs whose durable state is unknown until a resolution or read confirms it. */
+    /** Jobs with no confirmed durable state, until their own operation gets a verdict. */
     unknownJobs: Object.entries(jobStates)
-      .filter(([, state]) => state.phase === 'unknown')
+      .filter(([, state]) => isBlocked(state))
+      .map(([id]) => Number(id)),
+    /** Jobs whose resolution is in flight, so the retry affordance is not offered twice. */
+    recoveringJobs: Object.entries(jobStates)
+      .filter(([, state]) => state.phase === 'recovering')
       .map(([id]) => Number(id)),
     decide,
     revert,
-    reconcileJob,
+    recoverJob,
     skipToNext,
     dismissUndo: () => setUndo(null),
     reload: load,

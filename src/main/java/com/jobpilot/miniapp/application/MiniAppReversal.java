@@ -48,8 +48,10 @@ public class MiniAppReversal {
      *
      * <p>Provenance says what the mutation made; it does not say that is still what is there.
      * A Telegram command or ApplicationController write moves the application {@code @Version}
-     * and appends history without touching the Mini App revision, so this check — not the
-     * revision — is what makes an externally superseded Undo stale. No timestamps involved.
+     * and appends history without touching the Mini App revision, and a Telegram note moves the
+     * workflow {@code @Version} without touching either. Both are covered here, because this
+     * check — not the revision — is what makes an externally superseded Undo stale. No
+     * timestamps involved.
      *
      * @param workflow    the current workflow row, or null when the job is implicitly UNREVIEWED
      * @param application the current application row, or null when the job is untracked
@@ -59,7 +61,11 @@ public class MiniAppReversal {
         if (!mutation.isReversible()) throw MiniAppMutationException.undoStale();
 
         WorkflowStatus currentWorkflow = workflow == null ? null : workflow.getStatus();
-        if (!Objects.equals(currentWorkflow, mutation.getResultingWorkflowStatus())) {
+        Long currentWorkflowVersion = workflow == null ? null : workflow.getVersion();
+        // Status alone would miss a workflow-only external write: a Telegram note leaves the
+        // status identical and never opens the application, so only the version moves.
+        if (!Objects.equals(currentWorkflow, mutation.getResultingWorkflowStatus())
+                || !Objects.equals(currentWorkflowVersion, mutation.getResultingWorkflowVersion())) {
             throw MiniAppMutationException.undoStale();
         }
 

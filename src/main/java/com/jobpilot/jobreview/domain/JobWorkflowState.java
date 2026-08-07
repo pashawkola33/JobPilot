@@ -11,6 +11,7 @@ import jakarta.persistence.JoinColumn;
 import jakarta.persistence.MapsId;
 import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import java.time.Instant;
 import java.util.Objects;
 
@@ -24,6 +25,17 @@ public class JobWorkflowState {
     @OneToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "job_id", nullable = false)
     private Job job;
+
+    /**
+     * Optimistic version, and the workflow half of the Mini App Undo freshness fingerprint.
+     *
+     * <p>Every writer of this row moves it — including {@code /note} from Telegram, which changes
+     * neither the status nor any application row. Without it a reversal could pass a
+     * status-and-application check and then restore the old note over a newer one.
+     */
+    @Version
+    @Column(nullable = false)
+    private long version;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
@@ -91,6 +103,7 @@ public class JobWorkflowState {
         updatedAt = now;
     }
 
+    public long getVersion() { return version; }
     public Long getJobId() { return jobId; }
     public Job getJob() { return job; }
     public WorkflowStatus getStatus() { return status; }

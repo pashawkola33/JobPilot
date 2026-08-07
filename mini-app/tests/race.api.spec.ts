@@ -146,6 +146,151 @@ test('when the mutation and its resolution both fail the job says so and refuses
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
 
+/**
+ * A. Recovery is addressed to the operation, not to the world.
+ *
+ * The unresolved mutation id is kept and re-sent verbatim. Minting a fresh id would ask the
+ * server a different question — one whose answer cannot rule out the original committing — and
+ * would let the same user action commit twice.
+ */
+test('Check again resends the original mutation id and resolves the operation', async ({
+  browser,
+}) => {
+  const server = new SyntheticServer(queue(2));
+  const page = await (await context(browser, server)).newPage();
+  await openReview(page);
+
+  // Both the first delivery and its same-id resolution die: the job is genuinely unknown.
+  server.dropNextWrites(2);
+  await actions(page).getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByRole('alert')).toContainText('Not sure this saved');
+  await expect.poll(() => server.deliveries.length).toBe(2);
+  const original = server.deliveries[0]!.mutationId;
+  expect(server.deliveries[1]!.mutationId).toBe(original);
+
+  await page.getByRole('button', { name: 'Check again' }).click();
+
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  // The third delivery is the same operation, not a new decision.
+  expect(server.deliveries[2]!.mutationId).toBe(original);
+  expect(new Set(server.deliveries.map((entry) => entry.mutationId)).size).toBe(1);
+  // Exactly one logical mutation survives all three deliveries.
+  expect(server.ledger.size).toBe(1);
+  expect(server.historyFor(8000)).toHaveLength(1);
+  expect(server.jobs[0]!.status).toBe('SAVED');
+});
+
+/** B. A failed resolution keeps the descriptor, so the next attempt asks the same question. */
+test('a failed Check again keeps the job unknown and reuses the same mutation id', async ({
+  browser,
+}) => {
+  const server = new SyntheticServer(queue(2));
+  const page = await (await context(browser, server)).newPage();
+  await openReview(page);
+
+  // Two for the original attempt, two more for the first Check again.
+  server.dropNextWrites(4);
+  await actions(page).getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByRole('alert')).toContainText('Not sure this saved');
+  const original = server.deliveries[0]!.mutationId;
+
+  await page.getByRole('button', { name: 'Check again' }).click();
+  await expect.poll(() => server.deliveries.length).toBe(4);
+
+  // Still unknown, still the same operation, and still offering the retry.
+  await expect(page.getByRole('alert')).toContainText('Not sure this saved');
+  expect(server.deliveries.every((entry) => entry.mutationId === original)).toBe(true);
+  expect(server.ledger.size).toBe(0);
+
+  await page.getByRole('button', { name: 'Check again' }).click();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect(server.deliveries[4]!.mutationId).toBe(original);
+  expect(server.ledger.size).toBe(1);
+  expect(server.historyFor(8000)).toHaveLength(1);
+});
+
+/**
+ * C. Recovery runs through the same per-job queue as everything else, and a second press while
+ * one resolution is in flight is a no-op — so an impatient double-click cannot start two
+ * resolutions of one operation.
+ */
+test('a second Check again while one is running starts no second resolution', async ({
+  browser,
+}) => {
+  const server = new SyntheticServer(queue(2));
+  const page = await (await context(browser, server)).newPage();
+  await openReview(page);
+
+  server.dropNextWrites(2);
+  await actions(page).getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByRole('alert')).toContainText('Not sure this saved');
+  const original = server.deliveries[0]!.mutationId;
+
+  // Hold the resolution open, then press again while it is still unresolved.
+  const held = server.holdNextWrite();
+  await page.getByRole('button', { name: 'Check again' }).click();
+  await held.arrived;
+  await expect(page.getByRole('button', { name: 'Checking…' })).toBeDisabled();
+
+  held.release();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+
+  // One resolution delivery, one logical mutation, one history row.
+  expect(server.deliveries).toHaveLength(3);
+  expect(server.deliveries[2]!.mutationId).toBe(original);
+  expect(server.ledger.size).toBe(1);
+  expect(server.historyFor(8000)).toHaveLength(1);
+});
+
+/** D. An unresolved job accepts no new decisions — no new ids, no extra writes. */
+test('an unresolved job refuses new decisions entirely', async ({ browser }) => {
+  const server = new SyntheticServer(queue(3));
+  const page = await (await context(browser, server)).newPage();
+  await openReview(page);
+
+  server.dropNextWrites(2);
+  await actions(page).getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByRole('alert')).toContainText('Not sure this saved');
+  const delivered = server.deliveries.length;
+  const ids = new Set(server.deliveries.map((entry) => entry.mutationId));
+
+  // The reviewer is held on the unresolved vacancy; every action on it must be ignored.
+  for (const label of ['Save', 'Applied', 'Skip']) {
+    await actions(page).getByRole('button', { name: label }).click();
+  }
+
+  await expect(page.getByRole('alert')).toContainText('Not sure this saved');
+  expect(server.deliveries).toHaveLength(delivered);
+  expect(new Set(server.deliveries.map((entry) => entry.mutationId))).toEqual(ids);
+  expect(server.ledger.size).toBe(0);
+  expect(server.jobs[0]!.status).toBe('UNREVIEWED');
+});
+
+/**
+ * A snapshot read is authoritative about its own moment and proves nothing about whether an
+ * unresolved PUT is about to commit. So no amount of successful reading may clear unknown.
+ */
+test('a successful snapshot read never clears an unknown job', async ({ browser }) => {
+  const server = new SyntheticServer(queue(3));
+  const page = await (await context(browser, server)).newPage();
+  await openReview(page);
+  const readsBeforeFailure = server.snapshotReads;
+
+  server.dropNextWrites(2);
+  await actions(page).getByRole('button', { name: 'Save' }).click();
+
+  // Losing a mutation always triggers reconciliation, so a successful read lands *while* this
+  // job is unknown. If reading could clear unknown, the banner would never survive that read.
+  await expect(page.getByRole('alert')).toContainText('Not sure this saved');
+  await expect.poll(() => server.snapshotReads).toBeGreaterThan(readsBeforeFailure);
+  await expect(page.getByRole('alert')).toContainText('Not sure this saved');
+  await expect(page.getByRole('button', { name: 'Check again' })).toBeVisible();
+
+  // Nothing about the operation was decided by that read.
+  expect(server.ledger.size).toBe(0);
+  expect(server.jobs[0]!.status).toBe('UNREVIEWED');
+});
+
 test('an unrelated job stays usable while another is unknown', async ({ browser }) => {
   const server = new SyntheticServer(queue(3));
   const page = await (await context(browser, server)).newPage();

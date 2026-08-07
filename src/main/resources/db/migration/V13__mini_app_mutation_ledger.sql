@@ -12,6 +12,18 @@
 --     this mutation made. Whether it is still the state being reversed is a separate check
 --     against resulting_* below.
 
+-- Workflow-side optimistic version, the counterpart of applications.version.
+--
+-- Undo freshness needs a durable identity for EVERY writer of this row, not just the ones that
+-- change its status. `/note` from Telegram rewrites the note and touches neither the status nor
+-- the application, so a fingerprint built from those two cannot see it -- and a reversal would
+-- then restore the old note over a newer one the user had just written. This column moves on
+-- every update, which is what makes such an Undo deterministically stale. Deliberately not a
+-- timestamp.
+--
+-- DEFAULT 0 backfills the rows V12 already created; Hibernate maintains it from there.
+ALTER TABLE job_workflow_state ADD COLUMN version BIGINT NOT NULL DEFAULT 0;
+
 -- One row. Locked FOR UPDATE as the first statement of every Mini App mutation, so
 -- mutation_revision order is commit order: the lock is held until commit, which a sequence
 -- cannot promise. Intentional single-user tradeoff — Mini App mutations serialize on this
@@ -68,6 +80,9 @@ CREATE TABLE mini_app_mutation (
     -- moves at least one of them, which makes the old undo token deterministically stale.
     -- Deliberately not timestamps.
     resulting_workflow_status VARCHAR(20),
+    -- job_workflow_state.version after this mutation. Status alone is not enough: a workflow-only
+    -- external write (Telegram /note) leaves the status identical, and only this moves.
+    resulting_workflow_version BIGINT,
     resulting_application_version BIGINT,
     resulting_history_id BIGINT,
     -- What the operation result reports when a duplicate request replays this mutation, so a
@@ -107,6 +122,15 @@ CREATE TABLE mini_app_mutation (
     ),
     CONSTRAINT mini_app_mutation_application_version_ck CHECK (
         resulting_application_version IS NULL OR resulting_application_version >= 0
+    ),
+    CONSTRAINT mini_app_mutation_workflow_version_ck CHECK (
+        resulting_workflow_version IS NULL OR resulting_workflow_version >= 0
+    ),
+    -- A recorded workflow status and its version travel together: one without the other would
+    -- leave the freshness check half-blind in exactly the case it exists for.
+    CONSTRAINT mini_app_mutation_workflow_fingerprint_ck CHECK (
+        (resulting_workflow_status IS NULL AND resulting_workflow_version IS NULL)
+        OR (resulting_workflow_status IS NOT NULL AND resulting_workflow_version IS NOT NULL)
     ),
     CONSTRAINT mini_app_mutation_reversal_state_ck CHECK (
         reversal_state IN ('REVERSIBLE', 'REVERSED', 'SUPERSEDED', 'NOT_REVERSIBLE')

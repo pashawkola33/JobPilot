@@ -183,8 +183,13 @@ public class MiniAppWorkflowService {
         // transaction, so nothing else could have appended to it.
         Long createdHistoryId = Objects.equals(historyBefore, historyAfter) ? null : historyAfter;
 
+        // Re-read under the lock we already hold: the flush that persisted the change also
+        // advanced the workflow version, and it is that post-mutation value a reversal must find.
+        JobWorkflowState workflowAfter = workflowStates.findByJobIdForUpdate(jobId).orElse(null);
+
         MiniAppMutation.ResultingState resulting = new MiniAppMutation.ResultingState(
-                workflow.status() == WorkflowStatus.UNREVIEWED ? null : workflow.status(),
+                workflowAfter == null ? null : workflowAfter.getStatus(),
+                workflowAfter == null ? null : workflowAfter.getVersion(),
                 applicationAfter == null ? null : applicationAfter.getStatus(),
                 applicationAfter == null ? null : applicationAfter.getVersion(),
                 historyAfter,
@@ -245,9 +250,11 @@ public class MiniAppWorkflowService {
         WorkflowStatus restored = original.getPreviousWorkflowStatus() == null
                 ? WorkflowStatus.UNREVIEWED : original.getPreviousWorkflowStatus();
         ApplicationRecord after = applicationRows.findByJobId(jobId).orElse(null);
+        JobWorkflowState workflowAfter = workflowStates.findByJobIdForUpdate(jobId).orElse(null);
 
         MiniAppMutation.ResultingState resulting = new MiniAppMutation.ResultingState(
-                restored == WorkflowStatus.UNREVIEWED ? null : restored,
+                workflowAfter == null ? null : workflowAfter.getStatus(),
+                workflowAfter == null ? null : workflowAfter.getVersion(),
                 resultingApplication,
                 after == null ? null : after.getVersion(),
                 after == null ? null : history.findFrontier(after.getId()),

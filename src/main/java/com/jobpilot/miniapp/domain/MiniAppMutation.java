@@ -80,6 +80,9 @@ public class MiniAppMutation {
     @Column(name = "resulting_workflow_status", updatable = false)
     private WorkflowStatus resultingWorkflowStatus;
 
+    @Column(name = "resulting_workflow_version", updatable = false)
+    private Long resultingWorkflowVersion;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "resulting_application_status", updatable = false)
     private ApplicationStatus resultingApplicationStatus;
@@ -126,6 +129,7 @@ public class MiniAppMutation {
         this.createdApplication = resulting.createdApplication();
         this.createdHistoryId = resulting.createdHistoryId();
         this.resultingWorkflowStatus = resulting.workflowStatus();
+        this.resultingWorkflowVersion = resulting.workflowVersion();
         this.resultingApplicationStatus = resulting.applicationStatus();
         this.resultingApplicationVersion = resulting.applicationVersion();
         this.resultingHistoryId = resulting.historyId();
@@ -176,13 +180,15 @@ public class MiniAppMutation {
 
     /**
      * What the mutation produced: the fingerprint a reversal must still find or refuse
-     * ({@code workflowStatus}, {@code applicationVersion}, {@code historyId}), the provenance
+     * ({@code workflowStatus}, {@code workflowVersion}, {@code applicationVersion},
+     * {@code historyId}), the provenance
      * that licenses deletion ({@code createdApplication}, {@code createdHistoryId}), and the
      * application status a replay reports.
      */
-    public record ResultingState(WorkflowStatus workflowStatus, ApplicationStatus applicationStatus,
-                                 Long applicationVersion, Long historyId,
-                                 boolean createdApplication, Long createdHistoryId) {
+    public record ResultingState(WorkflowStatus workflowStatus, Long workflowVersion,
+                                 ApplicationStatus applicationStatus, Long applicationVersion,
+                                 Long historyId, boolean createdApplication,
+                                 Long createdHistoryId) {
     }
 
     public Long getId() {
@@ -243,6 +249,11 @@ public class MiniAppMutation {
 
     public WorkflowStatus getResultingWorkflowStatus() {
         return resultingWorkflowStatus;
+    }
+
+    /** Moves on every write to the workflow row, including a Telegram note that changes nothing else. */
+    public Long getResultingWorkflowVersion() {
+        return resultingWorkflowVersion;
     }
 
     public ApplicationStatus getResultingApplicationStatus() {

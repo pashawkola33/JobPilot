@@ -1,4 +1,9 @@
-import type { FailureKind, MutationOutcome } from '../data/types';
+import type {
+  FailureKind,
+  JobPilotRepository,
+  MutationOutcome,
+  WorkflowStatus,
+} from '../data/types';
 import { JobPilotError } from '../data/types';
 
 /**
@@ -18,17 +23,43 @@ import { JobPilotError } from '../data/types';
  * mutation did" or "nothing committed, so do it once now".
  */
 
-/** A job whose durable state is genuinely unknown, and which therefore accepts no more writes. */
-export type JobPhase = 'idle' | 'mutating' | 'unknown';
+/**
+ * A job whose durable state is genuinely unknown, and which therefore accepts no more writes.
+ *
+ * `recovering` is still unknown — it is unknown with a resolution in flight — so it blocks
+ * writes exactly the same way. Separating them only lets the UI avoid offering a second
+ * *Check again* while the first one is running.
+ */
+export type JobPhase = 'idle' | 'mutating' | 'unknown' | 'recovering';
+
+/**
+ * Everything needed to re-send an unresolved operation *as itself*.
+ *
+ * This is the whole point of the unknown state. A timeout says the client stopped waiting, not
+ * that the server transaction stopped, so the only thing that can resolve it is the server's
+ * verdict on this exact mutation id. Discarding the id and reading instead would ask a different
+ * question — one whose answer cannot rule out the original committing a moment later.
+ *
+ * It is written once, when the operation is first issued, and never rewritten by a retry.
+ */
+export type RecoveryDescriptor =
+  | { kind: 'workflow'; mutationId: string; jobId: number; status: WorkflowStatus }
+  | { kind: 'undo'; mutationId: string; jobId: number; undoToken: string };
 
 export interface JobState {
   phase: JobPhase;
   /** The live server-issued reversal capability for this job, if it currently has one. */
   undoToken: string | null;
   error: FailureKind | null;
+  /** Present exactly while the job is unknown: the operation still awaiting a verdict. */
+  recovery: RecoveryDescriptor | null;
 }
 
-export const IDLE: JobState = { phase: 'idle', undoToken: null, error: null };
+export const IDLE: JobState = { phase: 'idle', undoToken: null, error: null, recovery: null };
+
+/** Unknown and recovering both mean "no confirmed state", so both refuse further writes. */
+export const isBlocked = (state: JobState | undefined): boolean =>
+  state?.phase === 'unknown' || state?.phase === 'recovering';
 
 /**
  * Only a transport failure is ambiguous. A typed refusal is a definite answer from a server that
@@ -88,4 +119,20 @@ export async function sendWithRecovery(
     // Same id, same payload. Never a bare GET: that cannot prove the first attempt failed.
     return await send();
   }
+}
+
+/**
+ * The only way an operation is sent — first attempt and every later recovery alike.
+ *
+ * Routing both through the descriptor is what makes "never mint a fresh id for a retry" a
+ * property of the code rather than a rule someone has to remember: there is no send path that
+ * takes a mutation id separately from the operation it identifies.
+ */
+export function sendFor(
+  repository: JobPilotRepository,
+  recovery: RecoveryDescriptor,
+): () => Promise<MutationOutcome> {
+  return recovery.kind === 'workflow'
+    ? () => repository.setWorkflowStatus(recovery.jobId, recovery.status, recovery.mutationId)
+    : () => repository.undo(recovery.mutationId, recovery.undoToken);
 }

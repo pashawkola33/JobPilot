@@ -68,6 +68,54 @@ class V13MiniAppMutationLedgerMigrationTest {
         }
     }
 
+    /**
+     * The workflow-side half of the Undo fingerprint. Without it, a Telegram note — which changes
+     * neither the workflow status nor any application row — would be invisible to the freshness
+     * check, and reversing would restore the old note over the newer one.
+     */
+    @Test
+    void addsAWorkflowVersionAndBackfillsExistingRows() throws Exception {
+        String url = migrate("v13workflowversion");
+        try (Connection connection = DriverManager.getConnection(url, "sa", "");
+             Statement statement = connection.createStatement()) {
+            long jobId = seedJob(statement);
+            statement.executeUpdate("""
+                    INSERT INTO job_workflow_state (job_id, status, note, applied_at,
+                                                    created_at, updated_at)
+                    VALUES (%d, 'SAVED', NULL, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    """.formatted(jobId));
+
+            // Rows V12 created carry 0 rather than NULL, so Hibernate can maintain it from there.
+            try (var rows = statement.executeQuery(
+                    "SELECT version FROM job_workflow_state WHERE job_id = " + jobId)) {
+                assertThat(rows.next()).isTrue();
+                assertThat(rows.getLong("version")).isZero();
+            }
+        }
+    }
+
+    @Test
+    void keepsTheWorkflowStatusAndVersionFingerprintTogether() throws Exception {
+        String url = migrate("v13fingerprint");
+        try (Connection connection = DriverManager.getConnection(url, "sa", "");
+             Statement statement = connection.createStatement()) {
+            long jobId = seedJob(statement);
+
+            // Half a fingerprint would leave the freshness check blind in the one case it exists
+            // for, so the schema refuses to record one.
+            assertThatThrownBy(() -> statement.executeUpdate(
+                    fingerprint("half-1", jobId, 1, "'SAVED'", "NULL")))
+                    .as("status without version").isInstanceOf(SQLException.class);
+            assertThatThrownBy(() -> statement.executeUpdate(
+                    fingerprint("half-2", jobId, 2, "NULL", "3")))
+                    .as("version without status").isInstanceOf(SQLException.class);
+
+            statement.executeUpdate(fingerprint("whole", jobId, 3, "'SAVED'", "3"));
+            // A mutation that left the job UNREVIEWED records neither.
+            statement.executeUpdate(fingerprint("neither", jobId, 4, "NULL", "NULL"));
+        }
+    }
+
     @Test
     void enforcesIdempotencyAndRevisionUniqueness() throws Exception {
         String url = migrate("v13unique");
@@ -133,6 +181,15 @@ class V13MiniAppMutationLedgerMigrationTest {
                 assertThat(rows.getInt("c")).isZero();
             }
         }
+    }
+
+    private String fingerprint(String key, long jobId, long revision, String status, String version) {
+        return "INSERT INTO mini_app_mutation (mutation_key, job_id, kind, requested_status, "
+                + "mutation_revision, changed, created_application, reversal_state, undo_token, "
+                + "resulting_workflow_status, resulting_workflow_version, created_at) VALUES ('"
+                + key + "', " + jobId + ", 'WORKFLOW', 'SAVED', " + revision
+                + ", TRUE, FALSE, 'REVERSIBLE', 'token-" + key + "', " + status + ", " + version
+                + ", CURRENT_TIMESTAMP)";
     }
 
     private String mutation(String key, long jobId, long revision, String state, String token) {
