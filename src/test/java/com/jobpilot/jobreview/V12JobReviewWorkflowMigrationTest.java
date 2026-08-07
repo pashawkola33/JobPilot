@@ -39,15 +39,18 @@ class V12JobReviewWorkflowMigrationTest {
     }
 
     @Test
-    void appliesAndStopsAtVersionTwelve() throws Exception {
+    void appliesVersionTwelveAndItsTables() throws Exception {
         String url = migrate("v12apply");
         try (Connection connection = DriverManager.getConnection(url, "sa", "");
              Statement statement = connection.createStatement()) {
+            // V12 specifically, not "the newest migration in the repository". Asserting the max
+            // version made every later migration fail a test about V12 — which says nothing
+            // about V12, and only invites bumping the number until it stops meaning anything.
             try (var rows = statement.executeQuery(
-                    "SELECT MAX(CAST(version AS INT)) v FROM flyway_schema_history "
-                            + "WHERE success = TRUE")) {
+                    "SELECT COUNT(*) c FROM flyway_schema_history "
+                            + "WHERE version = '12' AND success = TRUE")) {
                 assertThat(rows.next()).isTrue();
-                assertThat(rows.getInt("v")).isEqualTo(12);
+                assertThat(rows.getInt("c")).isEqualTo(1);
             }
             for (String table : new String[] {"job_workflow_state", "telegram_job_delivery"}) {
                 try (var rows = statement.executeQuery(
