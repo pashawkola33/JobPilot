@@ -152,6 +152,12 @@ jobpilot:
     renderer-version: ${DOCUMENT_RENDERER_VERSION:apache-v1}
     max-preview-characters: ${DOCUMENT_MAX_PREVIEW_CHARACTERS:4000}
     stale-after: ${DOCUMENT_STALE_AFTER:10m}
+    # How long a duplicate request waits for the request that won the cache-key race to
+    # finish rendering. Not stale-after: that reclaims abandoned rows after minutes, which
+    # as a request-scoped wait would pin an HTTP worker or the Telegram poll thread. Kept
+    # under spring.lifecycle.timeout-per-shutdown-phase (20s) so a waiter still finishes,
+    # or is cleanly interrupted, inside the graceful-shutdown window. Bounds: 1s to 2m.
+    concurrent-completion-timeout: ${DOCUMENT_CONCURRENT_COMPLETION_TIMEOUT:15s}
     contact-cache-hmac-key: ${DOCUMENT_CONTACT_CACHE_HMAC_KEY:}
     contact:
       email: ${DOCUMENT_CONTACT_EMAIL:}

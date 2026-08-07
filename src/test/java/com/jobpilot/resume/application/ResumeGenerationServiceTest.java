@@ -1,6 +1,9 @@
 package com.jobpilot.resume.application;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.jobpilot.applications.domain.ApplicationStatus;
@@ -17,11 +20,13 @@ import com.jobpilot.llm.repository.JobAnalysisRepository;
 import com.jobpilot.llm.repository.LlmBudgetReservationRepository;
 import com.jobpilot.llm.repository.LlmUsageEventRepository;
 import com.jobpilot.maintenance.DocumentMaintenanceService;
+import com.jobpilot.resume.application.ControlledRenderers.ControlledResumeDocxRenderer;
 import com.jobpilot.resume.domain.DocumentFailureCategory;
 import com.jobpilot.resume.domain.DocumentFormat;
 import com.jobpilot.resume.domain.DocumentRenderStatus;
 import com.jobpilot.resume.repository.CoverNoteRepository;
 import com.jobpilot.resume.repository.ResumeVersionRepository;
+import com.jobpilot.resume.storage.DocumentKind;
 import java.io.ByteArrayInputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -31,6 +36,7 @@ import java.time.Instant;
 import java.util.Comparator;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import org.apache.pdfbox.Loader;
@@ -43,6 +49,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
@@ -66,6 +73,7 @@ import org.springframework.test.context.DynamicPropertySource;
         "jobpilot.documents.contact.portfolio-url=",
         "jobpilot.llm.enabled=false"
 })
+@Import(ControlledRenderers.Configuration.class)
 class ResumeGenerationServiceTest {
     private static final Path STORAGE = temporaryStorage();
 
@@ -75,6 +83,7 @@ class ResumeGenerationServiceTest {
     }
 
     @Autowired private ResumeGenerationService service;
+    @Autowired private ControlledResumeDocxRenderer resumeRenderer;
     @Autowired private ApplicationDocumentSelectionService selection;
     @Autowired private ApplicationTrackerService tracker;
     @Autowired private JobProcessor processor;
@@ -90,9 +99,13 @@ class ResumeGenerationServiceTest {
     @Autowired private DocumentMaintenanceService maintenance;
     @Autowired private JdbcTemplate jdbc;
     @MockBean private LlmProvider provider;
+    /** A production no-op, mocked here purely to synchronise the concurrency test. */
+    @MockBean private DocumentGenerationClaimObserver claimObserver;
 
     @BeforeEach
     void cleanDatabase() throws Exception {
+        org.mockito.Mockito.reset(claimObserver);
+        resumeRenderer.resetControl();
         jdbc.update("delete from application_status_history");
         applications.deleteAll();
         coverNotes.deleteAll();
@@ -196,6 +209,94 @@ class ResumeGenerationServiceTest {
                 .isEqualTo(ApplicationStatus.SAVED);
     }
 
+    /**
+     * The waiter honours an interrupt: it stops well inside the fifteen-second default budget and
+     * leaves the interrupted status set for whoever asked it to stop — a graceful shutdown,
+     * typically.
+     *
+     * <p>The winner is started first and parked in the renderer, so the second request is the
+     * loser by construction rather than by whichever thread the scheduler favours. The interrupt
+     * is delivered only once that thread is demonstrably parked in the waiter's own poll sleep;
+     * interrupting anywhere else lets the driver swallow the flag.
+     */
+    @Test
+    void anInterruptedWaiterStopsPromptlyAndRestoresItsInterruptedFlag() throws Exception {
+        long jobId = processor.process(new RawJob("synthetic", "stage5-interrupt",
+                "https://example.invalid/jobs/stage5-interrupt", "Java Backend Intern",
+                "Synthetic Company", "Bucharest, Romania",
+                "Java Spring Boot SQL internship with REST API work and mentorship.",
+                "INTERN", Instant.parse("2026-07-19T08:00:00Z"), null,
+                "Synthetic interrupt fixture")).job().getId();
+        GenerateDocumentsCommand command = new GenerateDocumentsCommand(false,
+                Set.of(DocumentFormat.DOCX, DocumentFormat.PDF), false);
+        CountDownLatch rendererEntered = new CountDownLatch(1);
+        CountDownLatch releaseRenderer = new CountDownLatch(1);
+        resumeRenderer.block(rendererEntered, releaseRenderer);
+        java.util.concurrent.atomic.AtomicBoolean flagRestored =
+                new java.util.concurrent.atomic.AtomicBoolean();
+        java.util.concurrent.atomic.AtomicReference<DocumentGenerationStatus> loserStatus =
+                new java.util.concurrent.atomic.AtomicReference<>();
+
+        try (var executor = Executors.newFixedThreadPool(1)) {
+            var winner = executor.submit(() -> service.generate(jobId, command));
+            // Only once the winner owns the claim and is rendering does the duplicate arrive.
+            assertThat(rendererEntered.await(20, TimeUnit.SECONDS)).isTrue();
+
+            Thread loser = new Thread(() -> {
+                DocumentGenerationStatus status = service.generate(jobId, command).status();
+                flagRestored.set(Thread.currentThread().isInterrupted());
+                loserStatus.set(status);
+            }, "interrupted-waiter");
+            loser.start();
+
+            assertThat(awaitParkedInWaiter(loser)).as("loser parked in the poll sleep").isTrue();
+            long interruptedAt = System.nanoTime();
+            loser.interrupt();
+            loser.join(TimeUnit.SECONDS.toMillis(10));
+            Duration elapsed = Duration.ofNanos(System.nanoTime() - interruptedAt);
+
+            assertThat(loser.isAlive()).isFalse();
+            // Far short of the fifteen-second default it would otherwise have waited out.
+            assertThat(elapsed).isLessThan(Duration.ofSeconds(2));
+            assertThat(flagRestored).isTrue();
+            assertThat(loserStatus).hasValue(DocumentGenerationStatus.GENERATION_FAILED);
+
+            releaseRenderer.countDown();
+            assertThat(winner.get(30, TimeUnit.SECONDS).status())
+                    .isEqualTo(DocumentGenerationStatus.CREATED);
+        } finally {
+            releaseRenderer.countDown();
+        }
+        assertThat(resumes.findAll()).singleElement().satisfies(value ->
+                assertThat(value.getRenderStatus()).isEqualTo(DocumentRenderStatus.COMPLETED));
+    }
+
+    /**
+     * True once the thread is parked in the waiter's own poll sleep — not merely TIMED_WAITING,
+     * which it also is while acquiring a connection.
+     */
+    private static boolean awaitParkedInWaiter(Thread thread) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            if (thread.getState() == Thread.State.TIMED_WAITING) {
+                for (StackTraceElement frame : thread.getStackTrace()) {
+                    if (frame.getClassName().equals(ResumeGenerationService.class.getName())
+                            && frame.getMethodName().equals("pauseForWinner")) {
+                        return true;
+                    }
+                }
+            }
+            Thread.sleep(2);
+        }
+        return false;
+    }
+
+    /**
+     * Both requests are held at the cache miss so neither wins by scheduling luck, and the winner
+     * is released from the renderer explicitly. Nothing here depends on how long this host takes
+     * to render a DOCX and a PDF — the previous version did, and failed on CI whenever rendering
+     * outran the waiter's budget.
+     */
     @Test
     void concurrentIdenticalGenerationCreatesAtMostOneCompletedVersion() throws Exception {
         long jobId = processor.process(new RawJob("synthetic", "stage5-concurrent",
@@ -206,29 +307,32 @@ class ResumeGenerationServiceTest {
                 "Synthetic concurrent fixture")).job().getId();
         GenerateDocumentsCommand command = new GenerateDocumentsCommand(false,
                 Set.of(DocumentFormat.DOCX, DocumentFormat.PDF), false);
-        CountDownLatch start = new CountDownLatch(1);
+        CyclicBarrier bothMissedTheCache = new CyclicBarrier(2);
+        doAnswer(invocation -> {
+            bothMissedTheCache.await(20, TimeUnit.SECONDS);
+            return null;
+        }).when(claimObserver).afterCacheMiss(any(DocumentKind.class), anyString());
+        CountDownLatch rendererEntered = new CountDownLatch(1);
+        CountDownLatch releaseRenderer = new CountDownLatch(1);
+        resumeRenderer.block(rendererEntered, releaseRenderer);
 
         try (var executor = Executors.newFixedThreadPool(2)) {
-            var first = executor.submit(() -> {
-                start.await(5, TimeUnit.SECONDS);
-                return service.generate(jobId, command);
-            });
-            var second = executor.submit(() -> {
-                start.await(5, TimeUnit.SECONDS);
-                return service.generate(jobId, command);
-            });
-            start.countDown();
-            DocumentGenerationResult a = first.get(15, TimeUnit.SECONDS);
-            DocumentGenerationResult b = second.get(15, TimeUnit.SECONDS);
+            var first = executor.submit(() -> service.generate(jobId, command));
+            var second = executor.submit(() -> service.generate(jobId, command));
+            assertThat(rendererEntered.await(20, TimeUnit.SECONDS)).isTrue();
+            releaseRenderer.countDown();
+            DocumentGenerationResult a = first.get(30, TimeUnit.SECONDS);
+            DocumentGenerationResult b = second.get(30, TimeUnit.SECONDS);
 
             assertThat(java.util.List.of(a.status(), b.status()))
-                    .isSubsetOf(DocumentGenerationStatus.CREATED,
+                    .containsExactlyInAnyOrder(DocumentGenerationStatus.CREATED,
                             DocumentGenerationStatus.CACHED);
-            assertThat(java.util.List.of(a.status(), b.status()))
-                    .contains(DocumentGenerationStatus.CREATED);
+            assertThat(resumeRenderer.calls()).isEqualTo(1);
             assertThat(resumes.count()).isEqualTo(1);
             assertThat(resumes.findAll()).singleElement().satisfies(value ->
                     assertThat(value.getRenderStatus()).isEqualTo(DocumentRenderStatus.COMPLETED));
+        } finally {
+            releaseRenderer.countDown();
         }
         verifyNoInteractions(provider);
     }

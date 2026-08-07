@@ -84,7 +84,7 @@ class DocumentArtifactStorageTest {
     private DocumentArtifactStorage storage(Path root, long maximum) {
         DocumentProperties properties = new DocumentProperties(true, root, maximum, maximum,
                 "resume-v1", "cover-v1", "renderer-v1", 4_000,
-                Duration.ofMinutes(10),
+                Duration.ofMinutes(10), Duration.ofSeconds(15),
                 "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
                 new DocumentProperties.Contact(
                 "student@example.test", "", "", "", ""));

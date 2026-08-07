@@ -73,7 +73,8 @@ class DocumentContactCacheIdentityTest {
     private DocumentProperties properties(boolean enabled, String key) {
         return new DocumentProperties(enabled, Path.of("data/documents"),
                 2_097_152, 2_097_152, "resume-v1", "cover-v1", "renderer-v1", 4_000,
-                Duration.ofMinutes(10), key, new DocumentProperties.Contact(
+                Duration.ofMinutes(10), Duration.ofSeconds(15), key,
+                new DocumentProperties.Contact(
                 "student@example.test", "+1 202 555 0100",
                 "https://example.test/code", "", ""));
     }
