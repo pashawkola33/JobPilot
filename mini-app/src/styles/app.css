@@ -769,13 +769,24 @@ p {
 
 /* --------------------------------------------------------------- sheet
    A native <dialog>: focus trap, Esc to close, inert background and
-   ::backdrop come free. Enter and exit are CSS, no JS animation. */
+   ::backdrop come free. Enter and exit are CSS, no JS animation.
+
+   A modal dialog sits in the top layer, so it is laid out against the WebView
+   viewport rather than .app. On Telegram iOS the WebView stays at its maximum
+   height and slides, leaving its lower part outside the screen area, so `dvh`
+   is not what the user can see — --tg-viewport-stable-height is. Sizing and
+   pinning against that keeps the whole sheet on screen; outside Telegram the
+   fallback makes both expressions collapse back to plain dvh. */
 
 .sheet {
+  --sheet-vh: var(--tg-viewport-stable-height, 100dvh);
   width: min(460px, 100%);
   max-width: none;
-  max-height: 92dvh;
-  margin: auto auto 0;
+  /* Same 8% peek as before, now off the visible height, less the host header. */
+  max-height: calc(var(--sheet-vh) * 0.92 - var(--safe-top));
+  /* Lifts the sheet by whatever Telegram is holding off screen. Clamped at 0 so a
+     host reporting a stable height above the WebView can never push it down. */
+  margin: auto auto max(0px, calc(100dvh - var(--sheet-vh)));
   padding: 0;
   border: 0;
   /* Gives the sheet a defined edge against a dimmed dark page, where surface and
