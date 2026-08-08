@@ -9,6 +9,7 @@ import {
   sourceLabel,
   workflowLabel,
 } from '../lib/format';
+import { holdVerticalSwipes } from '../lib/telegram';
 import { IconChevronDown, IconClose } from '../components/icons';
 import { ScoreRail } from '../components/ScoreRail';
 import { OpenVacancy } from './Review';
@@ -31,6 +32,19 @@ export function JobDetails({
   const dialog = useRef<HTMLDialogElement>(null);
   /** Held through the closing transition so the sheet does not empty mid-fade. */
   const [shown, setShown] = useState<Job | null>(job);
+  const open = job !== null;
+
+  /**
+   * Telegram's own vertical gesture competes with scrolling this sheet, so the host is asked
+   * to stand down for exactly as long as the sheet is up. Declared before the effect that
+   * calls showModal(), so the gesture is ours by the time the dialog is interactive.
+   *
+   * The restore is the effect's cleanup rather than anything in `onClose`, which is what
+   * makes it unconditional: React runs it on every path out — the close button, Esc, the
+   * backdrop, the job going null, and unmount alike. A close handler would cover only the
+   * paths someone remembered to route through it.
+   */
+  useEffect(() => (open ? holdVerticalSwipes() : undefined), [open]);
 
   useEffect(() => {
     const element = dialog.current;
