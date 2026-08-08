@@ -366,17 +366,21 @@ export function useJobPilot() {
           return authoritativeRead();
         },
         (error: unknown) => {
-          const unresolved = isAmbiguous(error);
-          setJob(jobId, {
-            phase: unresolved ? 'unknown' : 'awaitingRead',
-            undoToken: null,
-            error: failureKind(error),
-            // Still unresolved, so the same descriptor is kept for the next attempt. A definite
-            // refusal is an answer about the operation, but current state is still unseen.
-            recovery: unresolved ? recovery : null,
-          });
           setWriteFailure(failureKind(error));
-          void pipeline.reconcile();
+          if (isAmbiguous(error)) {
+            // Still no verdict, so the same descriptor is kept and the next press asks the same
+            // question about the same operation.
+            setJob(jobId, {
+              phase: 'unknown', undoToken: null, error: failureKind(error), recovery,
+            });
+            void pipeline.reconcile();
+            return;
+          }
+          // A definite refusal answers question one exactly as a success does, so it takes the
+          // same second phase rather than a bare read whose result nobody looks at. Handing the
+          // read to authoritativeRead() is what lets it release the job on *this* press.
+          setJob(jobId, { undoToken: null, error: failureKind(error), recovery: null });
+          return authoritativeRead();
         },
       ),
     );

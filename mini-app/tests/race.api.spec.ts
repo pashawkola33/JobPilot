@@ -358,6 +358,80 @@ test('a failed post-verdict read keeps the job blocked and mints no new mutation
   expect(server.historyFor(8000)).toHaveLength(1);
 });
 
+/**
+ * A definite refusal is a verdict, so it takes the same second phase as a definite success.
+ *
+ * Terminal either way: nothing is ever re-sent. If the read that follows applies, the job is
+ * released on *this* press — making the user press Check again a second time to see state the
+ * client already read would be blocking on a question it has the answer to.
+ */
+test('a definite refusal releases the job as soon as its post-verdict read applies', async ({
+  browser,
+}) => {
+  const server = new SyntheticServer(queue(2));
+  const page = await (await context(browser, server)).newPage();
+  await openReview(page);
+
+  server.dropNextWrites(2);
+  await actions(page).getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByRole('alert')).toContainText('Not sure this saved');
+  const unresolvedDeliveries = server.deliveries.length;
+  const mutationId = server.deliveries[0]!.mutationId;
+
+  // The resolution is refused outright, and the authoritative read behind it succeeds.
+  server.rejectNext();
+  await page.getByRole('button', { name: 'Check again' }).click();
+
+  // One press, one release: the refusal is stated as a definite answer, not as an unknown.
+  await expect(page.getByRole('alert')).toContainText('Change was rejected');
+  await expect(page.getByRole('button', { name: 'Check again' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Checking…' })).toHaveCount(0);
+
+  // The refusal was one delivery of the same operation, and it changed nothing.
+  expect(server.deliveries).toHaveLength(unresolvedDeliveries + 1);
+  expect(server.deliveries.every((entry) => entry.mutationId === mutationId)).toBe(true);
+  expect(server.ledger.size).toBe(0);
+  expect(server.jobs[0]!.status).toBe('UNREVIEWED');
+
+  // Released means writable: this is a new decision, so it carries a new identity.
+  await actions(page).getByRole('button', { name: 'Save' }).click();
+  await expect.poll(() => server.jobs[0]!.status).toBe('SAVED');
+  expect(server.deliveries).toHaveLength(unresolvedDeliveries + 2);
+  expect(server.deliveries.at(-1)!.mutationId).not.toBe(mutationId);
+});
+
+/** The other half of the same verdict: a failed read leaves a read-only retry, never a resend. */
+test('a definite refusal whose post-verdict read fails keeps the job blocked', async ({
+  browser,
+}) => {
+  const server = new SyntheticServer(queue(2));
+  const page = await (await context(browser, server)).newPage();
+  await openReview(page);
+
+  server.dropNextWrites(2);
+  await actions(page).getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByRole('alert')).toContainText('Not sure this saved');
+  const unresolvedDeliveries = server.deliveries.length;
+  const mutationId = server.deliveries[0]!.mutationId;
+
+  server.rejectNext();
+  server.failNextSnapshots(1);
+  await page.getByRole('button', { name: 'Check again' }).click();
+
+  // Verdict known, current state unseen: still blocked, still offering the retry.
+  await expect(page.getByRole('button', { name: 'Check again' })).toBeEnabled();
+  expect(server.deliveries).toHaveLength(unresolvedDeliveries + 1);
+
+  // And that retry is a read: the operation is settled, so no id goes back on the wire.
+  await page.getByRole('button', { name: 'Check again' }).click();
+
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect(server.deliveries).toHaveLength(unresolvedDeliveries + 1);
+  expect(server.deliveries.every((entry) => entry.mutationId === mutationId)).toBe(true);
+  expect(server.ledger.size).toBe(0);
+  expect(server.jobs[0]!.status).toBe('UNREVIEWED');
+});
+
 /** D. An unresolved job accepts no new decisions — no new ids, no extra writes. */
 test('an unresolved job refuses new decisions entirely', async ({ browser }) => {
   const server = new SyntheticServer(queue(3));
