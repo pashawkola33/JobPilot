@@ -297,7 +297,7 @@ public class MiniAppWorkflowService {
                 || recorded.getRequestedStatus() != requested) {
             throw MiniAppMutationException.idempotencyConflict();
         }
-        return recordedResult(recorded);
+        return recordedResult(recorded, liveUndoToken(recorded));
     }
 
     /**
@@ -315,18 +315,38 @@ public class MiniAppWorkflowService {
         if (original == null || !Objects.equals(original.getReversedByMutationId(), recorded.getId())) {
             throw MiniAppMutationException.idempotencyConflict();
         }
-        return recordedResult(recorded);
+        return recordedResult(recorded, liveUndoToken(recorded));
     }
 
-    private MiniAppOperation recordedResult(MiniAppMutation recorded) {
+    private MiniAppOperation recordedResult(MiniAppMutation recorded, String liveUndoToken) {
         WorkflowStatus status = recorded.getResultingWorkflowStatus() == null
                 ? WorkflowStatus.UNREVIEWED : recorded.getResultingWorkflowStatus();
-        // Liveness is read now, not as recorded: a superseding mutation leaves the spent token in
-        // place, so handing it back here would re-arm an Undo that must never fire again.
-        String undo = recorded.isReversible() ? recorded.getUndoToken() : null;
         return new MiniAppOperation(recorded.getMutationKey(), recorded.getMutationRevision(),
                 true, recorded.getJobId(), status, recorded.isChanged(),
-                recorded.getResultingApplicationStatus(), undo);
+                recorded.getResultingApplicationStatus(), liveUndoToken);
+    }
+
+    /**
+     * Whether this recorded mutation can still be undone <em>now</em>, answered against durable
+     * state rather than against its own ledger column.
+     *
+     * <p>{@code reversalState} only moves when another Mini App mutation supersedes or reverses
+     * this one. A Telegram note or an application transition leaves it untouched while making the
+     * reversal impossible, so reading it alone would re-arm a capability the undo endpoint would
+     * immediately refuse — and the client would show an Undo button that cannot work.
+     *
+     * <p>The rows are locked in the same order as every other path here (job, workflow,
+     * application, all under the revision row already held), so this introduces no new lock
+     * ordering and cannot deadlock against a concurrent Telegram command.
+     */
+    private String liveUndoToken(MiniAppMutation recorded) {
+        if (!recorded.isReversible()) return null;
+        long jobId = recorded.getJobId();
+        requireJob(jobId);
+        JobWorkflowState workflow = workflowStates.findByJobIdForUpdate(jobId).orElse(null);
+        ApplicationRecord application = applicationRows.findByJobIdForUpdate(jobId).orElse(null);
+        return reversal.isStillReversible(recorded, workflow, application)
+                ? recorded.getUndoToken() : null;
     }
 
     /** A newer mutation for the same job retires every older undo capability on it. */

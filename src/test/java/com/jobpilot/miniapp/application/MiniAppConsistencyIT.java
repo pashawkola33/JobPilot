@@ -332,6 +332,75 @@ class MiniAppConsistencyIT {
                 .isInstanceOf(MiniAppMutationException.class);
     }
 
+    /**
+     * A replay must not hand back a capability the reversal itself would refuse.
+     *
+     * <p>{@code reversal_state} only moves when a <em>Mini App</em> mutation supersedes or
+     * reverses this one; an external writer never touches it. So liveness cannot be read from
+     * that column alone — the replay has to check the same durable fingerprint the reversal
+     * checks, or it re-arms an Undo that is already stale.
+     */
+    @Test
+    void aReplayAfterAnExternalNoteDoesNotReArmTheUndo() {
+        long jobId = active("replay-external-note", 70);
+        String mutationId = newMutationId();
+        var saved = workflows.change(mutationId, jobId, WorkflowStatus.SAVED);
+        assertThat(saved.undoToken()).isNotNull();
+
+        review.note(jobId, "Recruiter replied, call on Thursday");
+        long revisionAfterNote = committedRevision();
+
+        var replay = workflows.change(mutationId, jobId, WorkflowStatus.SAVED);
+
+        assertThat(replay.replayed()).isTrue();
+        assertThat(replay.mutationRevision()).isEqualTo(saved.mutationRevision());
+        assertThat(replay.undoToken()).as("the capability is stale, so none is offered").isNull();
+        // The replay changed nothing at all.
+        assertThat(workflowNote(jobId)).isEqualTo("Recruiter replied, call on Thursday");
+        assertThat(workflowStatus(jobId)).isEqualTo("SAVED");
+        assertThat(historyStatuses(jobId)).containsExactly("SAVED");
+        assertThat(ledgerRows()).isEqualTo(1);
+        assertThat(committedRevision()).isEqualTo(revisionAfterNote);
+    }
+
+    @Test
+    void aReplayAfterAnExternalApplicationTransitionDoesNotReArmTheUndo() {
+        long jobId = active("replay-external-transition", 69);
+        String mutationId = newMutationId();
+        var saved = workflows.change(mutationId, jobId, WorkflowStatus.SAVED);
+
+        tracker.transition(jobId, ApplicationStatus.APPLIED, null, null,
+                ApplicationStatusChangeSource.TELEGRAM_COMMAND);
+        long revisionAfter = committedRevision();
+
+        var replay = workflows.change(mutationId, jobId, WorkflowStatus.SAVED);
+
+        assertThat(replay.replayed()).isTrue();
+        assertThat(replay.mutationRevision()).isEqualTo(saved.mutationRevision());
+        assertThat(replay.undoToken()).isNull();
+        // The external transition stands untouched.
+        assertThat(applicationStatus(jobId)).isEqualTo("APPLIED");
+        assertThat(historyStatuses(jobId)).containsExactly("SAVED", "APPLIED");
+        assertThat(ledgerRows()).isEqualTo(1);
+        assertThat(committedRevision()).isEqualTo(revisionAfter);
+    }
+
+    @Test
+    void aReplayWithNoInterveningWriteStillOffersItsLiveUndo() {
+        long jobId = active("replay-live-undo", 68);
+        String mutationId = newMutationId();
+        var saved = workflows.change(mutationId, jobId, WorkflowStatus.SAVED);
+
+        var replay = workflows.change(mutationId, jobId, WorkflowStatus.SAVED);
+
+        assertThat(replay.replayed()).isTrue();
+        assertThat(replay.undoToken()).isEqualTo(saved.undoToken());
+        // And it is genuinely usable, not merely present.
+        var undone = workflows.undo(newMutationId(), replay.undoToken());
+        assertThat(undone.status()).isEqualTo(WorkflowStatus.UNREVIEWED);
+        assertThat(count("applications", "job_id", jobId)).isZero();
+    }
+
     // ------------------------------------------------------------------- I7/I8 undo
 
     @Test

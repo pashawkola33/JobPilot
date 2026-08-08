@@ -143,12 +143,15 @@ older read can therefore never overwrite a newer reconciliation, and reconciliat
 under repeated requests. Mutations on unrelated jobs are never blocked by this — the
 single-flight rule governs reads only (I2).
 
-`reconcile()` resolves only once **a read that started after the request** has been applied, not
-when the read already in flight happens to finish. Returning the in-flight read would hand the
+`reconcile()` resolves only once **a read that started after the request** has settled, not when
+the read already in flight happens to finish, and it reports `'applied'` or `'failed'` so a
+caller can tell the difference. Returning the in-flight read would hand the
 caller a promise that settles on data fetched *before* they asked — so an awaited reconciliation
 could complete without ever seeing the change it was called to pick up. Callers arriving during
 the follow-up open the next gate rather than being stranded on the current one, and a failed read
-settles its waiters instead of wedging them.
+settles its waiters instead of wedging them — with `'failed'`, which is what keeps a recovering
+job blocked rather than releasing it on a read that never landed. Most callers ignore the result
+and simply want fresher state; the recovery state machine is the one that needs it.
 
 The P0-A `snapshot` field is **removed** from the mutation response rather than kept for
 compatibility. Keeping it would preserve the exact footgun this section exists to delete, and
@@ -244,9 +247,24 @@ later mutation B must not resurrect X's old view of the world. On replay the ser
 - carries **no global state**, so a replay of X cannot regress the client past B no matter how
   late it arrives. This is Correction A doing the work: there is no stale snapshot to replay
   because the response never had one;
-- presents an undo capability only if X's ledger row is *still* `REVERSIBLE`. B's commit
-  will have marked X `SUPERSEDED` and cleared its token, so a replayed A never re-arms a
-  stale Undo.
+- presents an undo capability only if X is **still reversible right now**, decided against
+  durable state rather than against its own ledger column.
+
+That last point is subtler than it looks. `reversal_state` moves only when another *Mini App*
+mutation supersedes or reverses X — an external writer never touches it. So reading that column
+alone would hand back a token in exactly the case the fingerprint exists to catch:
+
+```
+Mini App Save X   -> X REVERSIBLE, token issued
+Telegram /note    -> workflow @Version moves; reversal_state untouched
+replay of X       -> "still REVERSIBLE", token returned
+undo with token   -> UNDO_STALE
+```
+
+The client would show an Undo button that cannot work. A replay therefore runs the same
+freshness check the reversal runs, under the same lock order, and returns the token only if it
+passes. It stays a *successful replay* either way — the mutation did happen — it simply reports
+no capability. It never re-executes, never moves the revision, and never writes history.
 
 A repeat with the same key but a different payload is a typed 409 — that is a client bug,
 not a retry.
@@ -396,8 +414,38 @@ fresh id for a recovery" a property of the code rather than a rule to remember: 
 path that takes a mutation id separately from the operation it identifies.
 
 So *Check again* re-asks about the same operation, however many times it takes. The job stays
-blocked for the whole attempt; a failed attempt keeps the descriptor for the next press; a
-terminal verdict — success, replay, or a typed refusal — is what clears it.
+blocked for the whole attempt, and a failed attempt keeps the descriptor for the next press.
+
+### Recovery is two questions, and both must be answered
+
+A terminal verdict is **not** enough to release the job:
+
+1. *What happened to my operation?* — answered only by re-sending its mutation id.
+2. *What is true now?* — answered only by an authoritative read that starts after (1).
+
+A replayed verdict reports what the **original** mutation produced. Under option B that may
+predate a Telegram or ingestion write the revision counter does not order:
+
+```
+Save X commits, response lost
+Telegram changes the same job afterwards
+recovery of X returns replayed=true carrying X's historical SAVED outcome
+```
+
+Painting that and unblocking would regress the UI to history *and mark it authoritative* — the
+same error as trusting a mutation's global snapshot, arriving by a different route. So the
+verdict is recorded as **identity only**: it sets the live undo capability and clears the
+descriptor, and never touches the projections. The job moves to `awaitingRead` and is released
+only when a post-verdict read reports `applied`.
+
+If that read fails, the job stays blocked and *Check again* remains available — but the operation
+is terminal, so from then on the button only re-reads. It never mints a new mutation id, because
+there is no new mutation to make.
+
+For the same reason, a **replayed** result is never painted on the projections anywhere, not just
+during recovery: a fresh result describes what just happened and is the optimistic UI for the
+user's own action, while a replayed one describes what happened earlier and an out-of-band writer
+may have moved past it since.
 
 **A successful snapshot read never clears unknown.** A read is authoritative about its own
 database moment and says nothing about whether the unresolved PUT is about to commit a moment
@@ -463,7 +511,13 @@ proof. The concurrency-sensitive subset runs 20 consecutive times.
 | Recovery | an unresolved job refuses new decisions entirely | I9 |
 | Recovery | a successful snapshot read never clears unknown | I9 |
 | Reads | a caller arriving mid-read waits for the follow-up, not the in-flight read | I3 |
-| Reads | a failed follow-up settles its waiters and leaves the pipeline usable | I3 |
+| Reads | a failed follow-up settles its waiters as `failed` and leaves the pipeline usable | I3 |
+| Reads | a read superseded by a newer applied one still reports authoritative state | I3 |
+| Recovery | a recovered job stays blocked until the post-verdict read applies | I9 |
+| Recovery | a failed post-verdict read keeps the job blocked and mints no new mutation | I9 |
+| Idempotency | replay after an external note offers no undo capability | I6, I7 |
+| Idempotency | replay after an external application transition offers none either | I6, I7 |
+| Idempotency | replay with no intervening write still offers its live capability | I6 |
 | Undo | replay of a successful undo does not reverse twice | I6 |
 | Existing | MiniAppConflictIT, 49/50/51 Review boundaries, Telegram iOS sheet suite | — |
 

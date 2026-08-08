@@ -97,6 +97,7 @@ export class SyntheticServer {
   private heldWriteArrived: (() => void) | null = null;
   private heldSnapshot: (() => void) | null = null;
   private heldSnapshotArrived: (() => void) | null = null;
+  private failSnapshots = 0;
 
   constructor(jobs: ServerJob[]) {
     this.jobs = jobs;
@@ -117,6 +118,11 @@ export class SyntheticServer {
    */
   dropNextResponseAfterApplying(count = 1) {
     this.dropWritesAfterApplying = count;
+  }
+
+  /** The next `count` snapshot reads fail at the transport. */
+  failNextSnapshots(count = 1) {
+    this.failSnapshots = count;
   }
 
   /** Holds the next write open until released, so a test can act while it is in flight. */
@@ -186,6 +192,10 @@ export class SyntheticServer {
         const arrived = this.heldSnapshotArrived;
         this.heldSnapshotArrived = null;
         await new Promise<void>((resolve) => { this.heldSnapshot = resolve; arrived(); });
+      }
+      if (this.failSnapshots > 0) {
+        this.failSnapshots -= 1;
+        return route.abort('connectionreset');
       }
       this.snapshotReads += 1;
       return this.reply(route, this.snapshot());

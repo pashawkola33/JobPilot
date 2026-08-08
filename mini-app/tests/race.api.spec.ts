@@ -280,6 +280,84 @@ test('an unresolved Undo is recovered by its own mutation id', async ({ browser 
   expect(server.historyFor(8000)).toHaveLength(0);
 });
 
+/**
+ * Recovery is two questions, and answering only the first must not unblock the job.
+ *
+ * The mutation committed and its response was lost, so the verdict is a *replay* of a
+ * historical result. An external writer has moved the job on since. Painting that verdict and
+ * releasing the job would regress the UI to history and call it authoritative — so the job stays
+ * blocked until an authoritative read actually applies.
+ */
+test('a recovered job stays blocked until the post-verdict read applies', async ({ browser }) => {
+  const server = new SyntheticServer(queue(2));
+  const page = await (await context(browser, server)).newPage();
+  await openReview(page);
+
+  // First delivery dies before applying; second applies but its response is lost.
+  server.dropNextWrites(1);
+  server.dropNextResponseAfterApplying(1);
+  await actions(page).getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByRole('alert')).toContainText('Not sure this saved');
+  await expect.poll(() => server.ledger.size).toBe(1);
+  expect(server.jobs[0]!.status).toBe('SAVED');
+
+  // The world moves on while the job is unresolved.
+  server.externalTransition(8000, 'APPLIED');
+
+  const heldRead = server.holdNextSnapshot();
+  await page.getByRole('button', { name: 'Check again' }).click();
+  await heldRead.arrived;
+
+  // The verdict has landed — but it is historical, so the job is still blocked and no Undo is
+  // offered for a capability the server has already invalidated.
+  await expect(page.getByRole('button', { name: 'Checking…' })).toBeDisabled();
+  await expect(undoButton(page)).toHaveCount(0);
+
+  heldRead.release();
+
+  // Only now, with authoritative state applied, is the job released.
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Check again' })).toHaveCount(0);
+  expect(server.ledger.size).toBe(1);
+  expect(server.historyFor(8000)).toHaveLength(2);
+});
+
+/**
+ * When the verdict is known but the read fails, the job stays blocked — and the next press must
+ * only re-read. Re-sending would be inventing a second logical mutation for a settled one.
+ */
+test('a failed post-verdict read keeps the job blocked and mints no new mutation', async ({
+  browser,
+}) => {
+  const server = new SyntheticServer(queue(2));
+  const page = await (await context(browser, server)).newPage();
+  await openReview(page);
+
+  server.dropNextWrites(1);
+  server.dropNextResponseAfterApplying(1);
+  await actions(page).getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByRole('alert')).toContainText('Not sure this saved');
+  const deliveriesAfterFailure = server.deliveries.length;
+  const mutationId = server.deliveries[0]!.mutationId;
+
+  // The verdict resolves, but the authoritative read behind it fails.
+  server.failNextSnapshots(1);
+  await page.getByRole('button', { name: 'Check again' }).click();
+
+  await expect(page.getByRole('button', { name: 'Check again' })).toBeEnabled();
+  expect(server.deliveries).toHaveLength(deliveriesAfterFailure + 1);
+  expect(server.deliveries.at(-1)!.mutationId).toBe(mutationId);
+
+  // The operation is terminal now, so this press re-reads and sends nothing at all.
+  await page.getByRole('button', { name: 'Check again' }).click();
+
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  expect(server.deliveries).toHaveLength(deliveriesAfterFailure + 1);
+  expect(new Set(server.deliveries.map((entry) => entry.mutationId)).size).toBe(1);
+  expect(server.ledger.size).toBe(1);
+  expect(server.historyFor(8000)).toHaveLength(1);
+});
+
 /** D. An unresolved job accepts no new decisions — no new ids, no extra writes. */
 test('an unresolved job refuses new decisions entirely', async ({ browser }) => {
   const server = new SyntheticServer(queue(3));

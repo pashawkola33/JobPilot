@@ -24,13 +24,24 @@ import { JobPilotError } from '../data/types';
  */
 
 /**
- * A job whose durable state is genuinely unknown, and which therefore accepts no more writes.
+ * Recovery is two questions, not one, and a job is blocked until both are answered.
  *
- * `recovering` is still unknown — it is unknown with a resolution in flight — so it blocks
- * writes exactly the same way. Separating them only lets the UI avoid offering a second
- * *Check again* while the first one is running.
+ * 1. **What happened to my operation?** Answered only by re-sending its mutation id.
+ * 2. **What is true now?** Answered only by an authoritative read that starts after (1).
+ *
+ * Answering (1) is not enough to unblock. A replayed verdict reports what the *original*
+ * mutation produced, which may predate a Telegram or ingestion write that the revision counter
+ * does not order — so treating it as current state would regress the UI to history and call it
+ * authoritative.
+ *
+ * - `unknown` — (1) unanswered. A recovery descriptor is held; *Check again* re-sends it.
+ * - `awaitingRead` — (1) answered, (2) not. The operation is terminal, so no mutation is ever
+ *   sent again; *Check again* only re-reads.
+ * - `recovering` — an attempt at (1) or (2) is in flight.
+ *
+ * All three refuse new writes. Only a successfully applied read clears them.
  */
-export type JobPhase = 'idle' | 'mutating' | 'unknown' | 'recovering';
+export type JobPhase = 'idle' | 'mutating' | 'unknown' | 'recovering' | 'awaitingRead';
 
 /**
  * Everything needed to re-send an unresolved operation *as itself*.
@@ -57,9 +68,11 @@ export interface JobState {
 
 export const IDLE: JobState = { phase: 'idle', undoToken: null, error: null, recovery: null };
 
-/** Unknown and recovering both mean "no confirmed state", so both refuse further writes. */
+/** Every recovery phase means "no confirmed state", so all of them refuse further writes. */
 export const isBlocked = (state: JobState | undefined): boolean =>
-  state?.phase === 'unknown' || state?.phase === 'recovering';
+  state?.phase === 'unknown'
+  || state?.phase === 'recovering'
+  || state?.phase === 'awaitingRead';
 
 /**
  * Only a transport failure is ambiguous. A typed refusal is a definite answer from a server that

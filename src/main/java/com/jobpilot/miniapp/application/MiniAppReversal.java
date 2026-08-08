@@ -58,7 +58,23 @@ public class MiniAppReversal {
      */
     public void assertStillReversible(MiniAppMutation mutation, JobWorkflowState workflow,
                                       ApplicationRecord application) {
-        if (!mutation.isReversible()) throw MiniAppMutationException.undoStale();
+        if (!isStillReversible(mutation, workflow, application)) {
+            throw MiniAppMutationException.undoStale();
+        }
+    }
+
+    /**
+     * The same question without the exception, for callers that must <em>report</em> whether a
+     * capability is live rather than act on it.
+     *
+     * <p>A replayed mutation needs exactly this. {@code reversalState} alone is not liveness: it
+     * moves only when another Mini App mutation supersedes or reverses this one, and an external
+     * writer never touches it. A replay that trusted that column would hand back a token this
+     * very check would refuse a moment later — re-arming an Undo that is already stale.
+     */
+    public boolean isStillReversible(MiniAppMutation mutation, JobWorkflowState workflow,
+                                     ApplicationRecord application) {
+        if (!mutation.isReversible()) return false;
 
         WorkflowStatus currentWorkflow = workflow == null ? null : workflow.getStatus();
         Long currentWorkflowVersion = workflow == null ? null : workflow.getVersion();
@@ -66,20 +82,17 @@ public class MiniAppReversal {
         // status identical and never opens the application, so only the version moves.
         if (!Objects.equals(currentWorkflow, mutation.getResultingWorkflowStatus())
                 || !Objects.equals(currentWorkflowVersion, mutation.getResultingWorkflowVersion())) {
-            throw MiniAppMutationException.undoStale();
+            return false;
         }
 
         if (mutation.getResultingApplicationVersion() == null) {
             // The mutation left the job untracked. Anything tracking it now arrived afterwards.
-            if (application != null) throw MiniAppMutationException.undoStale();
-            return;
+            return application == null;
         }
-        if (application == null
-                || application.getVersion() != mutation.getResultingApplicationVersion()
-                || !Objects.equals(history.findFrontier(application.getId()),
-                        mutation.getResultingHistoryId())) {
-            throw MiniAppMutationException.undoStale();
-        }
+        return application != null
+                && application.getVersion() == mutation.getResultingApplicationVersion()
+                && Objects.equals(history.findFrontier(application.getId()),
+                        mutation.getResultingHistoryId());
     }
 
     /**

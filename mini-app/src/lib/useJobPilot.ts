@@ -210,10 +210,17 @@ export function useJobPilot() {
     setJob(outcome.jobId, {
       phase: 'idle', undoToken: outcome.undoToken, error: null, recovery: null,
     });
-    const patch = (all: Job[]) =>
-      all.map((job) => (job.id === outcome.jobId ? { ...job, workflowStatus: outcome.status } : job));
-    setReviewJobs(patch);
-    setSavedJobs(patch);
+    // A fresh result describes what just happened, so showing it immediately is the optimistic
+    // UI for the user's own action. A *replayed* result describes what happened earlier, and an
+    // out-of-band writer may have moved past it since — so it is never painted, and the read
+    // pipeline supplies the affected job's status along with everything else.
+    if (!outcome.replayed) {
+      const patch = (all: Job[]) =>
+        all.map((job) =>
+          job.id === outcome.jobId ? { ...job, workflowStatus: outcome.status } : job);
+      setReviewJobs(patch);
+      setSavedJobs(patch);
+    }
     if (entry && outcome.undoToken) armUndo({ ...entry, undoToken: outcome.undoToken });
     else if (entry) disarmUndo();
     void pipeline.reconcile();
@@ -322,35 +329,58 @@ export function useJobPilot() {
    * the next press asks about the same operation again.
    */
   const recoverJob = useCallback((jobId: number) => {
-    const recovery = jobStatesRef.current[jobId]?.recovery;
-    // Re-entrancy guard: a second press while one resolution is in flight is a no-op, so a
+    const state = jobStatesRef.current[jobId];
+    // Re-entrancy guard: a second press while an attempt is in flight is a no-op, so a
     // double-click cannot start two resolutions of the same operation.
-    if (!recovery || jobStatesRef.current[jobId]?.phase === 'recovering') return;
+    if (!state || state.phase === 'recovering') return;
+
+    /** Phase two: only a read that *applied* may release the job. */
+    const authoritativeRead = () =>
+      pipeline.reconcile().then((result) => {
+        if (result === 'applied') {
+          setJob(jobId, { phase: 'idle', error: null, recovery: null });
+          return;
+        }
+        // The verdict stands but current state is still unseen, so the job stays blocked and
+        // the next press re-reads without ever re-sending a mutation.
+        setJob(jobId, { phase: 'awaitingRead', error: 'unavailable', recovery: null });
+      });
 
     setJob(jobId, { phase: 'recovering', error: null });
     setWriteFailure(null);
+
+    // The operation already has a terminal verdict: nothing to re-send, only to re-read.
+    if (state.phase === 'awaitingRead' || !state.recovery) {
+      void authoritativeRead();
+      return;
+    }
+
+    const recovery = state.recovery;
     void jobQueue.run(jobId, () =>
       sendWithRecovery(sendFor(repository, recovery)).then(
         (outcome) => {
-          // Terminal verdict on this operation: settle it, then reconcile global state.
-          settle(outcome, null);
+          // Phase one answered. The verdict may be a replay of a historical result, so it is
+          // recorded as identity only — it never becomes global state — and the job stays
+          // blocked until the read below confirms what is actually true now.
+          setJob(jobId, { undoToken: outcome.undoToken, error: null, recovery: null });
+          return authoritativeRead();
         },
         (error: unknown) => {
-          const unknown = isAmbiguous(error);
+          const unresolved = isAmbiguous(error);
           setJob(jobId, {
-            phase: unknown ? 'unknown' : 'idle',
+            phase: unresolved ? 'unknown' : 'awaitingRead',
             undoToken: null,
             error: failureKind(error),
             // Still unresolved, so the same descriptor is kept for the next attempt. A definite
-            // refusal is an answer, and releases the job.
-            recovery: unknown ? recovery : null,
+            // refusal is an answer about the operation, but current state is still unseen.
+            recovery: unresolved ? recovery : null,
           });
           setWriteFailure(failureKind(error));
           void pipeline.reconcile();
         },
       ),
     );
-  }, [jobQueue, pipeline, setJob, settle]);
+  }, [jobQueue, pipeline, setJob]);
 
   const skipToNext = useCallback(() => {
     setDirection(1);

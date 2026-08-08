@@ -167,9 +167,26 @@ test('a caller arriving during a read waits for the follow-up, not the in-flight
   expect(reads).toBe(2);
 
   gates[1]!.resolve(snapshotWithTotal(2));
-  await second;
+  await expect(second).resolves.toBe('applied');
   expect(secondSettled).toBe(true);
   expect(pipeline.appliedGeneration()).toBe(2);
+});
+
+test('a read superseded by a newer applied one still reports authoritative state', async () => {
+  const slow = deferred<Snapshot>();
+  const fast = deferred<Snapshot>();
+  const bodies = [slow.promise, fast.promise];
+  let issued = 0;
+  const pipeline = createReadPipeline(() => bodies[issued++]!, () => {}, () => {});
+
+  const first = pipeline.reconcile();
+  const second = pipeline.reconcile();
+  fast.resolve(snapshotWithTotal(99));
+  slow.resolve(snapshotWithTotal(1));
+
+  // The caller asked whether global state is authoritative now, not whether its own body won.
+  await expect(first).resolves.toBe('applied');
+  await expect(second).resolves.toBe('applied');
 });
 
 test('every caller arriving during a read is released by the same follow-up', async () => {
@@ -247,14 +264,16 @@ test('a failed follow-up settles its waiters and leaves the pipeline usable', as
   await new Promise((resolve) => setImmediate(resolve));
 
   gates[1]!.reject(new JobPilotError('unavailable'));
-  // Deterministically settled rather than left hanging: a wedged await would freeze the caller.
-  await expect(waiter).resolves.toBeUndefined();
+  // Deterministically settled rather than left hanging, and settled with the truth: the caller
+  // must be able to tell "authoritative state applied" from "it did not", because the recovery
+  // state machine only releases a blocked job on the former.
+  await expect(waiter).resolves.toBe('failed');
   expect(errors).toHaveLength(1);
 
-  // And a later reconciliation still works.
+  // And a later reconciliation still works, reporting that it applied.
   const third = pipeline.reconcile();
   gates[2]!.resolve(snapshotWithTotal(9));
-  await third;
+  await expect(third).resolves.toBe('applied');
   expect(pipeline.appliedGeneration()).toBe(3);
 });
 

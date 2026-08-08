@@ -25,27 +25,37 @@ import type { Snapshot } from '../data/types';
  * revision — comparing it would drop real changes and is the mistake this design exists to
  * avoid.
  */
+/**
+ * Whether the requested read actually became the global state.
+ *
+ * `'applied'` also covers a read whose body was superseded by a newer one that applied first —
+ * the caller asked whether global state is now authoritative, and it is.
+ */
+export type ReadResult = 'applied' | 'failed';
+
 export interface ReadPipeline {
   /**
    * Requests reconciliation.
    *
-   * Resolves when a read that started no earlier than this call has been applied — or, if that
-   * read failed, once it has settled and been reported. It never rejects: a failed read is a
-   * reported condition, not a caller's exception to handle.
+   * Resolves when a read that started no earlier than this call has settled, reporting whether
+   * it applied. It never rejects: a failed read is a reported condition, not a caller's
+   * exception to handle. Most callers ignore the result and simply want fresher state; the
+   * recovery state machine needs it, because "the authoritative read succeeded" is precisely
+   * what licenses it to stop calling a job unknown.
    */
-  reconcile(): Promise<void>;
+  reconcile(): Promise<ReadResult>;
   /** Generation of the most recently applied read; 0 before the first one lands. */
   appliedGeneration(): number;
 }
 
 interface Gate {
-  promise: Promise<void>;
-  release: () => void;
+  promise: Promise<ReadResult>;
+  release: (result: ReadResult) => void;
 }
 
 function gate(): Gate {
-  let release!: () => void;
-  const promise = new Promise<void>((resolve) => {
+  let release!: (result: ReadResult) => void;
+  const promise = new Promise<ReadResult>((resolve) => {
     release = resolve;
   });
   return { promise, release };
@@ -58,37 +68,44 @@ export function createReadPipeline(
 ): ReadPipeline {
   let issued = 0;
   let applied = 0;
-  let inFlight: Promise<void> | null = null;
+  let inFlight: Promise<ReadResult> | null = null;
   /** Callers that arrived while a read was already running, all sharing one follow-up. */
   let waiting: Gate | null = null;
 
   /** Never rejects: a read failure is reported, not thrown at whoever happened to ask. */
-  const run = (): Promise<void> => {
+  const run = (): Promise<ReadResult> => {
     const generation = ++issued;
     return load().then(
-      (snapshot) => {
-        // A read that lost its race against a later one is dropped, never applied.
-        if (generation <= applied) return;
+      (snapshot): ReadResult => {
+        // A read that lost its race against a later one is dropped, never applied — but global
+        // state is authoritative either way, which is what the caller is really asking.
+        if (generation <= applied) return 'applied';
         applied = generation;
         apply(snapshot, generation);
+        return 'applied';
       },
-      (error: unknown) => onError(error),
-    ).catch((failure: unknown) => {
+      (error: unknown): ReadResult => {
+        onError(error);
+        return 'failed';
+      },
+    ).catch((failure: unknown): ReadResult => {
       // Reporting itself failed. Swallow it here rather than leaving an unhandled rejection
       // that would also strand every waiter below.
       onError(failure);
+      return 'failed';
     });
   };
 
-  const start = (): Promise<void> => {
-    const current = run().then(() => {
+  const start = (): Promise<ReadResult> => {
+    const current = run().then((result) => {
       inFlight = null;
-      if (!waiting) return;
+      if (!waiting) return result;
       // These callers asked *during* the read that just finished, so that read cannot satisfy
-      // them. Hand them exactly one newer read, and release them when it lands.
+      // them. Hand them exactly one newer read, and release them with its outcome.
       const released = waiting;
       waiting = null;
-      void start().then(released.release, released.release);
+      void start().then(released.release, () => released.release('failed'));
+      return result;
     });
     inFlight = current;
     return current;
