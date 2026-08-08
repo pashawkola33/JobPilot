@@ -3,6 +3,7 @@ import type {
   FailureKind,
   Job,
   JobPilotRepository,
+  MutationOutcome,
   RemoteType,
   ScoreBand,
   SeniorityLevel,
@@ -29,13 +30,25 @@ export const httpRepository: JobPilotRepository = {
     return snapshot(body);
   },
 
-  async setWorkflowStatus(jobId: number, status: WorkflowStatus): Promise<Snapshot> {
-    const response = (await call(`/jobs/${jobId}/workflow`, {
+  /** Returns an operation result, never a snapshot: global state comes only from load(). */
+  async setWorkflowStatus(
+    jobId: number,
+    status: WorkflowStatus,
+    mutationId: string,
+  ): Promise<MutationOutcome> {
+    return (await call(`/jobs/${jobId}/workflow`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status }),
-    })) as ApiWorkflowResponse;
-    return snapshot(response.snapshot);
+      body: JSON.stringify({ status, mutationId }),
+    })) as MutationOutcome;
+  },
+
+  async undo(mutationId: string, undoToken: string): Promise<MutationOutcome> {
+    return (await call('/undo', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mutationId, undoToken }),
+    })) as MutationOutcome;
   },
 };
 
@@ -87,7 +100,10 @@ async function failureKind(response: Response): Promise<FailureKind> {
     case 'JOB_NOT_FOUND':
       return 'not-found';
     case 'INVALID_WORKFLOW':
+    case 'IDEMPOTENCY_CONFLICT':
       return 'conflict';
+    case 'UNDO_STALE':
+      return 'undo-stale';
     default:
       break;
   }
@@ -108,10 +124,6 @@ interface ApiSnapshot {
   applications: ApiPage<ApiApplication>;
   workflowCounts: Snapshot['workflowCounts'];
   applicationCounts: Snapshot['applicationCounts'];
-}
-
-interface ApiWorkflowResponse {
-  snapshot: ApiSnapshot;
 }
 
 interface ApiPage<T> {

@@ -14,6 +14,10 @@ public record MiniAppApiError(String category, String message) {
     public static final String FORBIDDEN = "FORBIDDEN";
     public static final String JOB_NOT_FOUND = "JOB_NOT_FOUND";
     public static final String INVALID_WORKFLOW = "INVALID_WORKFLOW";
+    /** The same mutation id arrived describing a different operation — a client bug, not a retry. */
+    public static final String IDEMPOTENCY_CONFLICT = "IDEMPOTENCY_CONFLICT";
+    /** The durable state moved, so this undo no longer describes it. The client reconciles. */
+    public static final String UNDO_STALE = "UNDO_STALE";
 
     public static MiniAppApiError disabled() {
         return new MiniAppApiError(DISABLED, "The Mini App API is not enabled on this server.");

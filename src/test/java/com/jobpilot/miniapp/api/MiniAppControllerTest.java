@@ -2,13 +2,16 @@ package com.jobpilot.miniapp.api;
 
 import static com.jobpilot.miniapp.auth.TelegramInitDataFixture.BOT_TOKEN;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -22,7 +25,8 @@ import com.jobpilot.jobreview.application.WorkflowView;
 import com.jobpilot.jobreview.domain.WorkflowStatus;
 import com.jobpilot.jobs.domain.ScreeningDisposition;
 import com.jobpilot.miniapp.application.MiniAppSnapshotService;
-import com.jobpilot.miniapp.application.MiniAppWorkflowResult;
+import com.jobpilot.miniapp.application.MiniAppMutationException;
+import com.jobpilot.miniapp.application.MiniAppOperation;
 import com.jobpilot.miniapp.application.MiniAppWorkflowService;
 import com.jobpilot.miniapp.auth.MiniAppAuthInterceptor;
 import com.jobpilot.miniapp.auth.TelegramInitDataFixture;
@@ -46,6 +50,8 @@ class MiniAppControllerTest {
     private static final Instant NOW = Instant.parse("2026-01-15T12:00:00Z");
     private static final long FRESH = NOW.minus(Duration.ofMinutes(5)).getEpochSecond();
     private static final String BASE = MiniAppController.BASE;
+    private static final String MUTATION = "mutation-00000001";
+    private static final String OTHER_MUTATION = "mutation-00000002";
 
     private final Clock clock = Clock.fixed(NOW, ZoneOffset.UTC);
     private final MiniAppSnapshotService snapshots = mock(MiniAppSnapshotService.class);
@@ -93,7 +99,7 @@ class MiniAppControllerTest {
         disabled.perform(put(BASE + "/jobs/7/workflow")
                         .header(MiniAppAuthInterceptor.HEADER, initDataFor(ALLOWED_USER))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"status\":\"SAVED\"}"))
+                        .content(body("SAVED")))
                 .andExpect(status().isServiceUnavailable());
 
         verifyNoInteractions(workflows);
@@ -174,10 +180,10 @@ class MiniAppControllerTest {
         enabled().perform(put(BASE + "/jobs/7/workflow")
                         .header(MiniAppAuthInterceptor.HEADER, initDataFor(OTHER_USER))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"status\":\"DISMISSED\"}"))
+                        .content(body("DISMISSED")))
                 .andExpect(status().isForbidden());
 
-        verify(workflows, never()).change(anyLong(), org.mockito.ArgumentMatchers.any());
+        verify(workflows, never()).change(anyString(), anyLong(), any());
     }
 
     // ------------------------------------------------------------------------- reads
@@ -227,43 +233,113 @@ class MiniAppControllerTest {
     @CsvSource({"SAVED", "APPLIED", "DISMISSED", "UNREVIEWED"})
     void appliesEveryWorkflowActionThroughTheMiniAppOrchestrator(String status) throws Exception {
         WorkflowStatus target = WorkflowStatus.valueOf(status);
-        WorkflowView view = new WorkflowView(7L, target, null, null, NOW, true);
-        when(workflows.change(7L, target)).thenReturn(
-                new MiniAppWorkflowResult(view, true, snapshot(List.of(), List.of())));
+        when(workflows.change(MUTATION, 7L, target)).thenReturn(operation(target, true, "undo-1"));
 
         enabled().perform(put(BASE + "/jobs/7/workflow")
                         .header(MiniAppAuthInterceptor.HEADER, initDataFor(ALLOWED_USER))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"status\":\"" + status + "\"}"))
+                        .content(body(status)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.jobId").value(7))
                 .andExpect(jsonPath("$.status").value(status))
                 .andExpect(jsonPath("$.changed").value(true))
-                .andExpect(jsonPath("$.snapshot.workflowCounts.saved").value(0));
+                .andExpect(jsonPath("$.mutationId").value(MUTATION))
+                .andExpect(jsonPath("$.mutationRevision").value(12))
+                .andExpect(jsonPath("$.undoToken").value("undo-1"));
 
-        verify(workflows).change(7L, target);
+        verify(workflows).change(MUTATION, 7L, target);
+    }
+
+    /**
+     * Correction A on the wire. A mutation is authoritative about the job it locked and about
+     * nothing else, so shipping a global snapshot here — as P0-A did — would let a response
+     * whose revision merely looks newer overwrite Review or Saved state that ingestion or a
+     * Telegram command has already moved past it.
+     */
+    @Test
+    void neverReturnsAGlobalSnapshotFromAMutation() throws Exception {
+        when(workflows.change(MUTATION, 7L, WorkflowStatus.SAVED))
+                .thenReturn(operation(WorkflowStatus.SAVED, true, "undo-1"));
+
+        String payload = enabled().perform(put(BASE + "/jobs/7/workflow")
+                        .header(MiniAppAuthInterceptor.HEADER, initDataFor(ALLOWED_USER))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body("SAVED")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.snapshot").doesNotExist())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(payload).doesNotContain("reviewQueue", "workflowCounts", "applicationCounts");
+        verifyNoInteractions(snapshots);
+    }
+
+    @Test
+    void reversesThroughTheServerOwnedUndoEndpoint() throws Exception {
+        when(workflows.undo(OTHER_MUTATION, "undo-1"))
+                .thenReturn(new MiniAppOperation(OTHER_MUTATION, 13L, false, 7L,
+                        WorkflowStatus.UNREVIEWED, true, null, null));
+
+        enabled().perform(post(BASE + "/undo")
+                        .header(MiniAppAuthInterceptor.HEADER, initDataFor(ALLOWED_USER))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(undoBody(OTHER_MUTATION, "undo-1")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("UNREVIEWED"))
+                // A reversal is never itself reversible, so no capability comes back.
+                .andExpect(jsonPath("$.undoToken").doesNotExist());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"IDEMPOTENCY_CONFLICT", "UNDO_STALE"})
+    void reportsProtocolConflictsAsTypedConflictsRatherThanFaults(String category)
+            throws Exception {
+        when(workflows.undo(OTHER_MUTATION, "undo-1")).thenThrow(category.equals("UNDO_STALE")
+                ? MiniAppMutationException.undoStale()
+                : MiniAppMutationException.idempotencyConflict());
+
+        enabled().perform(post(BASE + "/undo")
+                        .header(MiniAppAuthInterceptor.HEADER, initDataFor(ALLOWED_USER))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(undoBody(OTHER_MUTATION, "undo-1")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.category").value(category));
+    }
+
+    @ParameterizedTest
+    @CsvSource({"'{\"status\":\"SAVED\"}'", "'{\"status\":\"SAVED\",\"mutationId\":\"\"}'",
+            "'{\"status\":\"SAVED\",\"mutationId\":\"short\"}'",
+            "'{\"status\":\"SAVED\",\"mutationId\":\"has spaces\"}'"})
+    void rejectsAnUnusableMutationId(String payload) throws Exception {
+        enabled().perform(put(BASE + "/jobs/7/workflow")
+                        .header(MiniAppAuthInterceptor.HEADER, initDataFor(ALLOWED_USER))
+                        .contentType(MediaType.APPLICATION_JSON).content(payload))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(workflows);
     }
 
     @Test
     void reportsARepeatedActionAsUnchangedRatherThanFailing() throws Exception {
-        var view = new WorkflowView(7L, WorkflowStatus.SAVED, null, null, NOW, false);
-        when(workflows.change(7L, WorkflowStatus.SAVED)).thenReturn(
-                new MiniAppWorkflowResult(view, false, snapshot(List.of(), List.of())));
+        // No change means nothing to reverse, so no undo capability is offered.
+        when(workflows.change(MUTATION, 7L, WorkflowStatus.SAVED))
+                .thenReturn(operation(WorkflowStatus.SAVED, false, null));
 
         enabled().perform(put(BASE + "/jobs/7/workflow")
                         .header(MiniAppAuthInterceptor.HEADER, initDataFor(ALLOWED_USER))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"status\":\"SAVED\"}"))
+                        .content(body("SAVED")))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.changed").value(false));
+                .andExpect(jsonPath("$.changed").value(false))
+                .andExpect(jsonPath("$.undoToken").doesNotExist());
     }
 
     @ParameterizedTest
-    @CsvSource({"'{\"status\":\"NONSENSE\"}'", "'{}'", "'{\"status\":null}'"})
-    void rejectsAnUnusableStatus(String body) throws Exception {
+    @CsvSource({"'{\"status\":\"NONSENSE\",\"mutationId\":\"mutation-00000001\"}'", "'{}'",
+            "'{\"status\":null,\"mutationId\":\"mutation-00000001\"}'"})
+    void rejectsAnUnusableStatus(String payload) throws Exception {
         enabled().perform(put(BASE + "/jobs/7/workflow")
                         .header(MiniAppAuthInterceptor.HEADER, initDataFor(ALLOWED_USER))
-                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                        .contentType(MediaType.APPLICATION_JSON).content(payload))
                 .andExpect(status().isBadRequest());
 
         verifyNoInteractions(workflows);
@@ -271,27 +347,27 @@ class MiniAppControllerTest {
 
     @Test
     void reportsAMissingJobAsNotFound() throws Exception {
-        when(workflows.change(404L, WorkflowStatus.SAVED)).thenThrow(new JobReviewException(
+        when(workflows.change(MUTATION, 404L, WorkflowStatus.SAVED)).thenThrow(new JobReviewException(
                 JobReviewException.Category.JOB_NOT_FOUND,
                 "That vacancy is not in the review queue."));
 
         enabled().perform(put(BASE + "/jobs/404/workflow")
                         .header(MiniAppAuthInterceptor.HEADER, initDataFor(ALLOWED_USER))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"status\":\"SAVED\"}"))
+                        .content(body("SAVED")))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.category").value(MiniAppApiError.JOB_NOT_FOUND));
     }
 
     @Test
     void reportsAnInvalidWorkflowChangeAsAConflict() throws Exception {
-        when(workflows.change(7L, WorkflowStatus.APPLIED)).thenThrow(new JobReviewException(
+        when(workflows.change(MUTATION, 7L, WorkflowStatus.APPLIED)).thenThrow(new JobReviewException(
                 JobReviewException.Category.INVALID_WORKFLOW, "Note must contain at most 1000 characters."));
 
         enabled().perform(put(BASE + "/jobs/7/workflow")
                         .header(MiniAppAuthInterceptor.HEADER, initDataFor(ALLOWED_USER))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"status\":\"APPLIED\"}"))
+                        .content(body("APPLIED")))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.category").value(MiniAppApiError.INVALID_WORKFLOW));
     }
@@ -302,13 +378,13 @@ class MiniAppControllerTest {
      */
     @Test
     void reportsAnExhaustedConcurrencyRetryAsATypedConflict() throws Exception {
-        when(workflows.change(7L, WorkflowStatus.SAVED))
+        when(workflows.change(MUTATION, 7L, WorkflowStatus.SAVED))
                 .thenThrow(ApplicationTrackerService.conflict());
 
         enabled().perform(put(BASE + "/jobs/7/workflow")
                         .header(MiniAppAuthInterceptor.HEADER, initDataFor(ALLOWED_USER))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"status\":\"SAVED\"}"))
+                        .content(body("SAVED")))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.category").value(MiniAppApiError.INVALID_WORKFLOW))
                 .andExpect(jsonPath("$.message")
@@ -323,14 +399,14 @@ class MiniAppControllerTest {
      */
     @Test
     void reportsANonPositiveJobIdAsNotFound() throws Exception {
-        when(workflows.change(0L, WorkflowStatus.SAVED)).thenThrow(new JobReviewException(
+        when(workflows.change(MUTATION, 0L, WorkflowStatus.SAVED)).thenThrow(new JobReviewException(
                 JobReviewException.Category.JOB_NOT_FOUND,
                 "That vacancy is not in the review queue."));
 
         enabled().perform(put(BASE + "/jobs/0/workflow")
                         .header(MiniAppAuthInterceptor.HEADER, initDataFor(ALLOWED_USER))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"status\":\"SAVED\"}"))
+                        .content(body("SAVED")))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.category").value(MiniAppApiError.JOB_NOT_FOUND));
     }
@@ -353,10 +429,25 @@ class MiniAppControllerTest {
         }
     }
 
+    /** A workflow request body. Every mutation carries the id that makes a retry resolvable. */
+    private static String body(String status) {
+        return "{\"status\":\"" + status + "\",\"mutationId\":\"" + MUTATION + "\"}";
+    }
+
+    private static String undoBody(String mutationId, String undoToken) {
+        return "{\"mutationId\":\"" + mutationId + "\",\"undoToken\":\"" + undoToken + "\"}";
+    }
+
+    private static MiniAppOperation operation(WorkflowStatus status, boolean changed, String undo) {
+        return new MiniAppOperation(MUTATION, 12L, false, 7L, status, changed,
+                status == WorkflowStatus.SAVED ? ApplicationStatus.SAVED : null, undo);
+    }
+
     private static MiniAppSnapshot snapshot(
             List<MiniAppSnapshot.MiniAppJob> review,
             List<MiniAppSnapshot.MiniAppApplication> applications) {
         return new MiniAppSnapshot(
+                12L,
                 new MiniAppSnapshot.MiniAppJobPage(review, review.size(), 50, false),
                 new MiniAppSnapshot.MiniAppJobPage(List.of(), 0, 50, false),
                 new MiniAppSnapshot.MiniAppApplicationPage(

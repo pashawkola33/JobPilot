@@ -99,9 +99,14 @@ export function App() {
                     direction={store.direction}
                     undo={store.undo}
                     writeFailure={store.writeFailure}
+                    unknown={store.current ? store.unknownJobs.includes(store.current.id) : false}
+                    recovering={
+                      store.current ? store.recoveringJobs.includes(store.current.id) : false
+                    }
                     onDecide={store.decide}
                     onUndo={store.revert}
                     onDismissWriteFailure={store.dismissWriteFailure}
+                    onReconcile={() => store.current && store.recoverJob(store.current.id)}
                     onNext={store.skipToNext}
                     onLoadNext={store.reload}
                     onDetails={setDetails}

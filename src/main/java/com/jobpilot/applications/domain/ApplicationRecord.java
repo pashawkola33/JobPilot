@@ -90,6 +90,21 @@ public class ApplicationRecord {
         updatedAt = now;
     }
 
+    /**
+     * Puts a recorded earlier status back verbatim. Mini App reversal only.
+     *
+     * <p>Deliberately not routed through {@link #transitionTo}: that derives
+     * {@code applicationDate} from the target status, so reversing SAVED → APPLIED through it
+     * would leave the applied-at the Apply stamped. Reversal is an explicit, distinct operation
+     * — which is also why {@code ApplicationTransitionPolicy} still has no backwards edge.
+     */
+    public void restore(ApplicationStatus previous, Instant previousApplicationDate, Instant now) {
+        if (previous == null) throw new IllegalArgumentException("Previous status is required");
+        status = previous;
+        applicationDate = previousApplicationDate;
+        updatedAt = now;
+    }
+
     public void selectDocuments(ResumeVersion resume, CoverNote note, Instant now) {
         if (resume == null) throw new IllegalArgumentException("A resume version is required");
         resumeVersion = resume;

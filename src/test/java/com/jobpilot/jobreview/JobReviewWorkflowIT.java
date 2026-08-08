@@ -102,10 +102,15 @@ class JobReviewWorkflowIT {
     }
 
     @Test
-    void schemaEndsAtVersionTwelveWithBothReviewTables() {
+    void migratesCleanlyWithBothReviewTables() {
+        // V12 specifically, plus "nothing failed" -- not "12 is the newest migration in the
+        // repository", which made every later migration fail a test about the review schema.
         assertThat(jdbc.queryForObject(
-                "select max(version::int) from flyway_schema_history where success", Integer.class))
-                .isEqualTo(12);
+                "select count(*) from flyway_schema_history where version = '12' and success",
+                Integer.class)).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "select count(*) from flyway_schema_history where not success", Integer.class))
+                .isZero();
         assertThat(jdbc.queryForList(
                 "select table_name from information_schema.tables where table_schema = 'public'",
                 String.class)).contains("job_workflow_state", "telegram_job_delivery");

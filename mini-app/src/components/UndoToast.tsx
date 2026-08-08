@@ -10,7 +10,10 @@ export function UndoToast({ undo, onUndo }: { undo: UndoEntry | null; onUndo: ()
   const reduced = useReducedMotion();
 
   return (
-    <AnimatePresence>
+    // One toast slot, so one toast at a time. P0-B retires the previous action's capability the
+    // moment a new action starts, and the default "sync" mode keeps the outgoing toast on screen
+    // while the incoming one animates in — two live-looking Undo buttons for a job that has one.
+    <AnimatePresence mode="wait">
       {undo && (
         <motion.div
           key={`${undo.jobId}-${undo.action}`}
