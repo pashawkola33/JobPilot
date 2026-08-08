@@ -21,6 +21,11 @@ export interface TelegramViewport {
   /** The home indicator, `safeAreaInset.bottom`. */
   safeAreaBottom?: number;
   scheme?: 'light' | 'dark';
+  /**
+   * `'unsupported'` emulates a Telegram client older than Bot API 7.7, which has no
+   * swipe control at all. The app must degrade to a no-op there rather than throw.
+   */
+  verticalSwipes?: 'supported' | 'unsupported';
 }
 
 /** Geometry of the open sheet, measured against what Telegram says is visible. */
@@ -50,7 +55,7 @@ export interface SheetGeometry {
  */
 export async function emulateTelegram(page: Page, viewport: TelegramViewport): Promise<void> {
   await page.addInitScript(
-    ({ visible, contentSafeAreaTop, safeAreaBottom, scheme }) => {
+    ({ visible, contentSafeAreaTop, safeAreaBottom, scheme, verticalSwipes }) => {
       let queued: [string, string][] = [];
       const setVar = (name: string, value: string) => {
         const root = document.documentElement;
@@ -78,8 +83,28 @@ export async function emulateTelegram(page: Page, viewport: TelegramViewport): P
       setVar('content-safe-area-inset-top', (contentSafeAreaTop ?? 0) + 'px');
       setVar('safe-area-inset-bottom', (safeAreaBottom ?? 0) + 'px');
 
+      /**
+       * Every host swipe call in order. The host has no readable "are swipes disabled"
+       * flag, so the sequence *is* the observable: a leak is a missing 'enable', and a
+       * double disable is a 'disable' with no 'enable' between the two.
+       */
+      const swipes: string[] = [];
+      (window as unknown as { __tgSwipes: string[] }).__tgSwipes = swipes;
+      // Bot API 7.7 added these. An older client has neither, and must not be called.
+      const swipeControl = verticalSwipes === 'unsupported'
+        ? {}
+        : {
+          disableVerticalSwipes() {
+            swipes.push('disable');
+          },
+          enableVerticalSwipes() {
+            swipes.push('enable');
+          },
+        };
+
       (window as unknown as { Telegram: unknown }).Telegram = {
         WebApp: {
+          ...swipeControl,
           version: '8.0',
           platform: 'ios',
           colorScheme: scheme ?? 'dark',
@@ -187,6 +212,13 @@ export async function readSheetGeometry(page: Page): Promise<SheetGeometry> {
       docScrollHeight: document.scrollingElement!.scrollHeight,
     };
   });
+}
+
+/** Every `disable`/`enable` the app has asked the host for, in order, since page load. */
+export function readSwipeCalls(page: Page): Promise<string[]> {
+  return page.evaluate(
+    () => (window as unknown as { __tgSwipes?: string[] }).__tgSwipes ?? [],
+  );
 }
 
 /** Scrolls the sheet's own container to its end, the furthest a user can get. */

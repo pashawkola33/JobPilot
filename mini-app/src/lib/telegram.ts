@@ -33,6 +33,9 @@ interface TelegramWebApp {
     impactOccurred(style: 'light' | 'medium' | 'heavy'): void;
     notificationOccurred(type: 'error' | 'success' | 'warning'): void;
   };
+  /** Bot API 7.7 and later; absent on older clients, hence optional. */
+  disableVerticalSwipes?(): void;
+  enableVerticalSwipes?(): void;
 }
 
 const webApp: TelegramWebApp | undefined = (
@@ -87,6 +90,25 @@ export function haptic(kind: HapticKind): void {
   if (!feedback) return;
   if (kind === 'success' || kind === 'warning') feedback.notificationOccurred(kind);
   else feedback.impactOccurred(kind);
+}
+
+/**
+ * Hands the vertical gesture to the app for as long as the returned restore is unused.
+ *
+ * Telegram iOS reads a vertical drag anywhere in the Mini App as "minimize me", which a
+ * scrollable overlay of our own cannot win — the app minimizes instead of the content
+ * scrolling. Telegram's answer is this pair, and it deliberately leaves the header gesture
+ * alive, so the user can still minimize or close while it is in force.
+ *
+ * Both halves are feature-detected together: a client that could disable but not enable
+ * would be a one-way trip, so it gets the no-op instead.
+ */
+export function holdVerticalSwipes(): () => void {
+  const disable = webApp?.disableVerticalSwipes;
+  const enable = webApp?.enableVerticalSwipes;
+  if (!disable || !enable) return () => {};
+  disable.call(webApp);
+  return () => enable.call(webApp);
 }
 
 /** Passing null hides Telegram's native back button. */
