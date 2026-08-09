@@ -268,7 +268,7 @@ export async function fingerDrag(
     const touch = (type: 'touchStart' | 'touchMove' | 'touchEnd', y: number) =>
       session.send('Input.dispatchTouchEvent', {
         type,
-        touchPoints: type === 'touchEnd' ? [] : [{ x: from.x, y }],
+        touchPoints: type === 'touchEnd' ? [] : [{ id: 0, x: from.x, y }],
       });
     await touch('touchStart', from.y);
     for (let step = 1; step <= steps; step += 1) await touch('touchMove', at(step));
@@ -285,26 +285,55 @@ export async function fingerDrag(
 }
 
 /**
- * Scrolls at a point with a real gesture — a touch fling on a touchscreen project.
+ * Scrolls a scroll container with a real gesture. `dy` is positive to scroll the content
+ * down, i.e. to increase scrollTop.
  *
- * `dy` is positive to scroll the content down, i.e. to increase scrollTop.
+ * Two genuine touch paths, because they are not equally available everywhere. The first is a
+ * paced touch drag: the browser's own gesture recogniser turns it into a scroll, exactly as
+ * it does for a finger on glass. The second is Chromium's synthetic gesture controller with
+ * the fling suppressed — headless Linux drops the fling the first path relies on, which is
+ * how CI caught this and a Mac never would. Neither is a `wheel` or a `scrollTop` write.
  */
-export async function fingerScroll(
-  page: Page,
-  at: { x: number; y: number },
-  dy: number,
-): Promise<void> {
+export async function fingerScroll(page: Page, selector: string, dy: number): Promise<void> {
+  const offset = () => page.$eval(selector, (element) => element.scrollTop);
+  const at = await centreOf(page, selector);
+  const touch = await hasTouch(page);
+  const before = await offset();
   const session = await page.context().newCDPSession(page);
-  await session.send('Input.synthesizeScrollGesture', {
-    x: at.x,
-    y: at.y,
-    xDistance: 0,
-    yDistance: -dy,
-    gestureSourceType: (await hasTouch(page)) ? 'touch' : 'mouse',
-    speed: 1200,
-  });
+
+  if (touch) {
+    const steps = 16;
+    // Distinct, increasing timestamps: with every event at the same instant the recogniser
+    // sees infinite velocity and declines to call it a scroll.
+    let stamp = Date.now() / 1000;
+    const send = (type: 'touchStart' | 'touchMove' | 'touchEnd', y: number) => {
+      stamp += 0.016;
+      return session.send('Input.dispatchTouchEvent', {
+        type,
+        timestamp: stamp,
+        touchPoints: type === 'touchEnd' ? [] : [{ id: 0, x: at.x, y }],
+      });
+    };
+    // A finger travelling up scrolls the content down.
+    await send('touchStart', at.y);
+    for (let step = 1; step <= steps; step += 1) await send('touchMove', at.y - (dy * step) / steps);
+    await send('touchEnd', at.y - dy);
+    await page.waitForTimeout(300);
+  }
+
+  if (!touch || (await offset()) === before) {
+    await session.send('Input.synthesizeScrollGesture', {
+      x: at.x,
+      y: at.y,
+      xDistance: 0,
+      yDistance: -dy,
+      gestureSourceType: touch ? 'touch' : 'mouse',
+      preventFling: true,
+      speed: 1000,
+    });
+    await page.waitForTimeout(250);
+  }
   await session.detach();
-  await page.waitForTimeout(250);
 }
 
 /** The centre of an element, for a gesture that has to start somewhere specific. */

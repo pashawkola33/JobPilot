@@ -166,7 +166,7 @@ test('the body scrolls with a finger while the sheet stays expanded', async ({ p
   expect(before.bodyMaxScroll).toBeGreaterThan(0);
   expect(before.bodyScrollTop).toBe(0);
 
-  await fingerScroll(page, await centreOf(page, '.sheet__body'), 200);
+  await fingerScroll(page, '.sheet__body', 200);
 
   const after = await readSheetGeometry(page);
   expect(after.bodyScrollTop).toBeGreaterThan(0);
@@ -183,14 +183,13 @@ test('the body scrolls with a finger while the sheet stays expanded', async ({ p
 test('scrolling on inside the body never collapses the sheet', async ({ page }) => {
   await openInTelegram(page);
   await expand(page);
-  const body = await centreOf(page, '.sheet__body');
 
-  await fingerScroll(page, body, 200);
+  await fingerScroll(page, '.sheet__body', 200);
   const scrolled = await readSheetGeometry(page);
   expect(scrolled.bodyScrollTop).toBeGreaterThan(0);
 
   // Already scrolled, now pull the other way — the sheet must not take this as a collapse.
-  await fingerScroll(page, body, -120);
+  await fingerScroll(page, '.sheet__body', -120);
   const back = await readSheetGeometry(page);
   expect(back.snap).toBe('expanded');
   expect(back.sheet.height).toBeCloseTo(scrolled.sheet.height, 0);
@@ -202,7 +201,7 @@ test('the final action is reachable by finger and clickable', async ({ page }) =
   await expand(page);
 
   for (let pass = 0; pass < 8; pass += 1) {
-    await fingerScroll(page, await centreOf(page, '.sheet__body'), 400);
+    await fingerScroll(page, '.sheet__body', 400);
     if ((await readSheetGeometry(page)).bodyScrollTop >= (await readSheetGeometry(page)).bodyMaxScroll - 2) break;
   }
 
@@ -264,7 +263,7 @@ test('dragging does not disturb the host vertical-swipe lifecycle', async ({ pag
 test('reopening starts collapsed and at the top of the body', async ({ page }) => {
   await openInTelegram(page);
   await expand(page);
-  await fingerScroll(page, await centreOf(page, '.sheet__body'), 200);
+  await fingerScroll(page, '.sheet__body', 200);
   expect((await readSheetGeometry(page)).bodyScrollTop).toBeGreaterThan(0);
 
   await page.getByRole('button', { name: 'Close details' }).click();
