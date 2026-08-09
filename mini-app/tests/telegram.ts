@@ -39,7 +39,11 @@ export interface SheetGeometry {
   head: { top: number; bottom: number };
   close: { top: number; bottom: number };
   closeClickable: boolean;
-  body: { top: number; bottom: number; paddingBottom: number };
+  /** Which snap point the sheet is resting at, straight off the element. */
+  snap: string | null;
+  /** The drag region: grip plus header, the only place a sheet drag may start. */
+  handle: { top: number; bottom: number; height: number };
+  body: { top: number; bottom: number; paddingBottom: number; clientHeight: number };
   bodyScrollTop: number;
   bodyMaxScroll: number;
   lastAction: { top: number; bottom: number };
@@ -125,10 +129,23 @@ export async function emulateTelegram(page: Page, viewport: TelegramViewport): P
           offEvent(event: string, handler: () => void) {
             handlers[event] = (handlers[event] ?? []).filter((each) => each !== handler);
           },
-          BackButton: { show() {}, hide() {}, onClick() {}, offClick() {} },
+          BackButton: {
+            show() {},
+            hide() {},
+            onClick(handler: () => void) {
+              (handlers.back ??= []).push(handler);
+            },
+            offClick(handler: () => void) {
+              handlers.back = (handlers.back ?? []).filter((each) => each !== handler);
+            },
+          },
           HapticFeedback: { impactOccurred() {}, notificationOccurred() {} },
           /** Test hook: drives a viewport change the way the host would. */
           __setViewport: applyViewport,
+          /** Test hook: presses Telegram's own back control. */
+          __pressBack() {
+            for (const handler of handlers.back ?? []) handler();
+          },
         },
       };
       applyViewport(visible, true);
@@ -144,8 +161,9 @@ export async function setStableViewport(page: Page, height: number): Promise<voi
       window as unknown as { Telegram: { WebApp: { __setViewport(h: number, s: boolean): void } } }
     ).Telegram.WebApp.__setViewport(next, true);
   }, height);
-  // One frame for the custom property to reach layout.
-  await page.waitForTimeout(120);
+  // The custom property reaches layout in a frame, but the snap height it feeds transitions
+  // over 260ms — so a shorter wait would measure the sheet mid-resize.
+  await page.waitForTimeout(400);
 }
 
 /** Opens the details sheet on the review screen with every disclosure expanded, so the body overflows. */
@@ -201,9 +219,12 @@ export async function readSheetGeometry(page: Page): Promise<SheetGeometry> {
         closeRect.bottom <= visible &&
         hit !== null &&
         (close === hit || close.contains(hit)),
+      snap: (sheet as HTMLElement).dataset.snap ?? null,
+      handle: box(document.querySelector('.sheet__handle')),
       body: {
         ...box(body),
         paddingBottom: parseFloat(getComputedStyle(body).paddingBottom),
+        clientHeight: body.clientHeight,
       },
       bodyScrollTop: Math.round(body.scrollTop),
       bodyMaxScroll: body.scrollHeight - body.clientHeight,
@@ -212,6 +233,85 @@ export async function readSheetGeometry(page: Page): Promise<SheetGeometry> {
       docScrollHeight: document.scrollingElement!.scrollHeight,
     };
   });
+}
+
+/** Presses Telegram's native back control, the way the host would. */
+export async function pressTelegramBack(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    (window as unknown as { Telegram: { WebApp: { __pressBack(): void } } }).Telegram.WebApp
+      .__pressBack();
+  });
+}
+
+/** Whether this project emulates a touchscreen, so a gesture can be a real finger. */
+const hasTouch = (page: Page) =>
+  page.evaluate(() => 'ontouchstart' in window || navigator.maxTouchPoints > 0);
+
+/**
+ * Drags from a point, with a real finger where the device has one and a real pointer where
+ * it does not.
+ *
+ * Both go through the browser's own input pipeline and arrive as ordinary pointer events —
+ * unlike assigning `scrollTop` or firing `wheel`, which would prove only that a property is
+ * writable. `dy` is positive downward, as screen coordinates are.
+ */
+export async function fingerDrag(
+  page: Page,
+  from: { x: number; y: number },
+  dy: number,
+  steps = 12,
+): Promise<void> {
+  const at = (step: number) => from.y + (dy * step) / steps;
+
+  if (await hasTouch(page)) {
+    const session = await page.context().newCDPSession(page);
+    const touch = (type: 'touchStart' | 'touchMove' | 'touchEnd', y: number) =>
+      session.send('Input.dispatchTouchEvent', {
+        type,
+        touchPoints: type === 'touchEnd' ? [] : [{ x: from.x, y }],
+      });
+    await touch('touchStart', from.y);
+    for (let step = 1; step <= steps; step += 1) await touch('touchMove', at(step));
+    await touch('touchEnd', at(steps));
+    await session.detach();
+  } else {
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    for (let step = 1; step <= steps; step += 1) await page.mouse.move(from.x, at(step));
+    await page.mouse.up();
+  }
+  // The snap transition is 260ms; let it land before anything is measured.
+  await page.waitForTimeout(400);
+}
+
+/**
+ * Scrolls at a point with a real gesture — a touch fling on a touchscreen project.
+ *
+ * `dy` is positive to scroll the content down, i.e. to increase scrollTop.
+ */
+export async function fingerScroll(
+  page: Page,
+  at: { x: number; y: number },
+  dy: number,
+): Promise<void> {
+  const session = await page.context().newCDPSession(page);
+  await session.send('Input.synthesizeScrollGesture', {
+    x: at.x,
+    y: at.y,
+    xDistance: 0,
+    yDistance: -dy,
+    gestureSourceType: (await hasTouch(page)) ? 'touch' : 'mouse',
+    speed: 1200,
+  });
+  await session.detach();
+  await page.waitForTimeout(250);
+}
+
+/** The centre of an element, for a gesture that has to start somewhere specific. */
+export async function centreOf(page: Page, selector: string): Promise<{ x: number; y: number }> {
+  const box = await page.locator(selector).boundingBox();
+  if (!box) throw new Error(`no box for ${selector}`);
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
 
 /** Every `disable`/`enable` the app has asked the host for, in order, since page load. */
