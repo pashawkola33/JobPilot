@@ -782,14 +782,38 @@ p {
    height and slides, leaving its lower part outside the screen area, so `dvh`
    is not what the user can see — --tg-viewport-stable-height is. Sizing and
    pinning against that keeps the whole sheet on screen; outside Telegram the
-   fallback makes both expressions collapse back to plain dvh. */
+   fallback makes both expressions collapse back to plain dvh.
+
+   Two snap heights, expressed as fractions of the visible viewport. Keeping the
+   arithmetic here rather than in JS means a host viewport change recomputes both
+   snap points through ordinary CSS, with no resize listener to keep in step. */
 
 .sheet {
   --sheet-vh: var(--tg-viewport-stable-height, 100dvh);
+  --sheet-collapsed: 0.42;
+  --sheet-expanded: 0.9;
+  --sheet-snap: var(--sheet-collapsed);
   width: min(460px, 100%);
   max-width: none;
-  /* Same 8% peek as before, now off the visible height, less the host header. */
-  max-height: calc(var(--sheet-vh) * 0.92 - var(--safe-top));
+  /*
+   * An explicit height, never shrink-wrap.
+   *
+   * This sheet is a flex column whose only growing child is `flex: 1; min-height: 0`.
+   * With `height: auto` that child's base size is 0 and its content-based minimum is
+   * switched off, so it contributes nothing to the column's intrinsic height and there
+   * is no free space to hand back — the sheet collapses to grip + header and leaves a
+   * scroll port the size of the body's own padding. WebKit does exactly that on
+   * Telegram iOS (a 193px sheet, a 60px body); Chromium stretches the dialog instead,
+   * which is why it was invisible to a Chromium-only suite. A definite height removes
+   * the dependency on intrinsic sizing altogether, so both engines agree.
+   *
+   * --sheet-drag is set only while a finger is on the handle, and removed on release so
+   * the height falls back to whichever snap point React settled on.
+   */
+  height: var(--sheet-drag, calc(var(--sheet-vh) * var(--sheet-snap)));
+  /* The expanded snap is clamped by this: on a device with a Telegram header, clearing
+     that header wins over reaching the nominal 90%. */
+  max-height: calc(var(--sheet-vh) - var(--safe-top) - 8px);
   /* Lifts the sheet by whatever Telegram is holding off screen. Clamped at 0 so a
      host reporting a stable height above the WebView can never push it down. */
   margin: auto auto max(0px, calc(100dvh - var(--sheet-vh)));
@@ -807,6 +831,7 @@ p {
   transition:
     opacity 200ms var(--ease),
     translate 220ms var(--ease),
+    height 260ms var(--ease),
     overlay 220ms allow-discrete,
     display 220ms allow-discrete;
 }
@@ -816,6 +841,15 @@ p {
   translate: 0 0;
   display: flex;
   flex-direction: column;
+}
+
+.sheet[data-snap='expanded'] {
+  --sheet-snap: var(--sheet-expanded);
+}
+
+/* A finger is already carrying the height; a transition would lag behind it. */
+.sheet[data-dragging] {
+  transition: none;
 }
 
 @starting-style {
@@ -842,6 +876,23 @@ p {
   .sheet[open]::backdrop {
     opacity: 0;
   }
+}
+
+/*
+ * The drag region, and the only one.
+ *
+ * "Am I dragging the sheet or scrolling its content?" is answered by where the finger
+ * landed, not by a gesture arbiter watching scrollTop — so the body below stays a plain
+ * native scroll container and needs no touchmove interception to defend it.
+ */
+.sheet__handle {
+  flex: none;
+  touch-action: none;
+  cursor: grab;
+}
+
+.sheet__handle:active {
+  cursor: grabbing;
 }
 
 .sheet__grip {
