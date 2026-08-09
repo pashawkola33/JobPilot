@@ -244,7 +244,7 @@ export async function pressTelegramBack(page: Page): Promise<void> {
 }
 
 /** Whether this project emulates a touchscreen, so a gesture can be a real finger. */
-const hasTouch = (page: Page) =>
+export const hasTouch = (page: Page): Promise<boolean> =>
   page.evaluate(() => 'ontouchstart' in window || navigator.maxTouchPoints > 0);
 
 /**
@@ -282,6 +282,43 @@ export async function fingerDrag(
   }
   // The snap transition is 260ms; let it land before anything is measured.
   await page.waitForTimeout(400);
+}
+
+/**
+ * Drags the handle and then has the *browser* cancel the sequence, as an OS-level gesture or
+ * an incoming call does — a `touchCancel`, which Chromium turns into a real `pointercancel`.
+ *
+ * Only a touchscreen can produce a genuine one, so callers must skip where there is none;
+ * dispatching a synthetic event instead would be testing the test.
+ *
+ * Returns the sheet's height measured while the finger is still down, so a caller can prove
+ * the drag actually moved something before it was cancelled.
+ */
+export async function fingerDragCancelled(
+  page: Page,
+  from: { x: number; y: number },
+  dy: number,
+  steps = 12,
+): Promise<number> {
+  const session = await page.context().newCDPSession(page);
+  let stamp = Date.now() / 1000;
+  const send = (type: 'touchStart' | 'touchMove' | 'touchCancel', y: number) => {
+    stamp += 0.016;
+    return session.send('Input.dispatchTouchEvent', {
+      type,
+      timestamp: stamp,
+      touchPoints: type === 'touchCancel' ? [] : [{ id: 0, x: from.x, y }],
+    });
+  };
+
+  await send('touchStart', from.y);
+  for (let step = 1; step <= steps; step += 1) await send('touchMove', from.y + (dy * step) / steps);
+  const midDrag = await page.$eval('dialog.sheet', (el) => el.getBoundingClientRect().height);
+  await send('touchCancel', from.y + dy);
+  await session.detach();
+  // The spring back is the same 260ms transition a snap uses.
+  await page.waitForTimeout(400);
+  return midDrag;
 }
 
 /**

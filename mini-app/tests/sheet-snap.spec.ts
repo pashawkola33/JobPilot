@@ -3,7 +3,9 @@ import {
   centreOf,
   emulateTelegram,
   fingerDrag,
+  fingerDragCancelled,
   fingerScroll,
+  hasTouch,
   openDetailsSheet,
   pressTelegramBack,
   readSheetGeometry,
@@ -60,6 +62,13 @@ async function expand(page: Page) {
   await dragHandle(page, -200);
   expect((await readSheetGeometry(page)).snap).toBe('expanded');
 }
+
+/** What a drag leaves on the element: both must be gone once the gesture is over. */
+const dragState = (page: Page) =>
+  page.$eval('dialog.sheet', (element) => ({
+    inlineHeight: (element as HTMLElement).style.getPropertyValue('--sheet-drag'),
+    dragging: (element as HTMLElement).dataset.dragging ?? null,
+  }));
 
 // ------------------------------------------------------------------ snap points
 
@@ -154,6 +163,77 @@ test('dragging down from the collapsed snap dismisses the sheet', async ({ page 
   await dragHandle(page, 220);
 
   await expect(page.getByRole('dialog')).not.toBeVisible();
+});
+
+// ----------------------------------------------------------- cancelled drags
+
+/**
+ * A cancelled pointer is not a completed gesture.
+ *
+ * `pointerup` says the user let go where they meant to, so the 64px rule reads intent from
+ * the distance. `pointercancel` says the browser or the OS took the pointer away mid-gesture
+ * — a system sheet, an incoming call, a palm. Committing on the distance it happened to reach
+ * would expand, collapse or even dismiss the sheet on something the user never finished, so
+ * the only correct answer is to spring back to where the drag began.
+ *
+ * These need a genuine browser-issued `pointercancel`, which only a touchscreen produces.
+ */
+test('a cancelled upward drag leaves a collapsed sheet collapsed', async ({ page }) => {
+  test.skip(!(await hasTouch(page)), 'a genuine pointercancel needs a touchscreen');
+  await openInTelegram(page);
+  const before = await readSheetGeometry(page);
+
+  const midDrag = await fingerDragCancelled(page, await centreOf(page, '.sheet__handle'), -200);
+  // The drag really was past the commit threshold when it was cancelled.
+  expect(midDrag - before.sheet.height).toBeGreaterThan(64);
+
+  const after = await readSheetGeometry(page);
+  expect(after.snap).toBe('collapsed');
+  expect(after.sheet.height).toBeCloseTo(before.sheet.height, 0);
+  await expect(page.getByRole('dialog')).toBeVisible();
+});
+
+test('a cancelled downward drag never dismisses the sheet', async ({ page }) => {
+  test.skip(!(await hasTouch(page)), 'a genuine pointercancel needs a touchscreen');
+  await openInTelegram(page);
+  const before = await readSheetGeometry(page);
+
+  const midDrag = await fingerDragCancelled(page, await centreOf(page, '.sheet__handle'), 220);
+  expect(before.sheet.height - midDrag).toBeGreaterThan(64);
+
+  // Far enough to have dismissed on a real release, and it is still here.
+  await expect(page.getByRole('dialog')).toBeVisible();
+  const after = await readSheetGeometry(page);
+  expect(after.snap).toBe('collapsed');
+  expect(after.sheet.height).toBeCloseTo(before.sheet.height, 0);
+});
+
+test('a cancelled downward drag leaves an expanded sheet expanded', async ({ page }) => {
+  test.skip(!(await hasTouch(page)), 'a genuine pointercancel needs a touchscreen');
+  await openInTelegram(page);
+  await expand(page);
+  const before = await readSheetGeometry(page);
+
+  const midDrag = await fingerDragCancelled(page, await centreOf(page, '.sheet__handle'), 200);
+  expect(before.sheet.height - midDrag).toBeGreaterThan(64);
+
+  const after = await readSheetGeometry(page);
+  expect(after.snap).toBe('expanded');
+  expect(after.sheet.height).toBeCloseTo(before.sheet.height, 0);
+});
+
+test('a cancelled drag leaves no drag state behind', async ({ page }) => {
+  test.skip(!(await hasTouch(page)), 'a genuine pointercancel needs a touchscreen');
+  await openInTelegram(page);
+  await fingerDragCancelled(page, await centreOf(page, '.sheet__handle'), -200);
+
+  // The inline height and the dragging flag are both gone, so the snap ratio is back in
+  // charge of the height and the transition is live again.
+  expect(await dragState(page)).toEqual({ inlineHeight: '', dragging: null });
+
+  // And the sheet still works: a completed drag after a cancelled one commits normally.
+  await dragHandle(page, -200);
+  expect((await readSheetGeometry(page)).snap).toBe('expanded');
 });
 
 // ------------------------------------------------------------- body scrolling

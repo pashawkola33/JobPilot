@@ -132,22 +132,41 @@ export function JobDetails({
     element.style.setProperty('--sheet-drag', `${state.height}px`);
   };
 
-  const endDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+  /**
+   * Ends the gesture and hands the height back to the snap ratio, which the transition then
+   * animates to. Returns how far the drag travelled, or null if this pointer was not the one
+   * dragging.
+   */
+  const releaseDrag = (event: React.PointerEvent<HTMLDivElement>) => {
     const element = dialog.current;
     const state = drag.current;
-    if (!element || !state || state.pointer !== event.pointerId) return;
+    if (!element || !state || state.pointer !== event.pointerId) return null;
     drag.current = null;
     delete element.dataset.dragging;
-    // Hands the height back to the snap ratio, which the transition then animates to.
     element.style.removeProperty('--sheet-drag');
+    return state.height - state.startHeight;
+  };
 
-    const travelled = state.height - state.startHeight;
+  /** A completed gesture: the distance the user chose is what decides where the sheet lands. */
+  const endDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    const travelled = releaseDrag(event);
+    if (travelled === null) return;
     if (travelled > COMMIT_PX) setSnap('expanded');
     else if (travelled < -COMMIT_PX) {
       if (snap === 'expanded') setSnap('collapsed');
       // Already at the near snap and still pulling down: that is a dismissal.
       else onClose();
     }
+  };
+
+  /**
+   * The browser or the OS took the pointer away — an interrupted gesture, not a decision. It
+   * expresses no intent, so committing on the distance it happened to reach would expand,
+   * collapse or even dismiss the sheet on something the user never finished. Tear down and
+   * let it spring back to the snap it started from.
+   */
+  const cancelDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    releaseDrag(event);
   };
 
   return (
@@ -169,7 +188,7 @@ export function JobDetails({
             onPointerDown={startDrag}
             onPointerMove={moveDrag}
             onPointerUp={endDrag}
-            onPointerCancel={endDrag}
+            onPointerCancel={cancelDrag}
           >
             <span className="sheet__grip" aria-hidden="true" />
             <header className="sheet__head">
