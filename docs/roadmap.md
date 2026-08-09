@@ -24,7 +24,7 @@ a single MATCH / REVIEW / REJECT disposition. Rejected vacancies are reconciled
 rather than silently dropped. Tenant-aware job identity
 (`source + provider_tenant + external_id`). Migrations V6–V9.
 
-## Phase 3 — Source reliability and coverage: COMPLETE (3.1-3.3F)
+## Phase 3 — Source reliability and coverage: COMPLETE (3.1-3.3G)
 
 ### 3.1 Per-tenant source health — COMPLETE
 
@@ -313,6 +313,33 @@ their 111 vacancies were all screened out. They are retained as valid boards
 with low current yield, the same basis used for comparable Greenhouse and Ashby
 tenants — a board is kept because it is live and correctly parsed, not because
 it happened to surface an eligible role on one particular day.
+
+### 3.3G Lever pagination and final source-health closure — COMPLETE
+
+The final known source-health gap, `lever/veeva RESPONSE_TOO_LARGE`, was closed
+with bounded pagination against Lever's public postings API.
+
+Lever now requests at most 50 postings per page, advances with the `skip`
+offset, deduplicates overlapping posting IDs, and enforces a hard 40-page
+per-tenant cap. A later-page failure discards the complete tenant result rather
+than returning partial data. The shared HTTP response limit remains 10 MiB.
+
+Production commit `b7ded74e84c7f9f5b5ee82d295de31a8db414aea` was validated in
+controlled run `13f3004a-5bba-4a20-94b7-f95f69a0b420`.
+
+The run completed with:
+
+- 56 tenant attempts;
+- 56 successes and zero failures;
+- `lever/veeva` successfully fetching 824 postings in 5,688 ms;
+- 6,805 unique raw vacancies and zero raw duplicates;
+- 3 MATCH, 104 REVIEW, and 6,698 REJECT, reconciling exactly to 6,805.
+
+The normal six-hour schedule was restored after validation and production
+remained healthy with one application instance.
+
+Full evidence is recorded in
+[lever-pagination-live-validation.md](lever-pagination-live-validation.md).
 
 ## Phase 4 — REVIEW workflow and ranking calibration
 
