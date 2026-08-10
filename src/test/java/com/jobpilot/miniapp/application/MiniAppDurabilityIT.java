@@ -128,6 +128,55 @@ class MiniAppDurabilityIT {
         assertThat(page.truncated()).isEqualTo(unreviewed > MiniAppSnapshotService.MAX_REVIEW_JOBS);
     }
 
+    /** Disposition is the outer key; score still orders inside each bucket, unchanged. */
+    @Test
+    void reviewQueuePrioritizesMatchBeforeHigherScoredReview() {
+        long weakMatch = active("match-weak", 10);
+        long strongMatch = active("match-strong", 44);
+        long weakReview = review("review-weak", 80);
+        long strongReview = review("review-strong", 99);
+
+        var items = snapshots.snapshot().reviewQueue().items();
+
+        assertThat(items)
+                .extracting(MiniAppJob::id)
+                .containsExactly(strongMatch, weakMatch, strongReview, weakReview);
+    }
+
+    /**
+     * The window is bounded, so MATCH-first decides who is <em>visible</em>, not merely who sits
+     * on top: a confirmed MATCH takes a slot from a higher-scored REVIEW rather than trailing it
+     * off the page. The page metadata still counts the whole pool, not the window.
+     */
+    @Test
+    void boundedReviewWindowAdmitsAMatchAheadOfHigherScoredReviews() {
+        long weakMatch = active("match-weak", 5);
+        IntStream.range(0, MiniAppSnapshotService.MAX_REVIEW_JOBS - 1)
+                .forEach(index -> review("review-" + index, 100 - index));
+        long weakestReview = review("review-weakest", 50);
+
+        var page = snapshots.snapshot().reviewQueue();
+
+        assertThat(page.items()).hasSize(MiniAppSnapshotService.MAX_REVIEW_JOBS);
+        assertThat(page.items()).first().extracting(MiniAppJob::id).isEqualTo(weakMatch);
+        assertThat(page.items()).extracting(MiniAppJob::id).doesNotContain(weakestReview);
+        assertThat(page.total()).isEqualTo(MiniAppSnapshotService.MAX_REVIEW_JOBS + 1);
+        assertThat(page.truncated()).isTrue();
+    }
+
+    /** The Saved window keeps its own ordering: score decides there, disposition never does. */
+    @Test
+    void savedQueueIgnoresDispositionAndStaysScoreOrdered() {
+        long weakMatch = active("saved-match", 20);
+        long strongReview = review("saved-review", 90);
+        change(weakMatch, WorkflowStatus.SAVED);
+        change(strongReview, WorkflowStatus.SAVED);
+
+        assertThat(snapshots.snapshot().saved().items())
+                .extracting(MiniAppJob::id)
+                .containsExactly(strongReview, weakMatch);
+    }
+
     @Test
     void savedDoesNotCompeteWithFiftyOneUnreviewedVacancies() {
         long saved = active("durable-saved", 1);
@@ -263,6 +312,13 @@ class MiniAppDurabilityIT {
                                         penalties, strengths, risks, hard_blockers, scored_at)
                 values (?, ?, 'GOOD_MATCH', true, 1, 1, 1, 1, 1, 1, 1, 0, '', '', '', now())
                 """, id, Math.clamp(score, 0, 100));
+        return id;
+    }
+
+    /** The insert helper only produces MATCH; REVIEW vacancies are the same row, re-dispositioned. */
+    private long review(String externalId, int score) {
+        long id = active(externalId, score);
+        jdbc.update("update jobs set screening_disposition = 'REVIEW' where id = ?", id);
         return id;
     }
 
