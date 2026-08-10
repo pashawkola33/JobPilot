@@ -123,12 +123,16 @@ class ScoreRescorePreviewServiceTest {
 
         assertThat(result.report().exactMatches()).isEqualTo(1);
         assertThat(result.report().changedJobs()).isEmpty();
-        assertThat(result.report().changedScoreCount()).isZero();
+        assertThat(result.report().scoreDeltaChangedCount()).isZero();
         assertNoRepositoryWrites();
     }
 
+    /**
+     * The write transaction re-persists requirements whenever they differ, so requirements-only
+     * drift must enter the plan and be visible in the preview instead of being written unseen.
+     */
     @Test
-    void requirementsOnlyDifferenceDoesNotEnterScoreWritePlan() {
+    void requirementsOnlyDifferenceEntersThePlanAndIsVisibleInThePreview() {
         Job target = ordinaryMatch(10L);
         ScoreCalculation current = calculator.calculate(target);
         ExtractedRequirements stored = withSalary(current.requirements(), "legacy salary text");
@@ -138,9 +142,84 @@ class ScoreRescorePreviewServiceTest {
 
         assertThat(result.status())
                 .isEqualTo(ScoreRescorePlanResult.Status.SUCCESS);
-        assertThat(result.plan().report().exactMatches()).isEqualTo(1);
-        assertThat(result.plan().changedCount()).isZero();
+        var report = result.plan().report();
+        assertThat(report.changeCounts().scoreChangedCount()).isZero();
+        assertThat(report.changeCounts().requirementsChangedCount()).isEqualTo(1);
+        assertThat(report.changeCounts().requirementsOnlyChangedCount()).isEqualTo(1);
+        assertThat(report.changeCounts().changedPlanCount()).isEqualTo(1);
+        assertThat(report.changeCounts().unchangedCount()).isZero();
+        assertThat(result.plan().changedCount()).isEqualTo(1);
+        assertThat(report.changedJobs()).isEmpty();
+        assertThat(report.requirementsChangedJobs()).singleElement().satisfies(preview -> {
+            assertThat(preview.jobId()).isEqualTo(10L);
+            assertThat(preview.scoreChanged()).isFalse();
+            assertThat(preview.storedScore()).isEqualTo(preview.computedScore());
+            assertThat(preview.changedFields()).singleElement().satisfies(change -> {
+                assertThat(change.field())
+                        .isEqualTo(ScoreRescorePreviewReport.RequirementField.SALARY);
+                assertThat(change.storedValue()).isEqualTo("legacy salary text");
+                assertThat(change.computedValue()).isEqualTo("(null)");
+            });
+        });
+        assertNoRepositoryWrites();
+    }
+
+    @Test
+    void unchangedRowEntersNeitherPlanNorPreviewLists() {
+        Job target = ordinaryMatch(11L);
+        ScoreCalculation current = calculator.calculate(target);
+        stub(List.of(row(target, current.score())),
+                List.of(requirement(target, current.requirements())));
+
+        var result = service.plan(250);
+
+        var report = result.plan().report();
+        assertThat(report.changeCounts().changedPlanCount()).isZero();
+        assertThat(report.changeCounts().unchangedCount()).isEqualTo(1);
+        assertThat(report.changedJobs()).isEmpty();
+        assertThat(report.requirementsChangedJobs()).isEmpty();
         assertThat(result.plan().entries()).isEmpty();
+        assertNoRepositoryWrites();
+    }
+
+    /** Every invariant the guarded write relies on, asserted together over one mixed corpus. */
+    @Test
+    void previewCountsAndPlanStayConsistentAcrossMixedChanges() {
+        Job scoreOnly = juniorProgramme(20L);
+        ScoreCalculation scoreOnlyCurrent = calculator.calculate(scoreOnly);
+        Job requirementsOnly = ordinaryMatch(21L);
+        ScoreCalculation requirementsOnlyCurrent = calculator.calculate(requirementsOnly);
+        Job unchanged = ordinaryMatch(22L);
+        ScoreCalculation unchangedCurrent = calculator.calculate(unchanged);
+
+        stub(List.of(row(scoreOnly, staleScore(scoreOnlyCurrent.score())),
+                        row(requirementsOnly, requirementsOnlyCurrent.score()),
+                        row(unchanged, unchangedCurrent.score())),
+                List.of(requirement(scoreOnly, scoreOnlyCurrent.requirements()),
+                        requirement(requirementsOnly,
+                                withSalary(requirementsOnlyCurrent.requirements(), "legacy")),
+                        requirement(unchanged, unchangedCurrent.requirements())));
+
+        var plan = service.plan(250).plan();
+        var counts = plan.report().changeCounts();
+
+        assertThat(counts.changedPlanCount()).isEqualTo(plan.changedCount());
+        assertThat(counts.scoreChangedCount() + counts.requirementsOnlyChangedCount())
+                .isEqualTo(counts.changedPlanCount());
+        assertThat(plan.report().inspectedJobs())
+                .isEqualTo(counts.changedPlanCount() + counts.unchangedCount());
+        assertThat(plan.report().changedJobs()).hasSize(counts.scoreChangedCount());
+        assertThat(plan.report().requirementsChangedJobs())
+                .hasSize(counts.requirementsChangedCount());
+        assertThat(plan.report().scoreDeltaChangedCount())
+                .isLessThanOrEqualTo(counts.scoreChangedCount());
+
+        Set<Long> represented = new java.util.HashSet<>();
+        plan.report().changedJobs().forEach(job -> represented.add(job.jobId()));
+        plan.report().requirementsChangedJobs().forEach(job -> represented.add(job.jobId()));
+        assertThat(represented).containsAll(plan.changedJobIds());
+        plan.report().requirementsChangedJobs()
+                .forEach(job -> assertThat(job.changedFields()).isNotEmpty());
         assertNoRepositoryWrites();
     }
 
@@ -297,6 +376,15 @@ class ScoreRescorePreviewServiceTest {
                 value.spokenLanguages(), value.location(), value.remoteEligibility(),
                 value.mentorshipSignals(), value.workAuthorization(), value.salary(),
                 value.applicationDeadline(), value.extractionMethod());
+    }
+
+    /** A stored card that differs from the freshly computed one by score alone. */
+    private ScoreCard staleScore(ScoreCard fresh) {
+        return new ScoreCard(fresh.score() - 5, fresh.band(), fresh.suitable(),
+                fresh.formalEligibility(), fresh.javaBackend(), fresh.traineeQuality(),
+                fresh.supportingTechnology(), fresh.locationFormat(),
+                fresh.experienceCompatibility(), fresh.freshness(), fresh.penalties(),
+                fresh.strengths(), fresh.risks(), fresh.hardBlockers());
     }
 
     private ExtractedRequirements withSalary(ExtractedRequirements value, String salary) {

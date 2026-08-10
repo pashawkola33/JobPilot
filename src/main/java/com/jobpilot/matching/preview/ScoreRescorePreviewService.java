@@ -18,13 +18,19 @@ import com.jobpilot.matching.ScoreBand;
 import com.jobpilot.matching.rescore.ScoreRescorePlan;
 import com.jobpilot.matching.rescore.ScoreRescorePlanEntry;
 import com.jobpilot.matching.rescore.ScoreRescorePlanResult;
+import com.jobpilot.common.Utf16;
 import com.jobpilot.matching.preview.ScoreRescorePreviewReport.BoundaryCrossings;
+import com.jobpilot.matching.preview.ScoreRescorePreviewReport.ChangeCounts;
 import com.jobpilot.matching.preview.ScoreRescorePreviewReport.JobPreview;
 import com.jobpilot.matching.preview.ScoreRescorePreviewReport.QueueEntry;
 import com.jobpilot.matching.preview.ScoreRescorePreviewReport.QueueProjection;
+import com.jobpilot.matching.preview.ScoreRescorePreviewReport.RequirementField;
+import com.jobpilot.matching.preview.ScoreRescorePreviewReport.RequirementFieldChange;
+import com.jobpilot.matching.preview.ScoreRescorePreviewReport.RequirementsPreview;
 import com.jobpilot.matching.preview.ScoreRescorePreviewReport.ScoreSnapshot;
 import com.jobpilot.matching.preview.ScoreRescorePreviewResult.ErrorCategory;
 import java.time.Instant;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -48,6 +54,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class ScoreRescorePreviewService {
     static final String TARGET_TITLE = "Code First Girls Programme - Junior Java Developer";
+    private static final int MAX_LIST_ELEMENTS = 12;
+    private static final int MAX_LIST_ELEMENT_LENGTH = 24;
+    /** What {@link PreviewTextSanitizer} returns once a value normalises to nothing. */
+    private static final String BLANK_SANITIZER_MARKER = "<blank>";
 
     private final JobScoreRepository scores;
     private final JobRequirementRepository requirements;
@@ -225,11 +235,31 @@ public class ScoreRescorePreviewService {
         List<Long> possibleCrossings = new ArrayList<>();
         List<Long> strongCrossings = new ArrayList<>();
         List<JobPreview> changes = new ArrayList<>();
+        List<RequirementsPreview> requirementChanges = new ArrayList<>();
+        int scoreChanged = 0;
+        int requirementsChanged = 0;
+        int requirementsOnlyChanged = 0;
+        int unchanged = 0;
         JobPreview named = null;
 
         for (EvaluatedJob evaluated : jobs) {
             ScoreCard oldScore = evaluated.storedScore();
             ScoreCard newScore = evaluated.computed().score();
+            ExtractedRequirements oldRequirements = evaluated.storedRequirements();
+            ExtractedRequirements newRequirements = evaluated.computed().requirements();
+            // Identical to the equality that decides plan membership, so the two can never diverge.
+            boolean scoreDiffers = !oldScore.equals(newScore);
+            boolean requirementsDiffer = !oldRequirements.equals(newRequirements);
+            if (scoreDiffers) scoreChanged++;
+            if (requirementsDiffer) requirementsChanged++;
+            if (requirementsDiffer && !scoreDiffers) requirementsOnlyChanged++;
+            if (!scoreDiffers && !requirementsDiffer) unchanged++;
+            if (requirementsDiffer) {
+                requirementChanges.add(new RequirementsPreview(evaluated.job().getId(),
+                        PreviewTextSanitizer.text(evaluated.job().getTitle(), 120), scoreDiffers,
+                        oldScore.score(), newScore.score(),
+                        requirementDiff(oldRequirements, newRequirements)));
+            }
             int delta = newScore.score() - oldScore.score();
             deltas.merge(delta, 1, Integer::sum);
             if (oldScore.equals(newScore)) exact++;
@@ -263,7 +293,96 @@ public class ScoreRescorePreviewService {
                 Collections.unmodifiableMap(orderedDeltas), zeroToPositive, positiveToZero,
                 new BoundaryCrossings(List.copyOf(unsuitableCrossings),
                         List.copyOf(possibleCrossings), List.copyOf(strongCrossings)),
-                staleMatchInversions(jobs), matches, review, List.copyOf(changes), named);
+                staleMatchInversions(jobs), matches, review, List.copyOf(changes), named,
+                new ChangeCounts(scoreChanged, requirementsChanged, requirementsOnlyChanged,
+                        scoreChanged + requirementsOnlyChanged, unchanged),
+                List.copyOf(requirementChanges));
+    }
+
+    /**
+     * Every persisted requirement field that differs, and only those.
+     *
+     * <p>Raw values are compared first and converted to display text only after a difference is
+     * established: comparing rendered text would hide two long values that share a truncated
+     * prefix. Equality mirrors {@code ExtractedRequirements} record equality exactly — including
+     * order-sensitive list comparison — because that is what decides plan membership, so a planned
+     * row can never produce an empty diff.
+     */
+    private List<RequirementFieldChange> requirementDiff(ExtractedRequirements stored,
+                                                         ExtractedRequirements computed) {
+        List<RequirementFieldChange> changes = new ArrayList<>();
+        for (RequirementField field : RequirementField.values()) {
+            Object storedValue = raw(stored, field);
+            Object computedValue = raw(computed, field);
+            if (Objects.equals(storedValue, computedValue)) continue;
+            changes.add(new RequirementFieldChange(field,
+                    display(storedValue), display(computedValue)));
+        }
+        return List.copyOf(changes);
+    }
+
+    /** Exhaustive by construction: a new record component cannot compile without a branch here. */
+    private Object raw(ExtractedRequirements value, RequirementField field) {
+        return switch (field) {
+            case SENIORITY -> value.seniority();
+            case INTERNSHIP_OR_TRAINEE -> value.internshipOrTrainee();
+            case REQUIRED_EXPERIENCE_YEARS -> value.requiredExperienceYears();
+            case REQUIRED_EDUCATION -> value.requiredEducation();
+            case FINAL_YEAR_MANDATORY -> value.finalYearMandatory();
+            case TECHNOLOGIES -> value.technologies();
+            case PROGRAMMING_LANGUAGES -> value.programmingLanguages();
+            case SPOKEN_LANGUAGES -> value.spokenLanguages();
+            case LOCATION -> value.location();
+            case REMOTE_ELIGIBILITY -> value.remoteEligibility();
+            case MENTORSHIP_SIGNALS -> value.mentorshipSignals();
+            case WORK_AUTHORIZATION -> value.workAuthorization();
+            case SALARY -> value.salary();
+            case APPLICATION_DEADLINE -> value.applicationDeadline();
+            case EXTRACTION_METHOD -> value.extractionMethod();
+        };
+    }
+
+    private String display(Object value) {
+        if (value == null) return "(null)";
+        if (value instanceof List<?> list) return displayList(list);
+        if (value instanceof Instant instant) {
+            return DateTimeFormatter.ISO_INSTANT.format(instant);
+        }
+        if (value instanceof String text) return boundedText(text);
+        return bounded(String.valueOf(value));
+    }
+
+    /**
+     * Normalise first, then decide emptiness, so "", "   " and control-only text all read the
+     * same while staying distinct from a genuinely absent "(null)". Raw equality has already been
+     * decided by the caller, so two different raw values that both normalise to nothing are still
+     * reported as a change.
+     */
+    private String boundedText(String value) {
+        String safe = bounded(value);
+        return safe.isEmpty() || BLANK_SANITIZER_MARKER.equals(safe) ? "(empty)" : safe;
+    }
+
+    private String displayList(List<?> values) {
+        if (values.isEmpty()) return "[]";
+        StringBuilder rendered = new StringBuilder("[");
+        for (int index = 0; index < Math.min(values.size(), MAX_LIST_ELEMENTS); index++) {
+            if (index > 0) rendered.append(", ");
+            rendered.append(PreviewTextSanitizer.text(
+                    String.valueOf(values.get(index)), MAX_LIST_ELEMENT_LENGTH));
+        }
+        if (values.size() > MAX_LIST_ELEMENTS) {
+            rendered.append(", +").append(values.size() - MAX_LIST_ELEMENTS).append(" more");
+        }
+        return bounded(rendered.append(']').toString());
+    }
+
+    /** Visibly truncated, so an operator can tell a cut value from a short one. */
+    private String bounded(String value) {
+        String safe = PreviewTextSanitizer.text(value, RequirementFieldChange.MAX_VALUE_LENGTH + 1);
+        return safe.length() > RequirementFieldChange.MAX_VALUE_LENGTH
+                ? Utf16.truncate(safe, RequirementFieldChange.MAX_VALUE_LENGTH - 1) + "…"
+                : safe;
     }
 
     private JobPreview preview(EvaluatedJob evaluated, Map<Long, Integer> oldPositions,
@@ -468,7 +587,8 @@ public class ScoreRescorePreviewService {
         QueueProjection emptyQueue = new QueueProjection(List.of(), List.of());
         return new ScoreRescorePreviewReport(0, 0, 0, 0, 0, 0, 0, 0, Map.of(),
                 0, 0, new BoundaryCrossings(List.of(), List.of(), List.of()), List.of(),
-                emptyQueue, emptyQueue, List.of(), null);
+                emptyQueue, emptyQueue, List.of(), null,
+                new ChangeCounts(0, 0, 0, 0, 0), List.of());
     }
 
     private PreviewAbort abort(ErrorCategory category, String safeMessage) {

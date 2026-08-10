@@ -20,6 +20,13 @@ public record ScoreRescorePlan(
     public ScoreRescorePlan {
         Objects.requireNonNull(report, "Preview report is required");
         entries = normalized(entries);
+        // The write may only touch rows the preview accounted for, so the two are tied here
+        // rather than left to agree by convention.
+        if (report.changeCounts() == null
+                || report.changeCounts().changedPlanCount() != entries.size()) {
+            throw new IllegalArgumentException(
+                    "Plan entry count does not match the preview report changed plan count");
+        }
         if (!ScoreRescorePlanFingerprint.fingerprint(entries).equals(fingerprint)) {
             throw new IllegalArgumentException("Plan fingerprint does not match its entries");
         }
