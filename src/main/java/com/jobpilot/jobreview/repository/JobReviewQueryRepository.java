@@ -43,11 +43,21 @@ public class JobReviewQueryRepository {
             + "coalesce(w.status, 'UNREVIEWED') workflow_status, j.source, j.provider_tenant, "
             + "coalesce(j.published_at, j.first_seen_at) published_at, j.canonical_url";
 
+    /** The tail every read model shares: higher score, then newest, then stable job id. */
+    private static final String BY_SCORE = "coalesce(s.score, 0) desc, "
+            + "coalesce(j.published_at, j.first_seen_at) desc, j.id desc";
+
     /** UNREVIEWED first, then SAVED, then higher score, then newest, then stable job id. */
     private static final String ORDER = " order by case coalesce(w.status, 'UNREVIEWED') "
-            + "when 'UNREVIEWED' then 0 when 'SAVED' then 1 else 2 end, "
-            + "coalesce(s.score, 0) desc, "
-            + "coalesce(j.published_at, j.first_seen_at) desc, j.id desc";
+            + "when 'UNREVIEWED' then 0 when 'SAVED' then 1 else 2 end, " + BY_SCORE;
+
+    /**
+     * The mixed Mini App review queue only: a confirmed MATCH outranks every REVIEW, and score
+     * orders within each disposition. Every row there is UNREVIEWED by construction, so the
+     * workflow bucket that leads {@link #ORDER} is constant and drops out.
+     */
+    private static final String MATCH_FIRST_ORDER =
+            " order by case j.screening_disposition when 'MATCH' then 0 else 1 end, " + BY_SCORE;
 
     private final NamedParameterJdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
@@ -96,12 +106,12 @@ public class JobReviewQueryRepository {
 
     /** Active vacancies that still need a decision; saved jobs never consume this window. */
     public List<MiniAppJobRow> findMiniAppReviewJobs(int limit) {
-        return findMiniAppJobs(" and w.job_id is null", limit);
+        return findMiniAppJobs(" and w.job_id is null", MATCH_FIRST_ORDER, limit);
     }
 
     /** Durable saved vacancies in their own window, independent of review queue size. */
     public List<MiniAppJobRow> findMiniAppSavedJobs(int limit) {
-        return findMiniAppJobs(" and w.status = 'SAVED'", limit);
+        return findMiniAppJobs(" and w.status = 'SAVED'", ORDER, limit);
     }
 
     /** Active detail rows for the bounded application page, loaded in one query. */
@@ -114,9 +124,9 @@ public class JobReviewQueryRepository {
     }
 
     /** Everything selected is already in jobs/job_scores; no LLM or per-row query is involved. */
-    private List<MiniAppJobRow> findMiniAppJobs(String condition, int limit) {
+    private List<MiniAppJobRow> findMiniAppJobs(String condition, String order, int limit) {
         String sql = COLUMNS + ", j.remote_type, j.seniority_level, j.employment_type, "
-                + "s.band, s.strengths, s.risks" + FROM + " where " + ACTIVE + condition + ORDER
+                + "s.band, s.strengths, s.risks" + FROM + " where " + ACTIVE + condition + order
                 + " limit :limit";
         return jdbc.query(sql, new MapSqlParameterSource("limit", limit), miniAppMapper());
     }
