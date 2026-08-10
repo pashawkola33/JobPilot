@@ -85,6 +85,24 @@ public class DeterministicRequirementExtractor {
             + "){0,3}Go" + GO_LIST_TAIL
             + ")";
 
+    /**
+     * Explicit Go notation in the job <em>title</em>. A title is short, curated and names the
+     * stack directly, so two notations that are too weak to trust in prose are unambiguous
+     * there: a parenthesised language tag ("Juju Software Engineer (Go)") and a slash-separated
+     * language pair ("Software Engineer, Python / Go", "Software Engineer - Go / Python").
+     * Production preview showed {@link #QUALIFIED_GO} alone dropping exactly those rows.
+     *
+     * <p>Deliberately limited to those two forms, and deliberately applied to the title only:
+     * bare Go in a title is still the English verb ("Ready to Go Platform Engineer"), and the
+     * body keeps the unchanged conservative rule. The unambiguous spellings — Golang, "Go
+     * developer", "Go engineer" — already come through {@link #QUALIFIED_GO} wherever they sit.
+     */
+    private static final Pattern TITLE_GO = Pattern.compile("(?i)(?:"
+            + "\\(\\s*Go\\s*\\)"
+            + "|(?<![\\p{L}\\p{N}])" + LANGUAGE_TOKEN + "\\s*/\\s*Go(?![\\p{L}\\p{N}])"
+            + "|(?<![\\p{L}\\p{N}])Go\\s*/\\s*" + LANGUAGE_TOKEN + "(?![\\p{L}\\p{N}])"
+            + ")");
+
     private static final Map<String, Pattern> TECHNOLOGIES = technologies();
     private static final List<String> PROGRAMMING = List.of("Java", "TypeScript", "JavaScript", "Python", "Kotlin", "C#", "C++", "Go");
     // Whole words only: "internal" or "international" must not count as an internship.
@@ -149,17 +167,17 @@ public class DeterministicRequirementExtractor {
         boolean trainee = TRAINEE_SIGNALS.matcher(text).find();
         boolean finalYear = Pattern.compile("(?i)(must|only|required|currently)\\s+(?:be\\s+)?(?:a\\s+)?final[- ]year|final[- ]year\\s+(student\\s+)?required")
                 .matcher(text).find();
-        List<String> technologies = extractTechnologies(text);
+        // Seniority reads the title and the body separately, and Go additionally reads the
+        // title on its own; everything else keeps using the combined text exactly as before.
+        String titleText = String.valueOf(job.getTitle()).replace('\u00a0', ' ');
+        String bodyText = String.valueOf(job.getDescription()).replace('\u00a0', ' ');
+        List<String> technologies = extractTechnologies(text, titleText);
         List<String> programming = technologies.stream().filter(PROGRAMMING::contains).toList();
         List<String> spoken = spokenLanguages(text);
         List<String> mentoring = signals(lower, Map.of(
                 "mentorship", "mentorship", "mentor", "mentor", "structured learning", "structured learning",
                 "structured mentorship", "structured mentorship", "training program", "training program",
                 "academy", "academy", "pair programming", "pair programming"));
-        // Seniority reads the title and the body separately; everything else keeps using
-        // the combined text exactly as before.
-        String titleText = String.valueOf(job.getTitle()).replace('\u00a0', ' ');
-        String bodyText = String.valueOf(job.getDescription()).replace('\u00a0', ' ');
         return new ExtractedRequirements(seniority(titleText, bodyText), trainee, experience(text),
                 education(text), finalYear, technologies, programming, spoken,
                 job.getLocation(), remoteEligibility(lower), mentoring, workAuthorization(text),
@@ -202,8 +220,15 @@ public class DeterministicRequirementExtractor {
         };
     }
 
-    private List<String> extractTechnologies(String text) {
-        return TECHNOLOGIES.entrySet().stream().filter(e -> e.getValue().matcher(text).find())
+    /**
+     * Combined title+description evidence, plus the title-only Go recovery. The scan still walks
+     * {@link #TECHNOLOGIES} in declaration order, so ordering stays stable and each term — Go
+     * included, however many rules matched it — is emitted at most once.
+     */
+    private List<String> extractTechnologies(String text, String title) {
+        return TECHNOLOGIES.entrySet().stream()
+                .filter(e -> e.getValue().matcher(text).find()
+                        || ("Go".equals(e.getKey()) && TITLE_GO.matcher(title).find()))
                 .map(Map.Entry::getKey).toList();
     }
 

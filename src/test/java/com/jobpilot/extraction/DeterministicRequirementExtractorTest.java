@@ -290,6 +290,11 @@ class DeterministicRequirementExtractorTest {
                 .technologies();
     }
 
+    private List<String> technologiesOfTitle(String title) {
+        return extractor.extract(jobWithDescription(title, "Build and ship backend services."))
+                .technologies();
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {
         "We build REST API services",
@@ -441,6 +446,82 @@ class DeterministicRequirementExtractorTest {
         "experience with go-to-market strategy"
     })
     void rejectsOrdinaryEnglishGo(String description) {
+        assertThat(technologiesOf(description)).doesNotContain("Go");
+    }
+
+    // ------------------------------------------------- explicit Go notation in the job title
+
+    /** Production preview rows where the conservative body rule dropped a title-declared Go. */
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "Juju Software Engineer (Go)",
+        "Distributed Systems Testing Software Engineer, Python / Go",
+        "Software Engineer - Go / Python",
+        "Software Engineer (Go), Platform",
+        "Backend Engineer ( Go )",
+        "Senior Engineer, Go/Rust",
+        "Backend Engineer - TypeScript / Go"
+    })
+    void extractsExplicitGoNotationFromTheTitle(String title) {
+        assertThat(technologiesOfTitle(title)).contains("Go");
+    }
+
+    @Test
+    void titleDeclaredGoIsAlsoAProgrammingLanguageAndListedOnce() {
+        var requirements = extractor.extract(jobWithDescription("Juju Software Engineer (Go)",
+                "Work on SQL storage, Docker images and Kubernetes operators."));
+
+        assertThat(requirements.technologies())
+                .containsExactly("SQL", "Docker", "Kubernetes", "Go");
+        assertThat(requirements.programmingLanguages()).containsExactly("Go");
+    }
+
+    /** Both a title and a body rule can fire for one posting; Go must still appear once. */
+    @Test
+    void goIsNotDuplicatedWhenTitleAndBodyEvidenceBothMatch() {
+        var requirements = extractor.extract(jobWithDescription("Software Engineer - Go / Python",
+                "Golang experience preferred; our services are written in Go, mostly."));
+
+        assertThat(requirements.technologies()).containsOnlyOnce("Go");
+        assertThat(requirements.programmingLanguages()).containsOnlyOnce("Go");
+    }
+
+    /** The unambiguous title spellings already handled by the body rule keep working. */
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "Golang Software Engineer, Commercial Systems",
+        "Go (Golang) Software Engineer, Developer Tooling and Containers",
+        "Software Engineer - Python/Golang - Kubernetes",
+        "Go Developer",
+        "Go Engineer, Payments"
+    })
+    void keepsUnambiguousGoTitlesWorking(String title) {
+        assertThat(technologiesOfTitle(title)).contains("Go");
+    }
+
+    /** Ordinary English "go" in a title is still the verb, not the language. */
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "Ready to Go Platform Engineer",
+        "Go To Market Engineer",
+        "Engineer, Go-Live Support",
+        "Software Engineer, Ready to Go Team"
+    })
+    void rejectsOrdinaryEnglishGoInTheTitle(String title) {
+        assertThat(technologiesOfTitle(title)).doesNotContain("Go");
+    }
+
+    /**
+     * The recovery is title evidence only. A parenthesised or slashed Go buried in prose stays
+     * unqualified, so the body rule keeps the semantics production is already running.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "The toolchain team ships (Go) tooling for internal customers",
+        "Our internal wiki lists Python / Go under legacy owners",
+        "Teams may pick Go / Rust for greenfield work"
+    })
+    void doesNotTurnBodyOnlyGoNotationIntoANewSignal(String description) {
         assertThat(technologiesOf(description)).doesNotContain("Go");
     }
 
