@@ -83,7 +83,7 @@ class ScoreRescoreWriteCoordinatorTest {
 
     @Test
     void oldFingerprintCannotBeAppliedToThePostWriteEmptyPlan() {
-        ScoreRescorePlan empty = new ScoreRescorePlan(report(1), List.of());
+        ScoreRescorePlan empty = new ScoreRescorePlan(report(1, 0), List.of());
 
         ScoreRescoreWriteResult result = coordinator.execute(empty, properties(true, "1",
                 plan.fingerprint(), "250", ScoreRescoreCommandGuards.CONFIRMATION));
@@ -118,11 +118,19 @@ class ScoreRescoreWriteCoordinatorTest {
     }
 
     private ScoreRescorePreviewReport report(int inspected) {
+        return report(inspected, 1);
+    }
+
+    /** The plan now asserts its entry count against the report, so fixtures must agree. */
+    private ScoreRescorePreviewReport report(int inspected, int changedPlan) {
         var queue = new ScoreRescorePreviewReport.QueueProjection(List.of(), List.of());
         return new ScoreRescorePreviewReport(inspected, inspected - 1, 1, 1, 1, 0,
                 1, 0, Map.of(56, 1), 1, 0,
                 new ScoreRescorePreviewReport.BoundaryCrossings(List.of(5L), List.of(5L),
-                        List.of()), List.of(), queue, queue, List.of(), null);
+                        List.of()), List.of(), queue, queue, List.of(), null,
+                new ScoreRescorePreviewReport.ChangeCounts(changedPlan, changedPlan, 0,
+                        changedPlan, inspected - changedPlan),
+                List.of());
     }
 
     private ExtractedRequirements requirements(String seniority) {

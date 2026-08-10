@@ -63,8 +63,23 @@ public record ScoreRescorePlanEntry(
                 computed.score(), computed.requirements());
     }
 
+    /**
+     * A row is planned when either persisted projection would move. The write transaction already
+     * re-persists requirements whenever they differ, so a score-only test let it change rows the
+     * preview never showed, while requirement drift carrying no score change — a stale seniority,
+     * a withdrawn dirty technology token — stayed permanently unreachable.
+     */
     public boolean changed() {
+        return !storedScore.equals(computedScore)
+                || !storedRequirements.equals(computedRequirements);
+    }
+
+    public boolean scoreChanged() {
         return !storedScore.equals(computedScore);
+    }
+
+    public boolean requirementsChanged() {
+        return !storedRequirements.equals(computedRequirements);
     }
 
     private static long requireId(Long id, String type) {

@@ -4,6 +4,8 @@ import com.jobpilot.common.Utf16;
 import com.jobpilot.matching.preview.ScoreRescorePreviewReport.JobPreview;
 import com.jobpilot.matching.preview.ScoreRescorePreviewReport.QueueEntry;
 import com.jobpilot.matching.preview.ScoreRescorePreviewReport.QueueProjection;
+import com.jobpilot.matching.preview.ScoreRescorePreviewReport.RequirementFieldChange;
+import com.jobpilot.matching.preview.ScoreRescorePreviewReport.RequirementsPreview;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.stereotype.Component;
@@ -24,7 +26,7 @@ public class ScoreRescorePreviewReportRenderer {
         List<String> lines = new ArrayList<>();
         lines.add("SCORE_RESCORE_PREVIEW status=SUCCESS inspected=" + report.inspectedJobs()
                 + " exact=" + report.exactMatches()
-                + " changedScores=" + report.changedScoreCount()
+                + " scoreDeltaChanged=" + report.scoreDeltaChangedCount()
                 + " changedBands=" + report.changedBandCount()
                 + " blockerRemoved=" + report.blockerRemovedCount()
                 + " blockerAdded=" + report.blockerAddedCount()
@@ -32,6 +34,13 @@ public class ScoreRescorePreviewReportRenderer {
                 + " decreases=" + report.scoreDecreaseCount()
                 + " zeroToPositive=" + report.storedZeroToPositiveCount()
                 + " positiveToZero=" + report.storedPositiveToZeroCount());
+        lines.add("SCORE_RESCORE_PREVIEW_PLAN scoreChanged="
+                + report.changeCounts().scoreChangedCount()
+                + " requirementsChanged=" + report.changeCounts().requirementsChangedCount()
+                + " requirementsOnlyChanged="
+                + report.changeCounts().requirementsOnlyChangedCount()
+                + " changedPlan=" + report.changeCounts().changedPlanCount()
+                + " unchanged=" + report.changeCounts().unchangedCount());
         lines.add(bound("SCORE_RESCORE_PREVIEW_DELTA distribution="
                 + report.scoreDeltaDistribution()));
         lines.add(bound("SCORE_RESCORE_PREVIEW_BOUNDARIES unsuitable="
@@ -42,6 +51,9 @@ public class ScoreRescorePreviewReportRenderer {
                 + report.matchJobsBelowReviewBecauseOfStaleScores()));
         for (JobPreview job : report.changedJobs()) {
             lines.add(renderJob("SCORE_RESCORE_PREVIEW_CHANGED", job));
+        }
+        for (RequirementsPreview requirements : report.requirementsChangedJobs()) {
+            lines.add(renderRequirements(requirements));
         }
         renderQueue(lines, "matches", report.matchesQueue());
         renderQueue(lines, "review", report.reviewQueue());
@@ -79,6 +91,23 @@ public class ScoreRescorePreviewReportRenderer {
                 + " queuePositionChanged=" + job.telegramQueuePositionChanged()
                 + " queuePosition=" + position(job.oldQueuePosition())
                 + "->" + position(job.newQueuePosition()));
+    }
+
+    /** Names every persisted field the write would change, so no planned row is opaque. */
+    private String renderRequirements(RequirementsPreview requirements) {
+        StringBuilder line = new StringBuilder("SCORE_RESCORE_PREVIEW_REQUIREMENTS jobId=")
+                .append(requirements.jobId())
+                .append(" title=").append(quote(requirements.title()))
+                .append(" scoreChanged=").append(requirements.scoreChanged())
+                .append(" score=").append(requirements.storedScore())
+                .append("->").append(requirements.computedScore())
+                .append(" changedFields=").append(requirements.changedFields().size());
+        for (RequirementFieldChange change : requirements.changedFields()) {
+            line.append(' ').append(change.field()).append('=')
+                    .append(quote(change.storedValue()))
+                    .append("->").append(quote(change.computedValue()));
+        }
+        return bound(line.toString());
     }
 
     private void renderQueue(List<String> lines, String name, QueueProjection queue) {

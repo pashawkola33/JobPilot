@@ -173,7 +173,10 @@ class ScoreRescoreWriteTransactionTest {
         var report = new ScoreRescorePreviewReport(targets.length, 0, targets.length, 0, 0, 0,
                 0, 0, Map.of(), 0, 0,
                 new ScoreRescorePreviewReport.BoundaryCrossings(List.of(), List.of(), List.of()),
-                List.of(), queue, queue, List.of(), null);
+                List.of(), queue, queue, List.of(), null,
+                new ScoreRescorePreviewReport.ChangeCounts(entries.size(), entries.size(), 0,
+                        entries.size(), targets.length - entries.size()),
+                List.of());
         return new ScoreRescorePlan(report, entries);
     }
 

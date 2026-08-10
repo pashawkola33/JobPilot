@@ -11,7 +11,10 @@ import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.List;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class DeterministicRequirementExtractorTest {
     private final Clock clock = Clock.fixed(Instant.parse("2026-07-17T12:00:00Z"), ZoneOffset.UTC);
@@ -278,6 +281,241 @@ class DeterministicRequirementExtractorTest {
                         + "unsolvable problems beyond individual knowledge and scope to senior "
                         + "level employees proficient in data programming languages."))
                 .isEqualTo("UNKNOWN");
+    }
+
+    // ---------------------------------------------------------------- extractor hygiene
+
+    private List<String> technologiesOf(String description) {
+        return extractor.extract(jobWithDescription("Software Engineer", description))
+                .technologies();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "We build REST API services",
+        "Design REST APIs for partners",
+        "Experience with REST service design",
+        "Owns several REST services",
+        "Implements a REST endpoint",
+        "Documented REST endpoints",
+        "Writes a REST controller",
+        "Several REST controllers in Spring",
+        "Strong RESTful experience",
+        "Builds RESTful API layers",
+        "Uses JAX-RS in production",
+        "Spring REST is used throughout"
+    })
+    void extractsQualifiedRestEvidence(String description) {
+        assertThat(technologiesOf(description)).contains("REST");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "HTTP/REST is used across services",
+        "Networking protocols (TCP/IP, DHCP, HTTP / REST)",
+        "Experience with REST/JSON and Git",
+        "Payloads use REST / JSON everywhere",
+        "Integrating public APIs (REST)",
+        "Exposes an API (REST) for partners",
+        "Exposes an API ( REST ) for partners"
+    })
+    void extractsTechnicalRestShorthand(String description) {
+        assertThat(technologiesOf(description)).contains("REST");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "Experience with REST is required",
+        "Experience in REST is required",
+        "Knowledge of REST is required",
+        "Understanding of REST is required",
+        "Familiarity with REST is required",
+        "Proficiency in REST is required",
+        "Skills with REST are required"
+    })
+    void extractsRestAfterATechnicalIntroducer(String description) {
+        assertThat(technologiesOf(description)).contains("REST");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "Experience and understanding of OO, MVC, REST.",
+        "Solid grasp of OOP, MVC, REST",
+        "Java, Spring Boot, REST, SQL, PostgreSQL",
+        "technologies: Java, REST, SQL",
+        "stack: Java, REST, SQL"
+    })
+    void extractsRestAsATechnologyListItem(String description) {
+        assertThat(technologiesOf(description)).contains("REST");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "Integration with the rest of the stack",
+        "ready for integration with the rest of the stack",
+        "Automation with Rest Assured",
+        "Automation with RestAssured",
+        "learn tools such as Selenium, Cucumber, BDD, Rest Assured and CI/CD",
+        "Consumes the interest API daily",
+        "Calls the forest API nightly",
+        "Integrates a restaurant API",
+        "leave the rest for later",
+        "introduce you to the rest of the team",
+        "rest of your responsibilities are listed below",
+        "experience with the rest of the stack"
+    })
+    void rejectsUnqualifiedRestEvidence(String description) {
+        assertThat(technologiesOf(description)).doesNotContain("REST");
+    }
+
+    @Test
+    void extractsRestWhenDirtyAndGenuineEvidenceBothOccur() {
+        assertThat(technologiesOf("Automation with Rest Assured over the rest of the stack, "
+                + "plus a genuine REST API layer")).contains("REST");
+        assertThat(technologiesOf("Rest Assured for testing; services expose REST APIs"))
+                .contains("REST");
+    }
+
+    /** Verbatim contexts from the nine production rows the audit surfaced. */
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "Experience and understanding of OO, MVC, REST.",
+        "Networking protocols and technologies (TCP/IP, DHCP, HTTP/REST)",
+        "Experience with REST/JSON and Git",
+        "Experience in exposing and integrating public APIs (REST)",
+        "Java, Spring Boot, REST, SQL, PostgreSQL"
+    })
+    void keepsGenuineProductionRestEvidence(String description) {
+        assertThat(technologiesOf(description)).contains("REST");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "learn tools such as Selenium, Cucumber, BDD, Rest Assured and CI/CD",
+        "ready for integration with the rest of the stack"
+    })
+    void dropsDirtyProductionRestEvidence(String description) {
+        assertThat(technologiesOf(description)).doesNotContain("REST");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "Golang experience preferred",
+        "Understands goroutine scheduling",
+        "Tuning goroutines at scale",
+        "Hiring a Go developer",
+        "Hiring a Go engineer",
+        "Go programming is a plus",
+        "The Go language is used here",
+        "Uses Go modules",
+        "Knows Go routines",
+        "Python, Go, Java",
+        "languages: Go, Rust",
+        "programming languages: Go, Rust",
+        "technologies: Go, Rust",
+        "tech stack: Go, Rust",
+        "stack: Go, Rust",
+        "experience with Go and Rust",
+        "experience in Go and Rust",
+        "proficient with Go, Rust",
+        "proficient in Go, Rust",
+        "written in Go, mostly",
+        "skills with Go and Rust",
+        "skills in Go and Rust"
+    })
+    void extractsGoOnlyWithTechnicalContext(String description) {
+        assertThat(technologiesOf(description)).contains("Go");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "ready to go, Java developers should apply",
+        "go and Java developers will review it",
+        "Python developers go and Java developers follow",
+        "ready to go / Java experience preferred",
+        "go, Java is installed separately",
+        "experience with Java and go to market",
+        "please go ahead and apply",
+        "willing to go the extra mile",
+        "supports go-live weekends",
+        "experience with go-to-market strategy"
+    })
+    void rejectsOrdinaryEnglishGo(String description) {
+        assertThat(technologiesOf(description)).doesNotContain("Go");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {
+        "Experience with Spring Boot 3",
+        "Experience with SpringBoot microservices",
+        "We use Spring-Boot in production"
+    })
+    void canonicalisesSpringBootAliases(String description) {
+        assertThat(technologiesOf(description)).contains("Spring Boot");
+    }
+
+    @Test
+    void extractsJvmAsItsOwnCanonicalTerm() {
+        assertThat(technologiesOf("Services run on the JVM"))
+                .contains("JVM").doesNotContain("Java");
+    }
+
+    @Test
+    void jvmIsNotAProgrammingLanguage() {
+        var requirements = extractor.extract(
+                jobWithDescription("Software Engineer", "Runs on the JVM, written in Go, mostly"));
+
+        assertThat(requirements.technologies()).contains("JVM", "Go");
+        assertThat(requirements.programmingLanguages()).contains("Go").doesNotContain("JVM");
+    }
+
+    /** Deliberate deferral: the Postgres alias waits for the scoring redesign, not this patch. */
+    @Test
+    void extractsExactPostgresqlButNotThePostgresAlias() {
+        assertThat(technologiesOf("We run PostgreSQL 16 here")).contains("PostgreSQL");
+        assertThat(technologiesOf("Data stored in Postgres")).doesNotContain("PostgreSQL");
+    }
+
+    @Test
+    void keepsExistingWordBoundaryBehaviour() {
+        assertThat(technologiesOf("Strong JavaScript skills only"))
+                .contains("JavaScript").doesNotContain("Java");
+        assertThat(technologiesOf("Core Java expertise")).contains("Java");
+        assertThat(technologiesOf("Pipelines in GitHub Actions"))
+                .contains("GitHub Actions").doesNotContain("Git");
+        assertThat(technologiesOf("Version control with Git")).contains("Git");
+        assertThat(technologiesOf("MySQL and NoSQL stores")).doesNotContain("SQL");
+        assertThat(technologiesOf("Strong SQL skills")).contains("SQL");
+        assertThat(technologiesOf("Pipelines use CI/CD")).contains("CI/CD");
+        assertThat(technologiesOf("Pipelines use CI CD")).contains("CI/CD");
+        assertThat(technologiesOf("Pipelines use CICD")).contains("CI/CD");
+        assertThat(technologiesOf("Backends in C# and C++")).contains("C#", "C++");
+    }
+
+    /** The terms this patch does not touch must keep matching exactly as before. */
+    @Test
+    void keepsEveryUntouchedTechnologyWorking() {
+        assertThat(technologiesOf("Java, Spring MVC, Spring Security, SQL, PostgreSQL, JPA, "
+                + "Hibernate, Maven, JUnit, Mockito, React, React Native, TypeScript, "
+                + "JavaScript, HTML, CSS, Git, GitHub Actions, CI/CD, Docker, Kubernetes, "
+                + "Python, Kotlin, C#, C++, AWS, Azure and GCP"))
+                .contains("Java", "Spring MVC", "Spring Security", "SQL", "PostgreSQL", "JPA",
+                        "Hibernate", "Maven", "JUnit", "Mockito", "React", "React Native",
+                        "TypeScript", "JavaScript", "HTML", "CSS", "Git", "GitHub Actions",
+                        "CI/CD", "Docker", "Kubernetes", "Python", "Kotlin", "C#", "C++",
+                        "AWS", "Azure", "GCP");
+    }
+
+    /**
+     * Record equality is order-sensitive and now decides rescore plan membership, so extraction
+     * order must be stable rather than salted per JVM run.
+     */
+    @Test
+    void extractsTechnologiesInAStableDeclarationOrder() {
+        String description = "Kubernetes, Docker, React, PostgreSQL and Java";
+
+        assertThat(technologiesOf(description))
+                .containsExactly("Java", "PostgreSQL", "React", "Docker", "Kubernetes");
     }
 
     private Job jobWithDescription(String title, String description) {
