@@ -65,7 +65,7 @@ public class ScoreRescoreWriteTransaction {
             ScoreCalculation computed = calculator.calculate(scoreRow.getJob());
             ScoreRescorePlanEntry current = ScoreRescorePlanEntry.snapshot(
                     scoreRow, requirementRow, computed);
-            if (!current.equals(expected)) {
+            if (!current.sameWriteGuardState(expected)) {
                 throw abort("A planned target changed after planning");
             }
             String rawJson = json(computed.requirements());

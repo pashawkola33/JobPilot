@@ -247,8 +247,8 @@ public class ScoreRescorePreviewService {
             ScoreCard newScore = evaluated.computed().score();
             ExtractedRequirements oldRequirements = evaluated.storedRequirements();
             ExtractedRequirements newRequirements = evaluated.computed().requirements();
-            // Identical to the equality that decides plan membership, so the two can never diverge.
-            boolean scoreDiffers = !oldScore.equals(newScore);
+            // Identical to the semantic equality that decides plan membership.
+            boolean scoreDiffers = !oldScore.semanticEquals(newScore);
             boolean requirementsDiffer = !oldRequirements.equals(newRequirements);
             if (scoreDiffers) scoreChanged++;
             if (requirementsDiffer) requirementsChanged++;
@@ -262,7 +262,7 @@ public class ScoreRescorePreviewService {
             }
             int delta = newScore.score() - oldScore.score();
             deltas.merge(delta, 1, Integer::sum);
-            if (oldScore.equals(newScore)) exact++;
+            if (oldScore.semanticEquals(newScore)) exact++;
             if (delta != 0) changedScore++;
             if (oldScore.band() != newScore.band()) changedBand++;
             if (removed(oldScore.hardBlockers(), newScore.hardBlockers())) blockerRemoved++;

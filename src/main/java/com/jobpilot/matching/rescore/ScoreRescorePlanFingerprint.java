@@ -13,7 +13,7 @@ import java.util.List;
 
 /** Versioned, length-prefixed canonical SHA-256 identity for one immutable plan. */
 public final class ScoreRescorePlanFingerprint {
-    public static final String FORMAT_VERSION = "jobpilot-score-rescore-plan-v1";
+    public static final String FORMAT_VERSION = "jobpilot-score-rescore-plan-v2";
 
     private ScoreRescorePlanFingerprint() {
     }
@@ -44,14 +44,14 @@ public final class ScoreRescorePlanFingerprint {
         field(output, "sourceContentHash", value.sourceContentHash());
         field(output, "storedScoredAt", value.storedScoredAt().toString());
         field(output, "storedRequirementJsonHash", value.storedRequirementJsonHash());
-        score(output, "oldScore", value.storedScore());
+        score(output, "oldScore", value.storedScore(), false);
         requirements(output, "oldRequirements", value.storedRequirements());
-        score(output, "newScore", value.computedScore());
+        score(output, "newScore", value.computedScore(), true);
         requirements(output, "newRequirements", value.computedRequirements());
     }
 
-    private static void score(DataOutputStream output, String prefix, ScoreCard value)
-            throws IOException {
+    private static void score(DataOutputStream output, String prefix, ScoreCard value,
+                              boolean semantic) throws IOException {
         field(output, prefix + ".score", Integer.toString(value.score()));
         field(output, prefix + ".band", value.band().name());
         field(output, prefix + ".suitable", Boolean.toString(value.suitable()));
@@ -63,9 +63,12 @@ public final class ScoreRescorePlanFingerprint {
         field(output, prefix + ".locationFormat", Integer.toString(value.locationFormat()));
         field(output, prefix + ".experienceCompatibility",
                 Integer.toString(value.experienceCompatibility()));
-        field(output, prefix + ".freshness", Integer.toString(value.freshness()));
+        if (!semantic) {
+            field(output, prefix + ".freshness", Integer.toString(value.freshness()));
+        }
         field(output, prefix + ".penalties", Integer.toString(value.penalties()));
-        list(output, prefix + ".strengths", value.strengths(), false);
+        list(output, prefix + ".strengths",
+                semantic ? value.semanticStrengths() : value.strengths(), false);
         list(output, prefix + ".penaltyRisks", value.risks(), true);
         list(output, prefix + ".blockers", value.hardBlockers(), true);
     }

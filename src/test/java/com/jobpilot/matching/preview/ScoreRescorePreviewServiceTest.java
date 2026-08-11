@@ -69,10 +69,10 @@ class ScoreRescorePreviewServiceTest {
     }
 
     @Test
-    void juniorJavaDeveloperPreviewsZeroTo56WithSeniorityBlockerRemovedAndQueueMove() {
+    void juniorJavaDeveloperPreviewsZeroTo55WithSeniorityBlockerRemovedAndQueueMove() {
         Job target = juniorProgramme(1L);
         ScoreCalculation fresh = calculator.calculate(target);
-        assertThat(fresh.score().score()).isEqualTo(56);
+        assertThat(fresh.score().score()).isEqualTo(55);
         ExtractedRequirements staleRequirements = withSeniority(fresh.requirements(), "MIDDLE");
         ScoreCard staleScore = calculator.calculate(target, staleRequirements).score();
         assertThat(staleScore.score()).isZero();
@@ -91,14 +91,14 @@ class ScoreRescorePreviewServiceTest {
         assertThat(targetResult).isNotNull();
         assertThat(targetResult.stored().score()).isZero();
         assertThat(targetResult.stored().band()).isEqualTo(ScoreBand.UNSUITABLE);
-        assertThat(targetResult.computed().score()).isEqualTo(56);
+        assertThat(targetResult.computed().score()).isEqualTo(55);
         assertThat(targetResult.computed().band()).isEqualTo(ScoreBand.POSSIBLE_MATCH);
-        assertThat(targetResult.delta()).isEqualTo(56);
+        assertThat(targetResult.delta()).isEqualTo(55);
         assertThat(targetResult.stored().blockers()).contains("Middle or senior seniority");
         assertThat(targetResult.computed().blockers()).isEmpty();
         assertThat(targetResult.stored().inferredSeniority()).isEqualTo("MIDDLE");
         assertThat(targetResult.computed().inferredSeniority()).isEqualTo("JUNIOR");
-        assertThat(targetResult.rawComponentTotal()).isEqualTo(56);
+        assertThat(targetResult.rawComponentTotal()).isEqualTo(55);
         assertThat(targetResult.causedBySeniorityExtractorFix()).isTrue();
         assertThat(targetResult.telegramQueuePositionChanged()).isTrue();
         assertThat(targetResult.oldQueuePosition()).isEqualTo(2);

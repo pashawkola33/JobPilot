@@ -67,7 +67,7 @@ public class JobMatchingService {
         if (experience >= 8) strengths.add("Commercial experience expectations are entry-level compatible");
 
         int freshness = freshness(job);
-        if (freshness >= 4) strengths.add("Vacancy is recent and appears open");
+        if (freshness >= 4) strengths.add(ScoreCard.FRESHNESS_STRENGTH);
 
         int penalties = 0;
         Double years = r.requiredExperienceYears();
@@ -103,9 +103,21 @@ public class JobMatchingService {
                 || has(text, "position closed", "no longer accepting applications");
         if (expired) blockers.add("Vacancy is closed or expired");
 
-        int raw = formal + backend + trainee + supporting + location + experience + freshness - penalties;
+        // Freshness is intentionally observable but excluded from semantic fit. A vacancy must
+        // not change its persisted compatibility score merely because the clock crossed an age
+        // boundary; recency belongs to ordering and explanation rather than candidate fit.
+        int raw = formal + backend + trainee + supporting + location + experience - penalties;
         int total = blockers.isEmpty() ? Math.clamp(raw, 0, 100) : 0;
         boolean suitable = blockers.isEmpty();
+
+        // Generic eligibility and supporting tooling cannot establish a Java/backend match by
+        // themselves. Without one confirmed candidate backend skill, keep the vacancy below the
+        // POSSIBLE_MATCH boundary while preserving its relative LOW_MATCH score.
+        if (suitable && backendMatches == 0 && total >= 55) {
+            total = 54;
+            risks.add("No confirmed Java/backend target-stack evidence");
+        }
+
         ScoreBand band = !suitable ? ScoreBand.UNSUITABLE : total >= 85 ? ScoreBand.EXCELLENT_MATCH
                 : total >= 70 ? ScoreBand.GOOD_MATCH : total >= 55 ? ScoreBand.POSSIBLE_MATCH : ScoreBand.LOW_MATCH;
         return new ScoreCard(total, band, suitable, formal, backend, trainee, supporting, location,
