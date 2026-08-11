@@ -70,16 +70,35 @@ public record ScoreRescorePlanEntry(
      * a withdrawn dirty technology token — stayed permanently unreachable.
      */
     public boolean changed() {
-        return !storedScore.equals(computedScore)
-                || !storedRequirements.equals(computedRequirements);
+        return scoreChanged() || requirementsChanged();
     }
 
     public boolean scoreChanged() {
-        return !storedScore.equals(computedScore);
+        return !storedScore.semanticEquals(computedScore);
     }
 
     public boolean requirementsChanged() {
         return !storedRequirements.equals(computedRequirements);
+    }
+
+    /**
+     * The persisted side of an approved plan must still match exactly at write time.
+     * The recomputed side may differ only in non-semantic freshness metadata.
+     */
+    public boolean sameWriteGuardState(ScoreRescorePlanEntry other) {
+        if (other == null) return false;
+        return jobId == other.jobId
+                && scoreRowId == other.scoreRowId
+                && requirementRowId == other.requirementRowId
+                && screeningDisposition == other.screeningDisposition
+                && Objects.equals(descriptionHash, other.descriptionHash)
+                && Objects.equals(sourceContentHash, other.sourceContentHash)
+                && Objects.equals(storedScoredAt, other.storedScoredAt)
+                && Objects.equals(storedRequirementJsonHash, other.storedRequirementJsonHash)
+                && Objects.equals(storedScore, other.storedScore)
+                && Objects.equals(storedRequirements, other.storedRequirements)
+                && computedScore.semanticEquals(other.computedScore)
+                && Objects.equals(computedRequirements, other.computedRequirements);
     }
 
     private static long requireId(Long id, String type) {

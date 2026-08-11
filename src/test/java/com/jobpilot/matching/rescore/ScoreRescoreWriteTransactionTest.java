@@ -64,7 +64,7 @@ class ScoreRescoreWriteTransactionTest {
     }
 
     @Test
-    void juniorJavaFixtureWritesZeroTo56AndMiddleToJuniorInPlace() {
+    void juniorJavaFixtureWritesZeroTo55AndMiddleToJuniorInPlace() {
         Job job = job(1, "Code First Girls Programme - Junior Java Developer",
                 "Build software services with Java, Spring Boot and SQL. Graduate training is "
                         + "provided. The Code First Girls mid-level accelerator programme is "
@@ -83,7 +83,7 @@ class ScoreRescoreWriteTransactionTest {
         assertThat(target.score().getId()).isEqualTo(1_001L);
         assertThat(target.requirement().getId()).isEqualTo(2_001L);
         assertThat(target.score().toValue()).isEqualTo(fresh.score());
-        assertThat(target.score().getScore()).isEqualTo(56);
+        assertThat(target.score().getScore()).isEqualTo(55);
         assertThat(target.score().getBand()).isEqualTo(ScoreBand.POSSIBLE_MATCH);
         assertThat(target.requirement().toValue().seniority()).isEqualTo("JUNIOR");
         assertThat(target.score().getScoredAt()).isEqualTo(NOW);

@@ -18,7 +18,6 @@ public record ScoreCalculation(ExtractedRequirements requirements, ScoreCard sco
                 + score.supportingTechnology()
                 + score.locationFormat()
                 + score.experienceCompatibility()
-                + score.freshness()
                 - score.penalties();
     }
 }
