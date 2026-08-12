@@ -16,6 +16,7 @@ import com.jobpilot.candidate.repository.CandidateLanguageRepository;
 import com.jobpilot.candidate.repository.CandidateProfileRepository;
 import com.jobpilot.candidate.repository.CandidateProjectBulletRepository;
 import com.jobpilot.candidate.repository.CandidateProjectRepository;
+import com.jobpilot.candidate.repository.CandidateRepository;
 import com.jobpilot.candidate.repository.CandidateSkillRepository;
 import com.jobpilot.config.JobPilotProperties;
 import com.jobpilot.jobs.domain.Job;
@@ -126,6 +127,8 @@ class PostgresPersistenceIT {
     private ManualJobPersistenceService manualJobPersistence;
     @Autowired
     private JdbcTemplate jdbcTemplate;
+    @Autowired
+    private CandidateRepository candidates;
     @Autowired
     private CandidateProfileRepository candidateProfiles;
     @Autowired
@@ -832,7 +835,9 @@ class PostgresPersistenceIT {
     }
 
     private CandidateProfile profile(int version, boolean active) {
-        return new CandidateProfile(version, "Test Candidate", "Bucharest, Romania",
+        // Owned by the candidate V14 seeds; a profile cannot exist without an owner.
+        return new CandidateProfile(candidates.findByStableKey("default").orElseThrow(),
+                version, "Test Candidate", "Bucharest, Romania",
                 "Test University", "BSc in Informatics", 2025, null, true, false,
                 BigDecimal.ZERO, Integer.toHexString(version).repeat(16),
                 Instant.parse("2026-07-19T00:00:00Z"), active);

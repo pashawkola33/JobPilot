@@ -11,8 +11,11 @@ public final class CandidateProfileTestData {
     private CandidateProfileTestData() {
     }
 
+    public static final String CANDIDATE_KEY = "default";
+
     public static CandidateProfileProperties validProfile(int version) {
         return new CandidateProfileProperties(
+                CANDIDATE_KEY,
                 version,
                 "Test Candidate",
                 "Bucharest, Romania",
@@ -60,6 +63,17 @@ public final class CandidateProfileTestData {
                 source.projects());
     }
 
+    /** Changes only the owning candidate, leaving every candidate fact untouched. */
+    public static CandidateProfileProperties withCandidateKey(CandidateProfileProperties source,
+                                                               String candidateKey) {
+        return new CandidateProfileProperties(candidateKey, source.profileVersion(),
+                source.fullName(), source.location(), source.educationInstitution(),
+                source.degree(), source.studyStartYear(), source.studyEndYear(),
+                source.currentStudent(), source.finalYearStudent(),
+                source.commercialJavaExperienceYears(), source.skills(), source.languages(),
+                source.projects());
+    }
+
     public static CandidateProfileProperties withVersion(CandidateProfileProperties source,
                                                          int version) {
         return copy(source, version, source.fullName(), source.commercialJavaExperienceYears(),
@@ -98,7 +112,7 @@ public final class CandidateProfileTestData {
             BigDecimal experience, List<CandidateProfileProperties.Skill> skills,
             List<CandidateProfileProperties.Language> languages,
             List<CandidateProfileProperties.Project> projects) {
-        return new CandidateProfileProperties(version, fullName, source.location(),
+        return new CandidateProfileProperties(source.candidateKey(), version, fullName, source.location(),
                 source.educationInstitution(), source.degree(), source.studyStartYear(),
                 source.studyEndYear(), source.currentStudent(), source.finalYearStudent(),
                 experience, skills, languages, projects);

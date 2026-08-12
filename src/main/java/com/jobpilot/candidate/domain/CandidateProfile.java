@@ -7,6 +7,8 @@ import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.OrderBy;
 import jakarta.persistence.Table;
@@ -15,6 +17,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 
 @Entity
 @Table(name = "candidate_profiles")
@@ -22,6 +25,13 @@ public class CandidateProfile {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "candidate_id", nullable = false)
+    private Candidate candidate;
+    /**
+     * Still globally unique in the schema, not unique per candidate. Making version and active
+     * uniqueness candidate-scoped is a separate migration.
+     */
     @Column(nullable = false, unique = true)
     private int profileVersion;
     @Column(nullable = false, length = 200)
@@ -67,11 +77,12 @@ public class CandidateProfile {
     protected CandidateProfile() {
     }
 
-    public CandidateProfile(int profileVersion, String fullName, String location,
+    public CandidateProfile(Candidate candidate, int profileVersion, String fullName, String location,
                             String educationInstitution, String degree, int studyStartYear,
                             Integer studyEndYear, boolean currentStudent, boolean finalYearStudent,
                             BigDecimal commercialJavaExperienceYears, String sourceHash,
                             Instant now, boolean active) {
+        this.candidate = Objects.requireNonNull(candidate, "Owning candidate is required");
         this.profileVersion = profileVersion;
         this.fullName = fullName;
         this.location = location;
@@ -118,6 +129,7 @@ public class CandidateProfile {
     }
 
     public Long getId() { return id; }
+    public Candidate getCandidate() { return candidate; }
     public int getProfileVersion() { return profileVersion; }
     public String getFullName() { return fullName; }
     public String getLocation() { return location; }

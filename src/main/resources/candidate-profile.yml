@@ -1,5 +1,8 @@
 jobpilot:
   candidate-profile:
+    # Stable key of the persistent candidate owning this profile; seeded by migration V14.
+    # Ownership only: it is not a candidate fact and does not affect the profile source hash.
+    candidate-key: default
     profile-version: 1
     full-name: Pavlo Sushkov
     location: Bucharest, Romania

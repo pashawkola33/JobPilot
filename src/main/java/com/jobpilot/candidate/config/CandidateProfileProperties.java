@@ -1,5 +1,6 @@
 package com.jobpilot.candidate.config;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.jobpilot.candidate.domain.CandidateLanguageLevel;
 import com.jobpilot.candidate.domain.CandidateSkillCategory;
 import com.jobpilot.candidate.domain.ProjectType;
@@ -23,6 +24,12 @@ import org.springframework.validation.annotation.Validated;
 @Validated
 @ConfigurationProperties("jobpilot.candidate-profile")
 public record CandidateProfileProperties(
+        // Stable key of the persistent Candidate that owns this profile. Ownership is not a
+        // candidate fact, so @JsonIgnore keeps it out of the source-hash fingerprint below:
+        // re-keying the owner must not read as "facts changed without increasing profileVersion",
+        // and the fingerprint of an already stored version must stay exactly what it was.
+        @JsonIgnore
+        @NotBlank @Size(max = 100) @Pattern(regexp = "[a-z0-9]+(?:-[a-z0-9]+)*") String candidateKey,
         @Positive int profileVersion,
         @NotBlank @Size(max = 200) String fullName,
         @NotBlank @Size(max = 300) String location,
