@@ -3,9 +3,11 @@ package com.jobpilot.candidate.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jobpilot.candidate.config.CandidateProfileProperties;
+import com.jobpilot.candidate.domain.Candidate;
 import com.jobpilot.candidate.domain.CandidateProfile;
 import com.jobpilot.candidate.domain.CandidateProject;
 import com.jobpilot.candidate.repository.CandidateProfileRepository;
+import com.jobpilot.candidate.repository.CandidateRepository;
 import com.jobpilot.common.Hashing;
 import java.time.Clock;
 import java.time.Instant;
@@ -19,14 +21,17 @@ public class CandidateProfileBootstrapService {
     private static final Logger log = LoggerFactory.getLogger(CandidateProfileBootstrapService.class);
 
     private final CandidateProfileRepository profiles;
+    private final CandidateRepository candidates;
     private final CandidateProfileDefinitionValidator validator;
     private final ObjectMapper objectMapper;
     private final Clock clock;
 
     public CandidateProfileBootstrapService(CandidateProfileRepository profiles,
+                                            CandidateRepository candidates,
                                             CandidateProfileDefinitionValidator validator,
                                             ObjectMapper objectMapper, Clock clock) {
         this.profiles = profiles;
+        this.candidates = candidates;
         this.validator = validator;
         this.objectMapper = objectMapper;
         this.clock = clock;
@@ -36,7 +41,8 @@ public class CandidateProfileBootstrapService {
     public CandidateProfileBootstrapResult bootstrap(CandidateProfileProperties definition) {
         validator.validate(definition);
         String sourceHash = sourceHash(definition);
-        var active = profiles.findByActiveTrue();
+        Candidate candidate = resolveCandidate(definition.candidateKey());
+        var active = profiles.findByCandidateIdAndActiveTrue(candidate.getId());
         if (active.isPresent()) {
             CandidateProfile current = active.get();
             if (definition.profileVersion() < current.getProfileVersion()) {
@@ -56,26 +62,39 @@ public class CandidateProfileBootstrapService {
             }
         }
 
-        profiles.findByProfileVersion(definition.profileVersion()).ifPresent(existing -> {
-            throw new CandidateProfileVersionConflictException(
-                    "Configured profileVersion already exists and cannot be overwritten");
-        });
+        profiles.findByCandidateIdAndProfileVersion(candidate.getId(), definition.profileVersion())
+                .ifPresent(existing -> {
+                    throw new CandidateProfileVersionConflictException(
+                            "Configured profileVersion already exists and cannot be overwritten");
+                });
 
         Instant now = clock.instant();
         active.ifPresent(current -> {
             current.deactivate(now);
             profiles.saveAndFlush(current);
         });
-        CandidateProfile created = map(definition, sourceHash, now);
+        CandidateProfile created = map(candidate, definition, sourceHash, now);
         profiles.saveAndFlush(created);
-        log.info("Candidate profile bootstrap created: version={}, skills={}, languages={}, projects={}",
-                created.getProfileVersion(), created.getSkills().size(),
+        log.info("Candidate profile bootstrap created: candidate={}, version={}, skills={}, languages={}, projects={}",
+                candidate.getStableKey(), created.getProfileVersion(), created.getSkills().size(),
                 created.getLanguages().size(), created.getProjects().size());
         return new CandidateProfileBootstrapResult(created.getId(), created.getProfileVersion(), true);
     }
 
-    private CandidateProfile map(CandidateProfileProperties definition, String sourceHash, Instant now) {
-        CandidateProfile profile = new CandidateProfile(
+    /**
+     * V14 seeds the configured key, so both an upgraded and a freshly migrated database already
+     * hold this row and the lookup is what normally runs. Creating a missing one keeps a re-keyed
+     * configuration deterministic instead of failing at startup; the unique stable key makes
+     * repeated bootstrap resolve the same row rather than adding another owner.
+     */
+    private Candidate resolveCandidate(String stableKey) {
+        return candidates.findByStableKey(stableKey)
+                .orElseGet(() -> candidates.saveAndFlush(new Candidate(stableKey, clock.instant())));
+    }
+
+    private CandidateProfile map(Candidate candidate, CandidateProfileProperties definition,
+                                 String sourceHash, Instant now) {
+        CandidateProfile profile = new CandidateProfile(candidate,
                 definition.profileVersion(), definition.fullName().trim(), definition.location().trim(),
                 definition.educationInstitution().trim(), definition.degree().trim(),
                 definition.studyStartYear(), definition.studyEndYear(), definition.currentStudent(),
