@@ -12,24 +12,33 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
 import org.springframework.stereotype.Service;
 
 @Service
 public class JobMatchingService {
     private final Clock clock;
-    private final JobPilotProperties.Candidate candidate;
-    private final Set<String> backendSkills;
-    private final Set<String> supportingSkills;
+    private final CandidateMatchingProfile defaultCandidate;
 
     public JobMatchingService(Clock clock, JobPilotProperties properties) {
         this.clock = clock;
-        this.candidate = properties.candidate();
-        this.backendSkills = lowerSet(candidate.backendSkills());
-        this.supportingSkills = lowerSet(candidate.supportingSkills());
+        this.defaultCandidate = CandidateMatchingProfile.fromLegacy(properties.candidate());
     }
 
+    /** Production entry point: scores against the single configured candidate. */
     public ScoreCard score(Job job, ExtractedRequirements r) {
+        return score(job, r, defaultCandidate);
+    }
+
+    /**
+     * Deterministic scoring against an explicit candidate. The candidate is an input, never
+     * state fetched during calculation, so the same job can be scored for several candidates.
+     */
+    public ScoreCard score(Job job, ExtractedRequirements r, CandidateMatchingProfile candidate) {
+        Objects.requireNonNull(candidate, "Candidate matching profile is required");
+        Set<String> backendSkills = candidate.backendSkills();
+        Set<String> supportingSkills = candidate.supportingSkills();
         String text = (job.getTitle() + " " + job.getDescription() + " " + job.getLocation()).toLowerCase(Locale.ROOT);
         List<String> strengths = new ArrayList<>();
         List<String> risks = new ArrayList<>();
@@ -41,7 +50,7 @@ public class JobMatchingService {
         if (has(text, "computer science", "informatics", "software", "technical degree", "related field")) formal += 5;
         else if (r.requiredEducation() == null) formal += 4;
         if (!r.finalYearMandatory() || candidate.finalYearStudent()) formal += 6;
-        if (romaniaEligible(job, r)) formal += 6;
+        if (romaniaEligible(job, r, candidate)) formal += 6;
         if (formal >= 19) strengths.add("Formal eligibility is compatible with a current student in Romania");
 
         int backendMatches = (int) r.technologies().stream().map(String::toLowerCase).filter(backendSkills::contains).distinct().count();
@@ -63,7 +72,7 @@ public class JobMatchingService {
         int location = locationScore(job, r);
         if (location >= 8) strengths.add("Location and work format suit Bucharest or Romania");
 
-        int experience = experienceScore(r.requiredExperienceYears(), r.internshipOrTrainee());
+        int experience = experienceScore(r.requiredExperienceYears(), r.internshipOrTrainee(), candidate);
         if (experience >= 8) strengths.add("Commercial experience expectations are entry-level compatible");
 
         int freshness = freshness(job);
@@ -124,7 +133,7 @@ public class JobMatchingService {
                 experience, freshness, penalties, List.copyOf(strengths), List.copyOf(risks), List.copyOf(blockers));
     }
 
-    private int experienceScore(Double years, boolean trainee) {
+    private int experienceScore(Double years, boolean trainee, CandidateMatchingProfile candidate) {
         if (years == null) return trainee || candidate.commercialJavaYears() == 0 ? 10 : 7;
         if (years <= 0) return 10;
         if (years <= 1) return 8;
@@ -157,7 +166,7 @@ public class JobMatchingService {
         return 2;
     }
 
-    private boolean romaniaEligible(Job job, ExtractedRequirements r) {
+    private boolean romaniaEligible(Job job, ExtractedRequirements r, CandidateMatchingProfile candidate) {
         if (job.getLocationEligibility() == LocationEligibility.BUCHAREST_LOCAL
                 || job.getLocationEligibility() == LocationEligibility.REMOTE_ROMANIA_ELIGIBLE) return true;
         String remote = String.valueOf(r.remoteEligibility()).toLowerCase(Locale.ROOT);
@@ -176,9 +185,5 @@ public class JobMatchingService {
     private boolean has(String text, String... values) {
         for (String value : values) if (text.contains(value)) return true;
         return false;
-    }
-
-    private Set<String> lowerSet(List<String> values) {
-        return values.stream().map(value -> value.toLowerCase(Locale.ROOT)).collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 }
