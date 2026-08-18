@@ -28,7 +28,7 @@ class V14CandidateOwnershipMigrationTest {
             statement.executeUpdate(profile(2, true));
         }
 
-        Flyway.configure().dataSource(url, "sa", "").load().migrate();
+        Flyway.configure().dataSource(url, "sa", "").target("14").load().migrate();
         try (Connection connection = DriverManager.getConnection(url, "sa", "");
              Statement statement = connection.createStatement()) {
             try (var rows = statement.executeQuery(
@@ -136,7 +136,7 @@ class V14CandidateOwnershipMigrationTest {
 
     private String migrate(String name) {
         String url = "jdbc:h2:mem:" + name + ";MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE";
-        Flyway.configure().dataSource(url, "sa", "").load().migrate();
+        Flyway.configure().dataSource(url, "sa", "").target("14").load().migrate();
         return url;
     }
 

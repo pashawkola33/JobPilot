@@ -1,6 +1,7 @@
 package com.jobpilot.candidate.service;
 
 import static com.jobpilot.candidate.CandidateProfileTestData.withVersion;
+import static com.jobpilot.candidate.CandidateProfileTestData.withCandidateKey;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.jobpilot.candidate.config.CandidateProfileProperties;
@@ -8,8 +9,6 @@ import com.jobpilot.candidate.domain.Candidate;
 import com.jobpilot.candidate.domain.CandidateProfile;
 import com.jobpilot.candidate.repository.CandidateProfileRepository;
 import com.jobpilot.candidate.repository.CandidateRepository;
-import java.math.BigDecimal;
-import java.time.Instant;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -25,8 +24,6 @@ import org.springframework.transaction.annotation.Transactional;
 })
 @Transactional
 class CandidateProfileBootstrapIntegrationTest {
-    private static final Instant NOW = Instant.parse("2026-07-19T00:00:00Z");
-
     @Autowired
     private CandidateProfileBootstrapService bootstrap;
     @Autowired
@@ -80,27 +77,23 @@ class CandidateProfileBootstrapIntegrationTest {
                 .containsOnly(candidates.findByStableKey("default").orElseThrow().getId());
     }
 
-    /**
-     * Candidate-scoped lookups must not answer with another candidate's profile. The second
-     * candidate's version is stored inactive because profile_version and active_slot are still
-     * globally unique in the schema: one active profile per installation is exactly the
-     * single-candidate limitation this PR does not yet lift.
-     */
     @Test
-    void candidateScopedLookupsDoNotCrossCandidates() {
+    void candidatesIndependentlyBootstrapTheSameVersionAndRemainActive() {
         Candidate owner = candidates.findByStableKey("default").orElseThrow();
         CandidateProfile configured = profiles.findByCandidateIdAndActiveTrue(owner.getId()).orElseThrow();
-        Candidate other = candidates.saveAndFlush(new Candidate("second-candidate", NOW));
-        CandidateProfile otherProfile = profiles.saveAndFlush(new CandidateProfile(other, 2,
-                "Other Candidate", "Bucharest, Romania", "Other University", "BSc", 2025, null,
-                true, false, BigDecimal.ZERO, "other-source-hash", NOW, false));
+        CandidateProfileBootstrapResult result = bootstrap.bootstrap(
+                withCandidateKey(configuredProfile, "second-candidate"));
+        Candidate other = candidates.findByStableKey("second-candidate").orElseThrow();
+        CandidateProfile otherProfile = profiles.findByCandidateIdAndActiveTrue(other.getId())
+                .orElseThrow();
 
-        assertThat(profiles.findByCandidateIdAndProfileVersion(owner.getId(), 2)).isEmpty();
-        assertThat(profiles.findByCandidateIdAndProfileVersion(other.getId(), 2))
+        assertThat(result.created()).isTrue();
+        assertThat(otherProfile.getProfileVersion()).isEqualTo(configured.getProfileVersion());
+        assertThat(otherProfile.getId()).isNotEqualTo(configured.getId());
+        assertThat(profiles.findByCandidateIdAndProfileVersion(other.getId(), 1))
                 .contains(otherProfile);
-        assertThat(profiles.findByCandidateIdAndProfileVersion(other.getId(), 1)).isEmpty();
-        assertThat(profiles.findByCandidateIdAndActiveTrue(other.getId())).isEmpty();
         assertThat(profiles.findByCandidateIdAndActiveTrue(owner.getId())).contains(configured);
+        assertThat(profiles.countByActiveTrue()).isEqualTo(2);
     }
 
     @Test
