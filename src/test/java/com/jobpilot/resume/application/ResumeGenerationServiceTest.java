@@ -4,18 +4,31 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 import com.jobpilot.applications.domain.ApplicationStatus;
 import com.jobpilot.applications.domain.ApplicationStatusChangeSource;
 import com.jobpilot.applications.repository.ApplicationRepository;
 import com.jobpilot.applications.application.ApplicationTrackerService;
+import com.jobpilot.candidate.domain.Candidate;
+import com.jobpilot.candidate.domain.CandidateProfile;
+import com.jobpilot.candidate.repository.CandidateProfileRepository;
+import com.jobpilot.candidate.repository.CandidateRepository;
 import com.jobpilot.jobs.domain.RawJob;
 import com.jobpilot.jobs.repository.JobRequirementRepository;
 import com.jobpilot.jobs.repository.JobRepository;
 import com.jobpilot.jobs.repository.JobScoreRepository;
 import com.jobpilot.jobs.service.JobProcessor;
 import com.jobpilot.llm.api.LlmProvider;
+import com.jobpilot.llm.application.JobAnalysisService;
+import com.jobpilot.llm.domain.JobAnalysis;
+import com.jobpilot.llm.domain.JobAnalysisData;
+import com.jobpilot.llm.domain.JobAnalysisJson;
+import com.jobpilot.llm.domain.JobAnalysisResult;
+import com.jobpilot.llm.domain.JobAnalysisResultStatus;
+import com.jobpilot.llm.domain.LlmFailureCategory;
+import com.jobpilot.llm.domain.LlmOperationType;
 import com.jobpilot.llm.repository.JobAnalysisRepository;
 import com.jobpilot.llm.repository.LlmBudgetReservationRepository;
 import com.jobpilot.llm.repository.LlmUsageEventRepository;
@@ -24,6 +37,7 @@ import com.jobpilot.resume.application.ControlledRenderers.ControlledResumeDocxR
 import com.jobpilot.resume.domain.DocumentFailureCategory;
 import com.jobpilot.resume.domain.DocumentFormat;
 import com.jobpilot.resume.domain.DocumentRenderStatus;
+import com.jobpilot.resume.domain.ResumeVersion;
 import com.jobpilot.resume.repository.CoverNoteRepository;
 import com.jobpilot.resume.repository.ResumeVersionRepository;
 import com.jobpilot.resume.storage.DocumentKind;
@@ -31,9 +45,11 @@ import java.io.ByteArrayInputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
+import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
@@ -49,6 +65,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.test.mock.mockito.SpyBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.DynamicPropertyRegistry;
@@ -90,9 +107,13 @@ class ResumeGenerationServiceTest {
     @Autowired private JobRepository jobs;
     @Autowired private JobRequirementRepository requirements;
     @Autowired private JobScoreRepository scores;
+    @Autowired private CandidateRepository candidates;
+    @Autowired private CandidateProfileRepository profiles;
     @Autowired private ResumeVersionRepository resumes;
     @Autowired private CoverNoteRepository coverNotes;
     @Autowired private JobAnalysisRepository analyses;
+    @Autowired private JobAnalysisJson analysisJson;
+    @SpyBean private JobAnalysisService analysisService;
     @Autowired private LlmBudgetReservationRepository reservations;
     @Autowired private LlmUsageEventRepository usage;
     @Autowired private ApplicationRepository applications;
@@ -104,7 +125,7 @@ class ResumeGenerationServiceTest {
 
     @BeforeEach
     void cleanDatabase() throws Exception {
-        org.mockito.Mockito.reset(claimObserver);
+        org.mockito.Mockito.reset(claimObserver, analysisService);
         resumeRenderer.resetControl();
         jdbc.update("delete from application_status_history");
         applications.deleteAll();
@@ -207,6 +228,51 @@ class ResumeGenerationServiceTest {
         assertThat(duplicate.changed()).isFalse();
         assertThat(applications.findByJobId(jobId).orElseThrow().getStatus())
                 .isEqualTo(ApplicationStatus.SAVED);
+    }
+
+    @Test
+    void generationUsesAnalysisProfileWhenAnotherCandidateHasSameActiveVersion() {
+        CandidateProfile configured = configuredProfile();
+        CandidateProfile other = createOtherProfile(
+                "other-documents", configured.getProfileVersion());
+        long jobId = createDocumentJob("candidate-profile-identity");
+
+        DocumentGenerationResult result = service.generate(jobId,
+                new GenerateDocumentsCommand(false, Set.of(DocumentFormat.DOCX), false));
+
+        assertThat(result.status()).isEqualTo(DocumentGenerationStatus.CREATED);
+        ResumeVersion resume = resumes.findById(result.resumeVersionId()).orElseThrow();
+        assertThat(other.getProfileVersion()).isEqualTo(configured.getProfileVersion());
+        assertThat(resume.getCandidateProfile().getId()).isEqualTo(configured.getId());
+        assertThat(analyses.findById(resume.getSourceAnalysis().getId()).orElseThrow()
+                .getCandidateProfile().getId())
+                .isEqualTo(configured.getId());
+    }
+
+    @Test
+    void sameProfileVersionFromAnotherCandidateCannotSatisfyDocumentIdentity() {
+        CandidateProfile configured = configuredProfile();
+        CandidateProfile other = createOtherProfile(
+                "other-analysis", configured.getProfileVersion());
+        long jobId = createDocumentJob("candidate-analysis-mismatch");
+        var job = jobs.findById(jobId).orElseThrow();
+        Instant now = Instant.parse("2026-07-19T10:00:00Z");
+        JobAnalysisData data = minimalAnalysis();
+        JobAnalysis mismatched = new JobAnalysis(job, other, LlmOperationType.JOB_ANALYSIS,
+                "disabled", "disabled", "job-analysis-v1", "1".repeat(64),
+                other.getSourceHash(), "2".repeat(64), now);
+        mismatched.completeFallback(data, LlmFailureCategory.DISABLED, null, analysisJson, now);
+        analyses.saveAndFlush(mismatched);
+        JobAnalysisResult mismatchedResult = new JobAnalysisResult(
+                JobAnalysisResultStatus.DISABLED, mismatched.getId(), jobId,
+                other.getProfileVersion(), data, LlmFailureCategory.DISABLED);
+        doReturn(mismatchedResult).when(analysisService).analyze(jobId, true);
+
+        DocumentGenerationResult result = service.generate(jobId,
+                new GenerateDocumentsCommand(false, Set.of(DocumentFormat.DOCX), false));
+
+        assertThat(result.status()).isEqualTo(DocumentGenerationStatus.ANALYSIS_FAILED);
+        assertThat(resumes.count()).isZero();
     }
 
     /**
@@ -383,6 +449,35 @@ class ResumeGenerationServiceTest {
         } catch (java.io.IOException exception) {
             throw new ExceptionInInitializerError(exception);
         }
+    }
+
+    private long createDocumentJob(String externalId) {
+        return processor.process(new RawJob("synthetic", externalId,
+                "https://example.invalid/jobs/" + externalId, "Java Backend Intern",
+                "Synthetic Company", "Bucharest, Romania",
+                "Java Spring Boot SQL internship with REST API work and mentorship.",
+                "INTERN", Instant.parse("2026-07-19T08:00:00Z"), null,
+                "Synthetic candidate identity fixture")).job().getId();
+    }
+
+    private CandidateProfile configuredProfile() {
+        Candidate configured = candidates.findByStableKey("default").orElseThrow();
+        return profiles.findByCandidateIdAndActiveTrue(configured.getId()).orElseThrow();
+    }
+
+    private CandidateProfile createOtherProfile(String stableKey, int profileVersion) {
+        Instant now = Instant.parse("2026-07-19T07:00:00Z");
+        Candidate other = candidates.saveAndFlush(new Candidate(stableKey, now));
+        return profiles.saveAndFlush(new CandidateProfile(other, profileVersion,
+                "Other Candidate", "Elsewhere", "Other University", "Other Degree",
+                2024, null, true, false, BigDecimal.ZERO, "f".repeat(64), now, true));
+    }
+
+    private JobAnalysisData minimalAnalysis() {
+        return new JobAnalysisData("Synthetic Java internship", List.of("Java"), List.of(),
+                List.of("Build backend services"), null, null, null,
+                "Bucharest, Romania", null, List.of(), List.of(),
+                List.of("Work authorization is unknown"), List.of(), 80, true);
     }
 
     private int count(String table, long id) {

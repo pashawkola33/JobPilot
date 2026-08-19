@@ -283,11 +283,12 @@ class PostgresPersistenceIT {
 
     @Test
     void roundTripsCandidateProfileAndAllVerifiedFactTypes() {
-        CandidateProfile profile = candidateProfiles.findByActiveTrue().orElseThrow();
+        CandidateProfile profile = activeDefaultProfile();
         entityManager.flush();
         entityManager.clear();
 
-        CandidateProfile reloaded = candidateProfiles.findByProfileVersion(1).orElseThrow();
+        CandidateProfile reloaded = candidateProfiles.findByCandidateIdAndProfileVersion(
+                defaultCandidate().getId(), 1).orElseThrow();
 
         assertThat(reloaded.getFullName()).isEqualTo("Pavlo Sushkov");
         assertThat(reloaded.getCommercialJavaExperienceYears()).isEqualByComparingTo(BigDecimal.ZERO);
@@ -322,7 +323,7 @@ class PostgresPersistenceIT {
                 .contains(otherProfile);
         assertThat(candidateProfiles.findByCandidateIdAndActiveTrue(other.getId()))
                 .contains(otherProfile);
-        assertThat(candidateProfiles.countByActiveTrue()).isEqualTo(2);
+        assertThat(candidateProfiles.findAll()).filteredOn(CandidateProfile::isActive).hasSize(2);
     }
 
     @Test
@@ -380,7 +381,7 @@ class PostgresPersistenceIT {
     void persistsResumeVersionFactReferencesAndCascadesResumeDeletion() {
         Instant now = Instant.parse("2026-07-19T11:00:00Z");
         Job job = jobs.saveAndFlush(job("resume", "https://example.com/jobs/resume", now));
-        CandidateProfile profile = candidateProfiles.findByActiveTrue().orElseThrow();
+        CandidateProfile profile = activeDefaultProfile();
         var skill = candidateSkills.findByCandidateProfileIdOrderByDisplayOrder(profile.getId()).getFirst();
         var language = candidateLanguages.findByCandidateProfileIdOrderByDisplayOrder(profile.getId())
                 .stream().filter(value -> value.isAllowedInCv()).findFirst().orElseThrow();
@@ -421,7 +422,7 @@ class PostgresPersistenceIT {
     void persistsCoverNoteLinkedToVerifiedProfileAndResume() {
         Instant now = Instant.parse("2026-07-19T12:00:00Z");
         Job job = jobs.saveAndFlush(job("cover", "https://example.com/jobs/cover", now));
-        CandidateProfile profile = candidateProfiles.findByActiveTrue().orElseThrow();
+        CandidateProfile profile = activeDefaultProfile();
         ResumeVersion resume = resumeVersions.saveAndFlush(new ResumeVersion(
                 job, profile, profile.getProfileVersion(), "JAVA DEVELOPER INTERN",
                 "Verified summary", "Preview", "Changes", "Claims", null, null,
@@ -470,7 +471,7 @@ class PostgresPersistenceIT {
     void persistsStructuredAnalysisReservationAndDeterministicCacheIdentity() {
         Instant now = Instant.parse("2026-07-19T13:30:00Z");
         Job job = jobs.saveAndFlush(job("analysis", "https://example.com/jobs/analysis", now));
-        CandidateProfile profile = candidateProfiles.findByActiveTrue().orElseThrow();
+        CandidateProfile profile = activeDefaultProfile();
         LlmBudgetReservation reservation = llmBudgetReservations.saveAndFlush(
                 new LlmBudgetReservation("1".repeat(64), job, LlmOperationType.JOB_ANALYSIS,
                         "synthetic-provider", "model-a", java.time.LocalDate.parse("2026-07-19"),
@@ -856,7 +857,16 @@ class PostgresPersistenceIT {
 
     private CandidateProfile profile(int version, boolean active) {
         // Owned by the candidate V14 seeds; a profile cannot exist without an owner.
-        return profile(candidates.findByStableKey("default").orElseThrow(), version, active);
+        return profile(defaultCandidate(), version, active);
+    }
+
+    private Candidate defaultCandidate() {
+        return candidates.findByStableKey("default").orElseThrow();
+    }
+
+    private CandidateProfile activeDefaultProfile() {
+        return candidateProfiles.findByCandidateIdAndActiveTrue(defaultCandidate().getId())
+                .orElseThrow();
     }
 
     private CandidateProfile profile(Candidate candidate, int version, boolean active) {

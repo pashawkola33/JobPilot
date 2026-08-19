@@ -35,7 +35,7 @@ class CandidateProfileBootstrapIntegrationTest {
 
     @Test
     void validProfileIsBootstrappedAndRepeatedBootstrapIsIdempotent() {
-        CandidateProfile active = profiles.findByActiveTrue().orElseThrow();
+        CandidateProfile active = activeConfiguredProfile();
         long before = profiles.count();
 
         CandidateProfileBootstrapResult result = bootstrap.bootstrap(configuredProfile);
@@ -43,7 +43,8 @@ class CandidateProfileBootstrapIntegrationTest {
         assertThat(result.created()).isFalse();
         assertThat(result.profileId()).isEqualTo(active.getId());
         assertThat(profiles.count()).isEqualTo(before);
-        assertThat(profiles.countByActiveTrue()).isOne();
+        assertThat(profiles.findByCandidateIdAndActiveTrue(configuredCandidate().getId()))
+                .contains(active);
         assertThat(active.getSkills()).hasSize(65);
         assertThat(active.getLanguages()).hasSize(4);
         assertThat(active.getProjects()).hasSize(4);
@@ -51,8 +52,8 @@ class CandidateProfileBootstrapIntegrationTest {
 
     @Test
     void bootstrappedProfileIsOwnedByTheConfiguredCandidate() {
-        CandidateProfile active = profiles.findByActiveTrue().orElseThrow();
-        Candidate owner = candidates.findByStableKey(configuredProfile.candidateKey()).orElseThrow();
+        CandidateProfile active = activeConfiguredProfile();
+        Candidate owner = configuredCandidate();
 
         assertThat(active.getCandidate().getId()).isEqualTo(owner.getId());
         assertThat(owner.getStableKey()).isEqualTo("default");
@@ -93,12 +94,13 @@ class CandidateProfileBootstrapIntegrationTest {
         assertThat(profiles.findByCandidateIdAndProfileVersion(other.getId(), 1))
                 .contains(otherProfile);
         assertThat(profiles.findByCandidateIdAndActiveTrue(owner.getId())).contains(configured);
-        assertThat(profiles.countByActiveTrue()).isEqualTo(2);
+        assertThat(profiles.findAll()).filteredOn(CandidateProfile::isActive).hasSize(2);
     }
 
     @Test
     void higherVersionCreatesNewActiveVersionAndPreservesPreviousFacts() {
-        CandidateProfile previous = profiles.findByActiveTrue().orElseThrow();
+        Candidate owner = configuredCandidate();
+        CandidateProfile previous = activeConfiguredProfile();
         String originalName = previous.getFullName();
         String originalSourceHash = previous.getSourceHash();
         String originalSkill = previous.getSkills().getFirst().getDisplayName();
@@ -108,9 +110,9 @@ class CandidateProfileBootstrapIntegrationTest {
 
         assertThat(result.created()).isTrue();
         assertThat(profiles.count()).isEqualTo(2);
-        assertThat(profiles.countByActiveTrue()).isOne();
-        CandidateProfile current = profiles.findByActiveTrue().orElseThrow();
-        CandidateProfile storedPrevious = profiles.findByProfileVersion(1).orElseThrow();
+        CandidateProfile current = profiles.findByCandidateIdAndActiveTrue(owner.getId()).orElseThrow();
+        CandidateProfile storedPrevious = profiles.findByCandidateIdAndProfileVersion(owner.getId(), 1)
+                .orElseThrow();
         assertThat(current.getProfileVersion()).isEqualTo(2);
         assertThat(storedPrevious.isActive()).isFalse();
         assertThat(storedPrevious.getFullName()).isEqualTo(originalName);
@@ -118,5 +120,13 @@ class CandidateProfileBootstrapIntegrationTest {
         assertThat(storedPrevious.getSkills().getFirst().getDisplayName()).isEqualTo(originalSkill);
         assertThat(storedPrevious.getProjects().getFirst().getBullets().getFirst().getVerifiedText())
                 .isEqualTo(originalBullet);
+    }
+
+    private Candidate configuredCandidate() {
+        return candidates.findByStableKey(configuredProfile.candidateKey()).orElseThrow();
+    }
+
+    private CandidateProfile activeConfiguredProfile() {
+        return profiles.findByCandidateIdAndActiveTrue(configuredCandidate().getId()).orElseThrow();
     }
 }

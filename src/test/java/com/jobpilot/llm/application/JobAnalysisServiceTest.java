@@ -6,10 +6,15 @@ import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.jobpilot.candidate.domain.Candidate;
+import com.jobpilot.candidate.domain.CandidateProfile;
+import com.jobpilot.candidate.repository.CandidateProfileRepository;
+import com.jobpilot.candidate.repository.CandidateRepository;
 import com.jobpilot.jobs.domain.RawJob;
 import com.jobpilot.jobs.repository.JobRepository;
 import com.jobpilot.jobs.repository.JobRequirementRepository;
@@ -31,6 +36,7 @@ import com.jobpilot.llm.domain.LlmUsageStatus;
 import com.jobpilot.llm.repository.JobAnalysisRepository;
 import com.jobpilot.llm.repository.LlmBudgetReservationRepository;
 import com.jobpilot.llm.repository.LlmUsageEventRepository;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -67,6 +73,8 @@ class JobAnalysisServiceTest {
     @Autowired private JobRepository jobs;
     @Autowired private JobRequirementRepository requirements;
     @Autowired private JobScoreRepository scores;
+    @Autowired private CandidateProfileRepository profiles;
+    @SpyBean private CandidateRepository candidates;
     @SpyBean private JobAnalysisRepository analyses;
     @Autowired private LlmBudgetReservationRepository reservations;
     @Autowired private LlmUsageEventRepository usage;
@@ -281,6 +289,41 @@ class JobAnalysisServiceTest {
     }
 
     @Test
+    void candidateSpecificAnalysisUsesConfiguredCandidateWithAnotherActiveSameVersion() {
+        Candidate configured = candidates.findByStableKey("default").orElseThrow();
+        CandidateProfile configuredProfile = profiles
+                .findByCandidateIdAndActiveTrue(configured.getId()).orElseThrow();
+        Candidate other = candidates.saveAndFlush(new Candidate(
+                "other-runtime", Instant.parse("2026-07-19T07:00:00Z")));
+        CandidateProfile otherProfile = profiles.saveAndFlush(new CandidateProfile(
+                other, configuredProfile.getProfileVersion(), "Other Candidate", "Elsewhere",
+                "Other University", "Other Degree", 2024, null, true, false,
+                BigDecimal.ZERO, "f".repeat(64), Instant.parse("2026-07-19T07:00:00Z"), true));
+        long jobId = createJob("candidate-scope", description()).getId();
+        when(provider.execute(any())).thenReturn(new LlmResponse(validJson(), 100L, 30L));
+
+        var result = service.analyze(jobId, true);
+
+        assertThat(result.status()).isEqualTo(JobAnalysisResultStatus.CREATED);
+        assertThat(otherProfile.getProfileVersion()).isEqualTo(configuredProfile.getProfileVersion());
+        assertThat(analyses.findById(result.analysisId()).orElseThrow().getCandidateProfile().getId())
+                .isEqualTo(configuredProfile.getId());
+    }
+
+    @Test
+    void nonCandidateSpecificAnalysisDoesNotResolveRuntimeCandidate() {
+        long jobId = createJob("generic-scope", description()).getId();
+        reset(candidates);
+        when(provider.execute(any())).thenReturn(new LlmResponse(genericValidJson(), 100L, 30L));
+
+        var result = service.analyze(jobId, false);
+
+        assertThat(result.status()).isEqualTo(JobAnalysisResultStatus.CREATED);
+        assertThat(analyses.findById(result.analysisId()).orElseThrow().getCandidateProfile()).isNull();
+        verifyNoInteractions(candidates);
+    }
+
+    @Test
     void analysisStorageFailureIsNeverReportedAsProviderSuccess() {
         long jobId = createJob("store-failure", description()).getId();
         when(provider.execute(any())).thenReturn(new LlmResponse(validJson(), 100L, 30L));
@@ -324,6 +367,21 @@ class JobAnalysisServiceTest {
                         new EvidenceReference(EvidenceSource.CANDIDATE_SKILL,
                                 "spring-boot", "Spring Boot. Verified technical skill")),
                 80, false);
+        try {
+            return mapper.writeValueAsString(data);
+        } catch (JsonProcessingException exception) {
+            throw new AssertionError(exception);
+        }
+    }
+
+    private String genericValidJson() {
+        JobAnalysisData data = new JobAnalysisData("Synthetic Java internship",
+                List.of("Java", "Spring Boot"), List.of(),
+                List.of("Build backend services"), null, null, null,
+                "Bucharest, Romania", null, List.of(), List.of(),
+                List.of("Work authorization is unknown"),
+                List.of(new EvidenceReference(EvidenceSource.VACANCY,
+                        "job.description", "Java backend internship")), 80, false);
         try {
             return mapper.writeValueAsString(data);
         } catch (JsonProcessingException exception) {

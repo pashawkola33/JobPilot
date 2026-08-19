@@ -10,6 +10,7 @@ import com.jobpilot.candidate.repository.CandidateProfileRepository;
 import com.jobpilot.candidate.repository.CandidateProjectBulletRepository;
 import com.jobpilot.candidate.repository.CandidateProjectRepository;
 import com.jobpilot.candidate.repository.CandidateSkillRepository;
+import com.jobpilot.candidate.service.RuntimeCandidateContext;
 import com.jobpilot.jobs.domain.Job;
 import com.jobpilot.jobs.repository.JobRepository;
 import com.jobpilot.llm.application.JobAnalysisService;
@@ -68,6 +69,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class ResumeGenerationService {
     private final JobRepository jobs;
     private final CandidateProfileRepository profiles;
+    private final RuntimeCandidateContext candidateContext;
     private final CandidateSkillRepository skills;
     private final CandidateLanguageRepository languages;
     private final CandidateProjectRepository projects;
@@ -98,6 +100,7 @@ public class ResumeGenerationService {
 
     public ResumeGenerationService(
             JobRepository jobs, CandidateProfileRepository profiles,
+            RuntimeCandidateContext candidateContext,
             CandidateSkillRepository skills, CandidateLanguageRepository languages,
             CandidateProjectRepository projects, CandidateProjectBulletRepository bullets,
             JobAnalysisRepository analyses, JobAnalysisJson analysisJson,
@@ -114,6 +117,7 @@ public class ResumeGenerationService {
             Clock clock, PlatformTransactionManager transactionManager) {
         this.jobs = jobs;
         this.profiles = profiles;
+        this.candidateContext = candidateContext;
         this.skills = skills;
         this.languages = languages;
         this.projects = projects;
@@ -384,13 +388,21 @@ public class ResumeGenerationService {
 
     private Context context(JobAnalysisResult result) {
         Job job = jobs.findById(result.jobId()).orElseThrow();
-        CandidateProfile profile = profiles.findByActiveTrue().orElse(null);
-        if (profile == null || result.candidateProfileVersion() == null
-                || profile.getProfileVersion() != result.candidateProfileVersion()) return null;
+        Long candidateId = candidateContext.candidateId().orElse(null);
+        if (candidateId == null) return null;
         JobAnalysis analysis = analyses.findById(result.analysisId()).orElseThrow();
+        CandidateProfile analysisProfile = analysis.getCandidateProfile();
+        if (analysisProfile == null) {
+            throw new IllegalStateException("Candidate-specific analysis has no candidate profile");
+        }
+        CandidateProfile profile = profiles.findById(analysisProfile.getId()).orElseThrow();
         if (!analysis.getJob().getId().equals(job.getId())
+                || !profile.getCandidate().getId().equals(candidateId)
+                || !profile.getId().equals(analysisProfile.getId())
                 || !java.util.Objects.equals(analysis.getCandidateProfileVersion(),
-                profile.getProfileVersion())) {
+                profile.getProfileVersion())
+                || !java.util.Objects.equals(result.candidateProfileVersion(),
+                analysis.getCandidateProfileVersion())) {
             throw new IllegalStateException("Analysis identity is incompatible with document facts");
         }
         return new Context(CandidateDocumentFacts.from(profile),
