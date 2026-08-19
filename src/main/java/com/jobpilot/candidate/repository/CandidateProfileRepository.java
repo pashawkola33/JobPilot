@@ -10,10 +10,10 @@ public interface CandidateProfileRepository extends JpaRepository<CandidateProfi
     Optional<CandidateProfile> findByCandidateIdAndProfileVersion(Long candidateId, int profileVersion);
 
     /**
-     * Installation-wide lookups, meaning "the one active profile in the whole system". Still
-     * correct only because a single candidate exists; {@code JobAnalysisService} and
-     * {@code ResumeGenerationService} read the active profile this way and are migrated to
-     * candidate-scoped access in a later phase.
+     * Legacy installation-wide lookups. The database permits version reuse and one active profile
+     * per candidate, so these methods are safe only while their callers operate with one configured
+     * candidate. {@code JobAnalysisService} and {@code ResumeGenerationService} are migrated to
+     * candidate-scoped access when candidate context reaches those workflows.
      */
     Optional<CandidateProfile> findByActiveTrue();
 

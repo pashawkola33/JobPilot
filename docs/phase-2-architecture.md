@@ -48,7 +48,7 @@ Stage 1 components perform no external calls. The Stage 2 endpoint performs only
 
 ## Flyway migration
 
-`V2__phase_2_persistence_and_candidate_profile.sql` is the schema source of truth. Hibernate remains configured with `ddl-auto: validate`.
+Flyway migrations are the schema source of truth. Hibernate remains configured with `ddl-auto: validate`.
 
 The migration adds:
 
@@ -63,8 +63,8 @@ The migration adds:
 
 Important database guarantees include:
 
-- a positive, unique profile version;
-- exactly zero or one active profile, enforced with a unique nullable `active_slot` plus a consistency check;
+- a positive profile version that is unique within its candidate;
+- exactly zero or one active profile per candidate, enforced with candidate-scoped uniqueness on the nullable `active_slot` plus a consistency check;
 - stable-key uniqueness in each candidate fact scope;
 - normalized skill, language, and project uniqueness within a profile version;
 - one application per job;
@@ -81,7 +81,7 @@ Startup invokes a small runner which delegates to `CandidateProfileBootstrapServ
 
 1. Validate Bean Validation constraints and cross-record truth rules.
 2. Compute a SHA-256 source fingerprint without logging the source.
-3. Compare the configured version with the active database version.
+3. Compare the configured version with that candidate's active database version.
 4. Return the existing row when both version and fingerprint match.
 5. Reject a lower version or changed facts using the same version.
 6. Deactivate the current row and insert a complete higher version atomically.

@@ -28,11 +28,7 @@ public class CandidateProfile {
     @ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "candidate_id", nullable = false)
     private Candidate candidate;
-    /**
-     * Still globally unique in the schema, not unique per candidate. Making version and active
-     * uniqueness candidate-scoped is a separate migration.
-     */
-    @Column(nullable = false, unique = true)
+    @Column(nullable = false)
     private int profileVersion;
     @Column(nullable = false, length = 200)
     private String fullName;

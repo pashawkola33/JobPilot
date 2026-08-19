@@ -9,6 +9,7 @@ import com.jobpilot.applications.domain.ApplicationStatusChangeSource;
 import com.jobpilot.applications.repository.ApplicationRepository;
 import com.jobpilot.applications.repository.ApplicationStatusHistoryRepository;
 import com.jobpilot.applications.application.ApplicationTrackerService;
+import com.jobpilot.candidate.domain.Candidate;
 import com.jobpilot.candidate.domain.CandidateProfile;
 import com.jobpilot.candidate.domain.CandidateSkillCategory;
 import com.jobpilot.candidate.domain.ProjectType;
@@ -304,10 +305,29 @@ class PostgresPersistenceIT {
     }
 
     @Test
-    void databaseEnforcesSingleActiveCandidateProfile() {
+    void databaseEnforcesSingleActiveCandidateProfilePerCandidate() {
         CandidateProfile secondActive = profile(90, true);
 
         assertThatThrownBy(() -> candidateProfiles.saveAndFlush(secondActive))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    void differentCandidatesCanReuseAProfileVersionAndEachRemainActive() {
+        Candidate other = candidates.saveAndFlush(new Candidate(
+                "second-candidate", Instant.parse("2026-07-19T00:00:00Z")));
+        CandidateProfile otherProfile = candidateProfiles.saveAndFlush(profile(other, 1, true));
+
+        assertThat(candidateProfiles.findByCandidateIdAndProfileVersion(other.getId(), 1))
+                .contains(otherProfile);
+        assertThat(candidateProfiles.findByCandidateIdAndActiveTrue(other.getId()))
+                .contains(otherProfile);
+        assertThat(candidateProfiles.countByActiveTrue()).isEqualTo(2);
+    }
+
+    @Test
+    void databaseRejectsDuplicateProfileVersionForOneCandidate() {
+        assertThatThrownBy(() -> candidateProfiles.saveAndFlush(profile(1, false)))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -836,7 +856,11 @@ class PostgresPersistenceIT {
 
     private CandidateProfile profile(int version, boolean active) {
         // Owned by the candidate V14 seeds; a profile cannot exist without an owner.
-        return new CandidateProfile(candidates.findByStableKey("default").orElseThrow(),
+        return profile(candidates.findByStableKey("default").orElseThrow(), version, active);
+    }
+
+    private CandidateProfile profile(Candidate candidate, int version, boolean active) {
+        return new CandidateProfile(candidate,
                 version, "Test Candidate", "Bucharest, Romania",
                 "Test University", "BSc in Informatics", 2025, null, true, false,
                 BigDecimal.ZERO, Integer.toHexString(version).repeat(16),
