@@ -281,8 +281,8 @@ class PostgresDocumentGenerationConcurrencyIT {
         var analysisResult = analysisService.analyze(jobId, true);
         return new TransactionTemplate(transactionManager).execute(status -> {
             var job = jobs.findById(jobId).orElseThrow();
-            var profile = profiles.findByActiveTrue().orElseThrow();
             var analysis = analyses.findById(analysisResult.analysisId()).orElseThrow();
+            var profile = profiles.findById(analysis.getCandidateProfile().getId()).orElseThrow();
             var candidateFacts = CandidateDocumentFacts.from(profile);
             var jobFacts = JobDocumentFacts.from(job, analysis.getId(), analysis.getCacheKey(),
                     analysisResult.analysis());

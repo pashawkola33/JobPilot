@@ -88,6 +88,19 @@ Startup invokes a small runner which delegates to `CandidateProfileBootstrapServ
 
 Older version facts are never updated by the mapper. Only their active marker and update timestamp change when a higher version becomes active. Logs contain only the version and fact counts.
 
+### Runtime candidate compatibility boundary
+
+Candidate-specific analysis and document generation resolve the configured
+`jobpilot.candidate-profile.candidate-key` to its persistent candidate row. Runtime resolution
+does not create a candidate and does not fall back to whichever candidate happens to exist. Each
+candidate may have its own active profile, so multiple active profiles may coexist in one database
+and `profileVersion` is unique only within a candidate.
+
+Analysis persists the selected `candidate_profile_id`. Document generation uses that exact profile
+identity and verifies that its owning candidate matches the configured runtime candidate;
+`profileVersion` remains response and audit metadata, not a globally unique identity. HTTP and
+Telegram contracts remain unchanged. Authenticated per-request candidate selection is future work.
+
 ## Validation
 
 Validation covers required text, bounded string and collection sizes, positive profile versions, reasonable education years, non-negative bounded commercial Java experience, stable-key syntax, typed categories and levels, duplicate stable keys, duplicate active facts, and duplicate normalized technology/keyword values.

@@ -2,6 +2,7 @@ package com.jobpilot.llm.application;
 
 import com.jobpilot.candidate.domain.CandidateProfile;
 import com.jobpilot.candidate.repository.CandidateProfileRepository;
+import com.jobpilot.candidate.service.RuntimeCandidateContext;
 import com.jobpilot.config.JobPilotProperties;
 import com.jobpilot.jobs.domain.ExtractedRequirements;
 import com.jobpilot.jobs.domain.Job;
@@ -46,6 +47,7 @@ public class JobAnalysisService {
     private final JobRepository jobs;
     private final JobRequirementRepository requirements;
     private final CandidateProfileRepository profiles;
+    private final RuntimeCandidateContext candidateContext;
     private final JobAnalysisRepository analyses;
     private final JobAnalysisJson analysisJson;
     private final JobAnalysisPromptBuilder prompts;
@@ -61,7 +63,9 @@ public class JobAnalysisService {
     private final TransactionTemplate transactions;
 
     public JobAnalysisService(JobRepository jobs, JobRequirementRepository requirements,
-                              CandidateProfileRepository profiles, JobAnalysisRepository analyses,
+                              CandidateProfileRepository profiles,
+                              RuntimeCandidateContext candidateContext,
+                              JobAnalysisRepository analyses,
                               JobAnalysisJson analysisJson, JobAnalysisPromptBuilder prompts,
                               JobAnalysisCacheKey keys,
                               LlmStructuredResponseValidator validator,
@@ -73,6 +77,7 @@ public class JobAnalysisService {
         this.jobs = jobs;
         this.requirements = requirements;
         this.profiles = profiles;
+        this.candidateContext = candidateContext;
         this.analyses = analyses;
         this.analysisJson = analysisJson;
         this.prompts = prompts;
@@ -137,7 +142,9 @@ public class JobAnalysisService {
         CandidateProfile profile = null;
         CandidateTruthSnapshot truth = null;
         if (candidateSpecific) {
-            profile = profiles.findByActiveTrue().orElse(null);
+            profile = candidateContext.candidateId()
+                    .flatMap(profiles::findByCandidateIdAndActiveTrue)
+                    .orElse(null);
             if (profile == null) return Preparation.immediate(result(
                     JobAnalysisResultStatus.PROFILE_NOT_FOUND, null, jobId,
                     null, null, null));
