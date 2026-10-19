@@ -2,11 +2,39 @@
 
 ![Java](https://img.shields.io/badge/Java-21-orange) ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.3-brightgreen) ![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg) ![Docker](https://img.shields.io/badge/Docker-ready-2496ED)
 
-JobPilot is a human-in-the-loop internship discovery service for entry-level software roles. It fetches public Greenhouse, Lever, Ashby, Recruitee, SmartRecruiters, and Workday boards, applies hard location and early-career eligibility gates, normalizes and deduplicates vacancies, deterministically extracts requirements, scores them against a configurable candidate profile, and sends strong matches to a Telegram channel. Phase 2 Stage 1 adds the versioned candidate truth model, Stage 2 safely processes manually submitted public vacancy URLs, Stage 3 adds human-maintained application tracking, Stage 4 adds optional structured job analysis, Stage 5 creates truthful application documents for private human review, and Stage 6 integrates the complete workflow with maintenance, readiness, safe operational counters, PostgreSQL end-to-end verification, and production-like Docker defaults.
+JobPilot collects public vacancies and helps a person decide which ones to pursue. It reads Greenhouse, Lever, Ashby, Recruitee, SmartRecruiters, and Workday boards; normalizes and deduplicates postings; extracts requirements; and ranks jobs against a configured candidate profile. The current filters focus on entry-level software roles in Bucharest and remote positions compatible with working from Romania.
 
-JobPilot never submits applications, uploads documents to employers, answers screening questions, accepts agreements, or contacts recruiters. Stage 5 generates ATS-oriented DOCX/PDF résumés and optional cover notes, but attaching a completed version to an existing application remains a separate human-triggered internal operation. Protected-site browser automation remains out of scope.
+Applications remain human-controlled. JobPilot does not apply to jobs, upload documents to employers, answer screening questions, accept agreements, or contact recruiters. It can prepare DOCX/PDF résumés and cover notes for private review.
 
-## Phase 1 features
+## Project status (October 2026)
+
+JobPilot is running on Azure as a private, single-user service. Its Telegram Mini App is available at [jobpilot.swedencentral.cloudapp.azure.com/mini-app/](https://jobpilot.swedencentral.cloudapp.azure.com/mini-app/) to the configured Telegram owner. Production runs commit `7134d76` with Flyway schema V13, using a single Spring Boot application container, a separately managed Azure PostgreSQL database, and Caddy for HTTPS.
+
+The GitHub `main` branch includes the later V14–V15 candidate-profile ownership migrations. Those changes have not been deployed.
+
+JobPilot 2.0 is being developed in a separate local Codex worktree. Phase 1 (Telegram identity registration, sessions, and owner-only legacy access) has been implemented and tested locally with migration V16, but is not merged or deployed. Phase 2 (independent saved jobs, applications, workflow state, and undo per candidate) is in progress. Public registration and multi-user workflow access are not available in production.
+
+The older "Phase 2 Stage 1–6" sections below document the original single-user application workflow. They are separate from the JobPilot 2.0 multi-user phases.
+
+## Telegram Mini App
+
+The React Mini App provides Discover, Review, Saved, Applications, job details, and Settings screens. It connects to the Spring Boot API and uses signed Telegram launch data for authentication. Open it through the configured Telegram bot; visiting the URL in a normal browser does not provide a signed session.
+
+In the current production deployment, Caddy exposes only the Mini App and its v1 API paths. Internal application, document, and operational endpoints remain private. Existing v1 workflow records are globally scoped, so adding users to the legacy allowlists is **not** a safe way to enable multi-user access.
+
+The repository's Docker Compose example includes a PostgreSQL container for local use. It does not represent the live Azure layout with managed PostgreSQL. Do not use it as a production upgrade procedure.
+
+## JobPilot 2.0 roadmap
+
+1. Establish a reproducible test baseline and rehearse the V13–V15 migration. Completed locally.
+2. Add authenticated Telegram account registration without sharing legacy user data. Implemented and tested locally, not merged.
+3. Scope saved jobs, application records, revisions, and undo to each candidate. In development.
+4. Add editable onboarding profiles and candidate-specific vacancy matching.
+5. Add personal notification preferences and delivery, followed by optional AI-assisted onboarding.
+
+The vacancy catalogue and ATS ingestion remain shared. Per-user preferences, scoring, and application history will require explicit candidate ownership before external beta access.
+
+## Original single-user features
 
 - Java 21 and Spring Boot 3.3
 - PostgreSQL persistence with Flyway-managed `jobs`, `job_requirements`, `job_scores`, and `source_fetch_logs`
