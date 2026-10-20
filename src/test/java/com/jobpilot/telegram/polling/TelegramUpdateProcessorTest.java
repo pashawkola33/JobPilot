@@ -39,32 +39,32 @@ class TelegramUpdateProcessorTest {
         client = org.mockito.Mockito.mock(TelegramClient.class);
         dispatcher = org.mockito.Mockito.mock(TelegramCommandDispatcher.class);
         JobPilotProperties properties = properties();
-        processor = new TelegramUpdateProcessor(client, new TelegramAuthorizationPolicy(properties),
+        processor = new TelegramUpdateProcessor(client, new TelegramAuthorizationPolicy(properties, new com.jobpilot.identity.IdentityProperties(false,false,777L,List.of(),null,null)),
                 new TelegramCommandParser(properties), dispatcher, new TelegramMessageRenderer());
         when(dispatcher.dispatch(any(), any())).thenReturn(new TelegramCommandResult("done", "Saved"));
     }
 
     @Test
     void acceptsOnlyConfiguredChatAndUser() {
-        processor.process(message(1, -100555, 777, "/save 42"));
+        processor.process(message(1, 777, 777, "/save 42"));
         processor.process(message(2, -100999, 777, "/save 42"));
-        processor.process(message(3, -100555, 999, "/save 42"));
+        processor.process(message(3, 777, 999, "/save 42"));
 
         verify(dispatcher, org.mockito.Mockito.times(1)).dispatch(any(), any());
-        verify(client, org.mockito.Mockito.times(1)).sendMessage(eq("-100555"), any(), any());
+        verify(client, org.mockito.Mockito.times(1)).sendMessage(eq("777"), any(), any());
     }
 
     @Test
     void malformedAuthorizedCommandGetsSafeReplyWithoutDispatch() {
-        processor.process(message(1, -100555, 777, "/save nope"));
+        processor.process(message(1, 777, 777, "/save nope"));
         verify(dispatcher, never()).dispatch(any(), any());
-        verify(client).sendMessage(eq("-100555"), any(), any());
+        verify(client).sendMessage(eq("777"), any(), any());
     }
 
     @Test
     void validAndMalformedCallbacksAreAlwaysAnswered() {
-        processor.process(callback(1, "app:applied:42", -100555, 777));
-        processor.process(callback(2, "invalid free text", -100555, 777));
+        processor.process(callback(1, "app:applied:42", 777, 777));
+        processor.process(callback(2, "invalid free text", 777, 777));
 
         ArgumentCaptor<TelegramCommand> command = ArgumentCaptor.forClass(TelegramCommand.class);
         verify(dispatcher).dispatch(command.capture(), any());
@@ -80,7 +80,7 @@ class TelegramUpdateProcessorTest {
                 TelegramTransportException.Operation.SEND_MESSAGE))
                 .when(client).sendMessage(any(), any(), any());
 
-        assertThatCode(() -> processor.process(message(1, -100555, 777, "/save 42")))
+        assertThatCode(() -> processor.process(message(1, 777, 777, "/save 42")))
                 .doesNotThrowAnyException();
 
         verify(dispatcher, org.mockito.Mockito.times(1)).dispatch(any(), any());
@@ -91,7 +91,7 @@ class TelegramUpdateProcessorTest {
         TelegramBotStateService state = org.mockito.Mockito.mock(TelegramBotStateService.class);
         when(state.load()).thenReturn(Optional.of(
                 new TelegramBotStateService.StateSnapshot(0L, null, 0)));
-        TelegramUpdate unauthorized = callback(1, "app:save:42", -100555, 999);
+        TelegramUpdate unauthorized = callback(1, "app:save:42", 777, 999);
         when(client.getUpdates(1L, Duration.ofSeconds(25), 50))
                 .thenReturn(List.of(unauthorized));
 
@@ -119,7 +119,7 @@ class TelegramUpdateProcessorTest {
 
     private JobPilotProperties properties() {
         return TestProperties.create(new JobPilotProperties.Telegram(
-                "obviously-fake-token", "-100555", "JobPilotBot", true, "-100555", "777",
+                "obviously-fake-token", "777", "JobPilotBot", true, "777", "777",
                 Duration.ofSeconds(25), Duration.ofSeconds(2), 50, 3, true));
     }
 }

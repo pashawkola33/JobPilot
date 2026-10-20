@@ -60,7 +60,8 @@ class MiniAppControllerTest {
     private MockMvc mvcWith(JobPilotProperties properties) {
         ObjectMapper objectMapper = new ObjectMapper();
         MiniAppAuthInterceptor interceptor = new MiniAppAuthInterceptor(properties,
-                new TelegramInitDataValidator(properties, objectMapper, clock), objectMapper);
+                new TelegramInitDataValidator(properties, objectMapper, clock), objectMapper,
+                new com.jobpilot.identity.IdentityProperties(false,false,ALLOWED_USER,List.of(),null,null));
         return MockMvcBuilders.standaloneSetup(new MiniAppController(snapshots, workflows))
                 .addInterceptors(interceptor).build();
     }

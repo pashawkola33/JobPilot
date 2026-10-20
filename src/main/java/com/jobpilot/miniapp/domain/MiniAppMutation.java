@@ -27,13 +27,24 @@ import java.time.Instant;
  * make the old undo stale.
  */
 @Entity
+@org.hibernate.annotations.DynamicInsert
 @Table(name = "mini_app_mutation")
 public class MiniAppMutation {
+    @Column(name = "candidate_id", updatable = false)
+    private Long candidateId;
+
+    public Long getCandidateId() { return candidateId; }
+    public MiniAppMutation ownedBy(long candidateId) {
+        if (candidateId <= 0 || this.candidateId != null && this.candidateId != candidateId) throw new IllegalArgumentException("Invalid owner");
+        this.candidateId = candidateId;
+        return this;
+    }
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "mutation_key", nullable = false, updatable = false, unique = true)
+    @Column(name = "mutation_key", nullable = false, updatable = false)
     private String mutationKey;
 
     @Column(name = "job_id", nullable = false, updatable = false)
@@ -47,7 +58,7 @@ public class MiniAppMutation {
     @Column(name = "requested_status", nullable = false, updatable = false)
     private WorkflowStatus requestedStatus;
 
-    @Column(name = "mutation_revision", nullable = false, updatable = false, unique = true)
+    @Column(name = "mutation_revision", nullable = false, updatable = false)
     private long mutationRevision;
 
     @Column(name = "changed", nullable = false, updatable = false)

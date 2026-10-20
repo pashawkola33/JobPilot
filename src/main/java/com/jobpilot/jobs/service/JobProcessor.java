@@ -41,6 +41,12 @@ public class JobProcessor {
     private final ObjectMapper objectMapper;
     private final UrlCanonicalizer urlCanonicalizer;
     private final Clock clock;
+    private com.jobpilot.personalizedmatching.MatchingCatalogue catalogue;
+    @Autowired void matchingCatalogue(com.jobpilot.personalizedmatching.MatchingCatalogue value) { catalogue=value; }
+    private JobProcessingResult captured(JobProcessingResult result,RawJob raw) {
+        if(catalogue!=null&&result.job()!=null)catalogue.capture(result.job(),raw);
+        return result;
+    }
 
     @Autowired
     public JobProcessor(JobNormalizer normalizer, LocationEligibilityService eligibility,
@@ -123,28 +129,33 @@ public class JobProcessor {
         Job normalized = normalizer.normalize(raw, location, earlyCareer, screening);
         Optional<Job> duplicate = deduplication.findDuplicate(normalized);
         if (duplicate.isEmpty()) {
-            return new JobProcessingResult(normalized, extractScoreAndSave(normalized),
-                    JobPersistenceOutcome.CREATED, location, earlyCareer, relevanceDecision, screening);
+            return captured(new JobProcessingResult(normalized, extractScoreAndSave(normalized),
+                    JobPersistenceOutcome.CREATED, location, earlyCareer, relevanceDecision, screening),raw);
         }
         Job existing = duplicate.get();
+        if(existing.isLegacyAdmissionPending()) {
+            existing.refreshContent(normalized,clock.instant());existing.admitLegacy();
+            return captured(new JobProcessingResult(existing,extractScoreAndSave(existing),JobPersistenceOutcome.CREATED,
+                    location,earlyCareer,relevanceDecision,screening),raw);
+        }
         if (existing.getDescriptionHash().equals(normalized.getDescriptionHash())) {
             boolean meaningfulChange = existing.refreshScreening(normalized);
             deduplication.recordSeen(existing);
             if (meaningfulChange) {
                 // Screening can change with title/location metadata, all of which feed extraction
                 // or scoring, so rebuild both artifacts rather than retain a potentially stale score.
-                return new JobProcessingResult(existing, extractScoreAndSave(existing),
+                return captured(new JobProcessingResult(existing, extractScoreAndSave(existing),
                         JobPersistenceOutcome.UPDATED, location, earlyCareer,
-                        relevanceDecision, screening);
+                        relevanceDecision, screening),raw);
             }
             ScoreCard existingScore = scores.findByJobId(existing.getId())
                     .map(JobScore::toValue).orElse(null);
-            return new JobProcessingResult(existing, existingScore, JobPersistenceOutcome.UNCHANGED,
-                    location, earlyCareer, relevanceDecision, screening);
+            return captured(new JobProcessingResult(existing, existingScore, JobPersistenceOutcome.UNCHANGED,
+                    location, earlyCareer, relevanceDecision, screening),raw);
         }
         existing.refreshContent(normalized, clock.instant());
-        return new JobProcessingResult(existing, extractScoreAndSave(existing),
-                JobPersistenceOutcome.UPDATED, location, earlyCareer, relevanceDecision, screening);
+        return captured(new JobProcessingResult(existing, extractScoreAndSave(existing),
+                JobPersistenceOutcome.UPDATED, location, earlyCareer, relevanceDecision, screening),raw);
     }
 
     /**
@@ -164,8 +175,12 @@ public class JobProcessor {
         }
         Optional<Job> stored = findExistingForReconciliation(raw);
         if (stored.isEmpty()) {
-            return new JobProcessingResult(null, null, JobPersistenceOutcome.NOT_PERSISTED,
-                    location, career, relevanceDecision, current);
+            Job normalized=normalizer.normalize(raw,location,career,current);
+            // An identity conflict is not a candidate rejection; never rewrite an unrelated URL row.
+            if(deduplication.findDuplicate(normalized).isPresent())
+                return new JobProcessingResult(null,null,JobPersistenceOutcome.NOT_PERSISTED,location,career,relevanceDecision,current);
+            normalized.markCatalogueOnly();jobs.save(normalized);
+            return captured(new JobProcessingResult(normalized,null,JobPersistenceOutcome.CREATED,location,career,relevanceDecision,current),raw);
         }
 
         Job existing = stored.get();
@@ -177,13 +192,14 @@ public class JobProcessor {
             scores.flush();
             changed = true;
         }
+        existing.refreshCatalogueContent(normalizer.normalize(raw,location,career,current),clock.instant());
         jobs.save(existing);
         ScreeningDecision persisted = new ScreeningDecision(ScreeningDisposition.REJECT,
                 existing.getLocationDisposition(), existing.getCareerDisposition(),
                 existing.getRelevanceDisposition(), current.reasons());
-        return new JobProcessingResult(existing, null,
+        return captured(new JobProcessingResult(existing, null,
                 changed ? JobPersistenceOutcome.UPDATED : JobPersistenceOutcome.UNCHANGED,
-                location, career, relevanceDecision, persisted);
+                location, career, relevanceDecision, persisted),raw);
     }
 
     private Optional<Job> findExistingForReconciliation(RawJob raw) {

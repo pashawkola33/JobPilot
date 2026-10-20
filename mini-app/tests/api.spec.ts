@@ -91,6 +91,7 @@ const SNAPSHOT = {
 
 /** Injects a Telegram host that exposes only what the adapter is allowed to read. */
 async function withTelegram(page: Page, initData: string = FAKE_INIT_DATA) {
+  await page.route('**/api/mini-app/v2/**', (route) => route.fulfill({ status: 503, json: { category: 'IDENTITY_DISABLED' } }));
   await page.addInitScript((value) => {
     (window as unknown as { Telegram: unknown }).Telegram = {
       WebApp: {

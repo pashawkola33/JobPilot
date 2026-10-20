@@ -1,0 +1,32 @@
+# Candidate-aware V19 recovery: keep the explicitly authorized owner online.
+# These are literal settings so ordinary production aliases cannot reopen background work.
+spring:
+  flyway:
+    enabled: true
+    target: "19"
+    validate-on-migrate: true
+    # A single empty pattern clears Flyway's default *:future; an empty list does not.
+    ignore-migration-patterns: [""]
+jobpilot:
+  personalized-matching:
+    enabled: false
+  identity:
+    enabled: true
+    registration-enabled: false
+  mini-app:
+    enabled: true
+  scheduled-tasks-enabled: false
+  telegram:
+    enabled: false
+    commands-enabled: false
+    channel-id: ""
+    match-notifications-enabled: false
+    review-digest-enabled: false
+  maintenance:
+    enabled: false
+  score-rescore-preview:
+    enabled: false
+  score-rescore-command:
+    mode: "OFF"
+  source-log-cleanup:
+    mode: "OFF"

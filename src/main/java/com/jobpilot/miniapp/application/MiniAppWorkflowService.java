@@ -109,12 +109,22 @@ public class MiniAppWorkflowService {
      * it retries.
      */
     public MiniAppOperation change(String mutationId, long jobId, WorkflowStatus requested) {
-        return attempt(() -> forward(mutationId, jobId, requested));
+        return attempt(() -> forward(null, mutationId, jobId, requested));
     }
 
     /** Reverses the mutation the token addresses, or refuses with a typed stale conflict. */
     public MiniAppOperation undo(String mutationId, String undoToken) {
-        return attempt(() -> reverse(mutationId, undoToken));
+        return attempt(() -> reverse(null, mutationId, undoToken));
+    }
+
+    public MiniAppOperation change(long candidateId, String mutationId, long jobId, WorkflowStatus requested) {
+        if (candidateId <= 0) throw new IllegalArgumentException("Candidate is required");
+        return attempt(() -> forward(candidateId, mutationId, jobId, requested));
+    }
+
+    public MiniAppOperation undo(long candidateId, String mutationId, String undoToken) {
+        if (candidateId <= 0) throw new IllegalArgumentException("Candidate is required");
+        return attempt(() -> reverse(candidateId, mutationId, undoToken));
     }
 
     private MiniAppOperation attempt(java.util.function.Supplier<MiniAppOperation> operation) {
@@ -132,21 +142,21 @@ public class MiniAppWorkflowService {
 
     // ------------------------------------------------------------------ forward
 
-    private MiniAppOperation forward(String mutationId, long jobId, WorkflowStatus requested) {
-        MiniAppState state = lockRevisionRow();
+    private MiniAppOperation forward(Long candidateId, String mutationId, long jobId, WorkflowStatus requested) {
+        MiniAppState state = lockRevisionRow(candidateId);
 
         // Inside the lock, never before it: checking earlier would let a duplicate slip past the
         // original instead of queueing behind it, which is the whole recovery mechanism.
-        MiniAppMutation duplicate = ledger.findByMutationKey(mutationId).orElse(null);
+        MiniAppMutation duplicate = (candidateId == null ? ledger.findByMutationKey(mutationId) : ledger.findByCandidateIdAndMutationKey(candidateId, mutationId)).orElse(null);
         if (duplicate != null) {
-            return replay(duplicate, MiniAppMutationKind.WORKFLOW, jobId, requested);
+            return replay(candidateId, duplicate, MiniAppMutationKind.WORKFLOW, jobId, requested);
         }
 
         // Locked in the order every other writer uses — job, then workflow, then application —
         // so a concurrent Telegram command cannot deadlock against this one.
         requireJob(jobId);
-        JobWorkflowState workflowBefore = workflowStates.findByJobIdForUpdate(jobId).orElse(null);
-        ApplicationRecord applicationBefore = applicationRows.findByJobIdForUpdate(jobId).orElse(null);
+        JobWorkflowState workflowBefore = workflow(candidateId, jobId).orElse(null);
+        ApplicationRecord applicationBefore = application(candidateId, jobId).orElse(null);
 
         MiniAppMutation.PriorState prior = new MiniAppMutation.PriorState(
                 workflowBefore == null ? null : workflowBefore.getStatus(),
@@ -159,7 +169,7 @@ public class MiniAppWorkflowService {
 
         long revision = state.nextRevision();
 
-        WorkflowView workflow = switch (requested) {
+        WorkflowView workflow = candidateId != null ? review.transition(candidateId, jobId, requested) : switch (requested) {
             case SAVED -> review.save(jobId);
             case APPLIED -> review.applied(jobId);
             case DISMISSED -> review.dismiss(jobId);
@@ -171,12 +181,13 @@ public class MiniAppWorkflowService {
             ApplicationStatus tracked = requested == WorkflowStatus.SAVED
                     ? ApplicationStatus.SAVED : ApplicationStatus.APPLIED;
             // One attempt joined to this transaction; the retry above owns the second chance.
-            ApplicationMutationResult result = applications.transitionInCurrentTransaction(
-                    jobId, tracked, null, null, ApplicationStatusChangeSource.INTERNAL);
+            ApplicationMutationResult result = candidateId == null
+                    ? applications.transitionInCurrentTransaction(jobId, tracked, null, null, ApplicationStatusChangeSource.INTERNAL)
+                    : applications.transitionInCurrentTransaction(candidateId, jobId, tracked, null, null, ApplicationStatusChangeSource.INTERNAL);
             changed = changed || result.changed();
         }
 
-        ApplicationRecord applicationAfter = applicationRows.findByJobId(jobId).orElse(null);
+        ApplicationRecord applicationAfter = application(candidateId, jobId).orElse(null);
         Long historyAfter = applicationAfter == null
                 ? null : history.findFrontier(applicationAfter.getId());
         // A moved frontier is this mutation's own row: the application is locked for the whole
@@ -185,7 +196,7 @@ public class MiniAppWorkflowService {
 
         // Re-read under the lock we already hold: the flush that persisted the change also
         // advanced the workflow version, and it is that post-mutation value a reversal must find.
-        JobWorkflowState workflowAfter = workflowStates.findByJobIdForUpdate(jobId).orElse(null);
+        JobWorkflowState workflowAfter = workflow(candidateId, jobId).orElse(null);
 
         MiniAppMutation.ResultingState resulting = new MiniAppMutation.ResultingState(
                 workflowAfter == null ? null : workflowAfter.getStatus(),
@@ -199,9 +210,9 @@ public class MiniAppWorkflowService {
         // Undo is offered only for a mutation that actually moved something. A no-op has nothing
         // to reverse, and arming it would let a stale token reverse a later real action.
         String undoToken = changed ? UUID.randomUUID().toString() : null;
-        supersedeEarlierUndo(jobId);
-        MiniAppMutation recorded = ledger.save(MiniAppMutation.workflow(mutationId, jobId,
-                requested, revision, changed, prior, resulting, undoToken, clock.instant()));
+        supersedeEarlierUndo(candidateId, jobId);
+        MiniAppMutation recorded = ledger.save(owned(candidateId, MiniAppMutation.workflow(mutationId, jobId,
+                requested, revision, changed, prior, resulting, undoToken, clock.instant())));
 
         return new MiniAppOperation(mutationId, revision, false, jobId,
                 workflow.status(), changed, resulting.applicationStatus(),
@@ -210,26 +221,26 @@ public class MiniAppWorkflowService {
 
     // ------------------------------------------------------------------ reversal
 
-    private MiniAppOperation reverse(String mutationId, String undoToken) {
-        MiniAppState state = lockRevisionRow();
+    private MiniAppOperation reverse(Long candidateId, String mutationId, String undoToken) {
+        MiniAppState state = lockRevisionRow(candidateId);
 
-        MiniAppMutation duplicate = ledger.findByMutationKey(mutationId).orElse(null);
+        MiniAppMutation duplicate = (candidateId == null ? ledger.findByMutationKey(mutationId) : ledger.findByCandidateIdAndMutationKey(candidateId, mutationId)).orElse(null);
         if (duplicate != null) {
             // A replayed undo must not reverse twice; the recorded outcome is the answer.
-            return replayUndo(duplicate, undoToken);
+            return replayUndo(candidateId, duplicate, undoToken);
         }
 
-        MiniAppMutation original = ledger.findByUndoToken(undoToken)
+        MiniAppMutation original = (candidateId == null ? ledger.findByUndoToken(undoToken) : ledger.findByCandidateIdAndUndoToken(candidateId, undoToken))
                 .orElseThrow(MiniAppMutationException::undoStale);
         long jobId = original.getJobId();
 
         requireJob(jobId);
-        JobWorkflowState workflow = workflowStates.findByJobIdForUpdate(jobId).orElse(null);
-        ApplicationRecord application = applicationRows.findByJobIdForUpdate(jobId).orElse(null);
+        JobWorkflowState workflow = workflow(candidateId, jobId).orElse(null);
+        ApplicationRecord application = application(candidateId, jobId).orElse(null);
 
         // Both halves of I7: still the newest Mini App mutation for this job, and the durable
         // state still matches the fingerprint it produced.
-        MiniAppMutation newest = ledger.findTopByJobIdOrderByMutationRevisionDesc(jobId)
+        MiniAppMutation newest = (candidateId == null ? ledger.findTopByJobIdOrderByMutationRevisionDesc(jobId) : ledger.findTopByCandidateIdAndJobIdOrderByMutationRevisionDesc(candidateId, jobId))
                 .orElseThrow(MiniAppMutationException::undoStale);
         if (!Objects.equals(newest.getId(), original.getId())) {
             throw MiniAppMutationException.undoStale();
@@ -249,8 +260,8 @@ public class MiniAppWorkflowService {
 
         WorkflowStatus restored = original.getPreviousWorkflowStatus() == null
                 ? WorkflowStatus.UNREVIEWED : original.getPreviousWorkflowStatus();
-        ApplicationRecord after = applicationRows.findByJobId(jobId).orElse(null);
-        JobWorkflowState workflowAfter = workflowStates.findByJobIdForUpdate(jobId).orElse(null);
+        ApplicationRecord after = application(candidateId, jobId).orElse(null);
+        JobWorkflowState workflowAfter = workflow(candidateId, jobId).orElse(null);
 
         MiniAppMutation.ResultingState resulting = new MiniAppMutation.ResultingState(
                 workflowAfter == null ? null : workflowAfter.getStatus(),
@@ -261,8 +272,8 @@ public class MiniAppWorkflowService {
                 false,
                 null);
 
-        MiniAppMutation record = ledger.save(MiniAppMutation.reversal(mutationId, jobId,
-                restored, revision, prior, resulting, now));
+        MiniAppMutation record = ledger.save(owned(candidateId, MiniAppMutation.reversal(mutationId, jobId,
+                restored, revision, prior, resulting, now)));
         // Clearing the original's token is what makes a replayed undo a no-op rather than a
         // second reversal.
         original.markReversed(record.getId());
@@ -278,7 +289,11 @@ public class MiniAppWorkflowService {
      * The first statement of every mutation. Held until commit, which is what makes revision
      * order commit order and what makes a duplicate wait rather than race.
      */
-    private MiniAppState lockRevisionRow() {
+    private MiniAppState lockRevisionRow(Long candidateId) {
+        if (candidateId != null) {
+            states.ensureCandidate(candidateId);
+            return states.findByCandidateIdForUpdate(candidateId).orElseThrow();
+        }
         return states.findByIdForUpdate(MiniAppState.SINGLETON_ID)
                 .orElseThrow(() -> new IllegalStateException(
                         "mini_app_state singleton row is missing; V13 did not run"));
@@ -291,13 +306,13 @@ public class MiniAppWorkflowService {
      * newer mutation. The undo capability is read live: a superseding mutation will have cleared
      * this one's token, so a replay never re-arms a stale Undo.
      */
-    private MiniAppOperation replay(MiniAppMutation recorded, MiniAppMutationKind kind,
+    private MiniAppOperation replay(Long candidateId, MiniAppMutation recorded, MiniAppMutationKind kind,
                                     long jobId, WorkflowStatus requested) {
         if (recorded.getKind() != kind || recorded.getJobId() != jobId
                 || recorded.getRequestedStatus() != requested) {
             throw MiniAppMutationException.idempotencyConflict();
         }
-        return recordedResult(recorded, liveUndoToken(recorded));
+        return recordedResult(recorded, liveUndoToken(candidateId, recorded));
     }
 
     /**
@@ -307,15 +322,15 @@ public class MiniAppWorkflowService {
      * mutation points at the reversal that spent it, so re-using one mutation id to undo a
      * different mutation is a payload mismatch rather than a silent no-op.
      */
-    private MiniAppOperation replayUndo(MiniAppMutation recorded, String undoToken) {
+    private MiniAppOperation replayUndo(Long candidateId, MiniAppMutation recorded, String undoToken) {
         if (recorded.getKind() != MiniAppMutationKind.REVERSAL) {
             throw MiniAppMutationException.idempotencyConflict();
         }
-        MiniAppMutation original = ledger.findByUndoToken(undoToken).orElse(null);
+        MiniAppMutation original = (candidateId == null ? ledger.findByUndoToken(undoToken) : ledger.findByCandidateIdAndUndoToken(candidateId, undoToken)).orElse(null);
         if (original == null || !Objects.equals(original.getReversedByMutationId(), recorded.getId())) {
             throw MiniAppMutationException.idempotencyConflict();
         }
-        return recordedResult(recorded, liveUndoToken(recorded));
+        return recordedResult(recorded, liveUndoToken(candidateId, recorded));
     }
 
     private MiniAppOperation recordedResult(MiniAppMutation recorded, String liveUndoToken) {
@@ -339,19 +354,19 @@ public class MiniAppWorkflowService {
      * application, all under the revision row already held), so this introduces no new lock
      * ordering and cannot deadlock against a concurrent Telegram command.
      */
-    private String liveUndoToken(MiniAppMutation recorded) {
+    private String liveUndoToken(Long candidateId, MiniAppMutation recorded) {
         if (!recorded.isReversible()) return null;
         long jobId = recorded.getJobId();
         requireJob(jobId);
-        JobWorkflowState workflow = workflowStates.findByJobIdForUpdate(jobId).orElse(null);
-        ApplicationRecord application = applicationRows.findByJobIdForUpdate(jobId).orElse(null);
+        JobWorkflowState workflow = workflow(candidateId, jobId).orElse(null);
+        ApplicationRecord application = application(candidateId, jobId).orElse(null);
         return reversal.isStillReversible(recorded, workflow, application)
                 ? recorded.getUndoToken() : null;
     }
 
     /** A newer mutation for the same job retires every older undo capability on it. */
-    private void supersedeEarlierUndo(long jobId) {
-        ledger.findByJobIdAndReversalState(jobId, MiniAppReversalState.REVERSIBLE)
+    private void supersedeEarlierUndo(Long candidateId, long jobId) {
+        (candidateId == null ? ledger.findByJobIdAndReversalState(jobId, MiniAppReversalState.REVERSIBLE) : ledger.findByCandidateIdAndJobIdAndReversalState(candidateId, jobId, MiniAppReversalState.REVERSIBLE))
                 .forEach(MiniAppMutation::supersede);
     }
 
@@ -360,6 +375,20 @@ public class MiniAppWorkflowService {
      * command path use. Locking the workflow row before the job row would invert that order and
      * make a Mini App mutation deadlock against a concurrent Telegram command.
      */
+    private MiniAppMutation owned(Long candidateId, MiniAppMutation mutation) {
+        return candidateId == null ? mutation : mutation.ownedBy(candidateId);
+    }
+
+    private java.util.Optional<JobWorkflowState> workflow(Long candidateId, long jobId) {
+        return candidateId == null ? workflowStates.findByJobIdForUpdate(jobId)
+                : workflowStates.findByCandidateIdAndJobIdForUpdate(candidateId, jobId);
+    }
+
+    private java.util.Optional<ApplicationRecord> application(Long candidateId, long jobId) {
+        return candidateId == null ? applicationRows.findByJobIdForUpdate(jobId)
+                : applicationRows.findByCandidateIdAndJobIdForUpdate(candidateId, jobId);
+    }
+
     private void requireJob(long jobId) {
         if (jobId <= 0 || jobs.findByIdForUpdate(jobId).isEmpty()) {
             throw new JobReviewException(JobReviewException.Category.JOB_NOT_FOUND,

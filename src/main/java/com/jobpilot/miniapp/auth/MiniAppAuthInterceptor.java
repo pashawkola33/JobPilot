@@ -3,6 +3,7 @@ package com.jobpilot.miniapp.auth;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jobpilot.config.JobPilotProperties;
 import com.jobpilot.miniapp.api.MiniAppApiError;
+import com.jobpilot.identity.IdentityProperties;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -13,13 +14,10 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 /**
- * The single gate in front of every Mini App route: feature flag, then Telegram initData
- * validation, then the allow-list. Nothing reaches a controller until all three pass.
+ * The v1 gate: feature flag, signed Telegram launch, allow-list, and explicit legacy owner.
  *
- * <p>The authenticated user id is deliberately not forwarded. JobPilot stores one person's
- * jobs — {@code provider_tenant} identifies an ATS board, not a JobPilot account — so the
- * allow-list is the whole authorization boundary, and passing an id onward would invite
- * code that looks tenant-aware without a schema that is.
+ * <p>These controllers still operate on the original global workflow. Account-only beta
+ * identities use the separate v2 principal boundary and cannot reach this workflow.
  */
 @Component
 public class MiniAppAuthInterceptor implements HandlerInterceptor {
@@ -29,13 +27,15 @@ public class MiniAppAuthInterceptor implements HandlerInterceptor {
     private final JobPilotProperties properties;
     private final TelegramInitDataValidator validator;
     private final ObjectMapper objectMapper;
+    private final IdentityProperties identity;
 
     public MiniAppAuthInterceptor(JobPilotProperties properties,
                                   TelegramInitDataValidator validator,
-                                  ObjectMapper objectMapper) {
+                                  ObjectMapper objectMapper, IdentityProperties identity) {
         this.properties = properties;
         this.validator = validator;
         this.objectMapper = objectMapper;
+        this.identity = identity;
     }
 
     @Override
@@ -60,9 +60,10 @@ public class MiniAppAuthInterceptor implements HandlerInterceptor {
             };
         }
 
-        if (!properties.miniApp().allows(result.userId())) {
+        if (!properties.miniApp().allows(result.userId()) || !identity.isLegacyOwner(result.userId())) {
             return reject(response, HttpStatus.FORBIDDEN, MiniAppApiError.forbidden());
         }
+        response.setHeader("Cache-Control", "no-store");
         return true;
     }
 

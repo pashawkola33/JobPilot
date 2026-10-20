@@ -2,12 +2,13 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import './styles/app.css';
 import { App } from './App';
+import { AccountGate } from './components/AccountGate';
 
 const root = createRoot(document.getElementById('root')!);
 
 root.render(
   <StrictMode>
-    <App />
+    <AccountGate><App /></AccountGate>
   </StrictMode>,
 );
 

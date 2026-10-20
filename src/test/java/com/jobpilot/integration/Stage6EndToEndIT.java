@@ -94,7 +94,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
         "jobpilot.scheduling.digest-cron=0 0 0 1 1 *",
         "jobpilot.telegram.commands-enabled=false",
         "jobpilot.telegram.bot-username=JobPilotBot",
-        "jobpilot.telegram.allowed-chat-id=-100555",
+        "jobpilot.telegram.allowed-chat-id=777",
         "jobpilot.telegram.allowed-user-id=777",
         "jobpilot.llm.enabled=true",
         "jobpilot.llm.provider=openai",
@@ -127,6 +127,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
         "jobpilot.maintenance.enabled=false"
 })
 class Stage6EndToEndIT {
+    @org.springframework.beans.factory.annotation.Autowired private org.springframework.jdbc.core.JdbcTemplate matchingCleanupJdbc;
+
     private static final Path STORAGE = temporaryStorage();
 
     @Container
@@ -180,6 +182,7 @@ class Stage6EndToEndIT {
         jdbc.update("delete from llm_budget_reservations");
         jdbc.update("delete from job_requirements");
         jdbc.update("delete from job_scores");
+        com.jobpilot.support.MatchingTestCleanup.clear(matchingCleanupJdbc);
         jobs.deleteAll();
         telegramStates.deleteAll();
         clearStorage();
@@ -313,7 +316,7 @@ class Stage6EndToEndIT {
         verify(provider, times(3)).execute(any());
         assertThat(telegramState.load().orElseThrow().lastProcessedUpdateId()).isEqualTo(12L);
 
-        client.addBatch(message(13, -100555, 999, "/withdraw " + jobId),
+        client.addBatch(message(13, 777, 999, "/withdraw " + jobId),
                 message(14, "/status " + jobId));
         reconstructed.pollOnce();
         assertThat(applications.findByJobId(jobId).orElseThrow().getStatus())
@@ -334,11 +337,11 @@ class Stage6EndToEndIT {
 
     private TelegramUpdatePoller poller(FakeTelegramClient client) {
         JobPilotProperties telegramProperties = TestProperties.create(
-                new JobPilotProperties.Telegram("obviously-fake-token", "-100555",
-                        "JobPilotBot", true, "-100555", "777", Duration.ofSeconds(1),
+                new JobPilotProperties.Telegram("obviously-fake-token", "777",
+                        "JobPilotBot", true, "777", "777", Duration.ofSeconds(1),
                         Duration.ZERO, 50, 3, false));
         TelegramUpdateProcessor processor = new TelegramUpdateProcessor(client,
-                new TelegramAuthorizationPolicy(telegramProperties),
+                new TelegramAuthorizationPolicy(telegramProperties, new com.jobpilot.identity.IdentityProperties(false,false,777L,List.of(),null,null)),
                 new TelegramCommandParser(telegramProperties), dispatcher, renderer);
         return new TelegramUpdatePoller(client, processor, telegramState, telegramProperties);
     }
@@ -364,7 +367,7 @@ class Stage6EndToEndIT {
     }
 
     private TelegramUpdate message(long updateId, String text) {
-        return message(updateId, -100555, 777, text);
+        return message(updateId, 777, 777, text);
     }
 
     private TelegramUpdate message(long updateId, long chat, long user, String text) {

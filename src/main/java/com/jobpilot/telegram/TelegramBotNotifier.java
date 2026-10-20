@@ -2,6 +2,7 @@ package com.jobpilot.telegram;
 
 import com.jobpilot.common.ExternalHttpClient;
 import com.jobpilot.config.JobPilotProperties;
+import com.jobpilot.identity.IdentityProperties;
 import com.jobpilot.jobs.domain.Job;
 import com.jobpilot.jobs.domain.JobScore;
 import com.jobpilot.jobs.domain.ScreeningDisposition;
@@ -17,15 +18,17 @@ public class TelegramBotNotifier implements TelegramNotifier {
     private static final String DIGEST_HEADER = "🟡 <b>Daily good matches</b>\n\n";
     private final ExternalHttpClient http;
     private final JobPilotProperties.Telegram telegram;
+    private final IdentityProperties identity;
 
-    public TelegramBotNotifier(ExternalHttpClient http, JobPilotProperties properties) {
+    public TelegramBotNotifier(ExternalHttpClient http, JobPilotProperties properties, IdentityProperties identity) {
         this.http = http;
         this.telegram = properties.telegram();
+        this.identity = identity;
     }
 
     @Override
     public void notifyExcellent(Job job, ScoreCard score) {
-        if (!enabled() || job.getScreeningDisposition() != ScreeningDisposition.MATCH) return;
+        if (!enabled() || job.isLegacyAdmissionPending() || job.getScreeningDisposition() != ScreeningDisposition.MATCH) return;
         String text = "🟢 <b>MATCH: " + score.score() + "/100</b>\n\n"
                 + "<b>" + escape(job.getTitle()) + "</b>\n" + escape(job.getCompany()) + "\n"
                 + "📍 " + escape(String.valueOf(job.getLocation())) + " — " + job.getRemoteType() + "\n\n"
@@ -38,7 +41,7 @@ public class TelegramBotNotifier implements TelegramNotifier {
     public void sendGoodMatchDigest(List<JobScore> jobScores) {
         if (!enabled() || jobScores.isEmpty()) return;
         jobScores = jobScores.stream()
-                .filter(score -> score.getJob().getScreeningDisposition() == ScreeningDisposition.MATCH)
+                .filter(score -> !score.getJob().isLegacyAdmissionPending() && score.getJob().getScreeningDisposition() == ScreeningDisposition.MATCH)
                 .toList();
         if (jobScores.isEmpty()) return;
         StringBuilder message = new StringBuilder(DIGEST_HEADER);
@@ -86,8 +89,9 @@ public class TelegramBotNotifier implements TelegramNotifier {
     }
 
     private boolean enabled() {
-        // The broadcast channel is independent of the private review bot switch.
-        return telegram.channelConfigured();
+        if (!telegram.channelConfigured()) return false;
+        try { return identity.isLegacyOwner(Long.parseLong(telegram.channelId())); }
+        catch (NumberFormatException invalidDestination) { return false; }
     }
 
     private String lines(String prefix, List<String> values) {

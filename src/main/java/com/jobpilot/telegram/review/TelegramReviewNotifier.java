@@ -1,6 +1,7 @@
 package com.jobpilot.telegram.review;
 
 import com.jobpilot.config.JobPilotProperties;
+import com.jobpilot.identity.IdentityProperties;
 import com.jobpilot.jobreview.application.JobQueueItem;
 import com.jobpilot.jobreview.application.JobReviewService;
 import com.jobpilot.jobs.domain.ScreeningDisposition;
@@ -33,19 +34,21 @@ public class TelegramReviewNotifier {
     private final TelegramMessageRenderer renderer;
     private final JobPilotProperties.Telegram settings;
     private final Clock clock;
+    private final IdentityProperties identity;
 
     public TelegramReviewNotifier(TelegramClient client,
                                   TelegramJobDeliveryRepository deliveries,
                                   JobReviewService review,
                                   TelegramMessageRenderer renderer,
                                   JobPilotProperties properties,
-                                  Clock clock) {
+                                  Clock clock, IdentityProperties identity) {
         this.client = client;
         this.deliveries = deliveries;
         this.review = review;
         this.renderer = renderer;
         this.settings = properties.telegram();
         this.clock = clock;
+        this.identity = identity;
     }
 
     /** Never throws: a Telegram outage must not fail or roll back an ingestion run. */
@@ -68,6 +71,7 @@ public class TelegramReviewNotifier {
         if (candidates.isEmpty()) return;
         for (String chat : settings.allowedChatIds()) {
             long chatId = Long.parseLong(chat);
+            if (!identity.isLegacyOwner(chatId)) continue;
             List<JobQueueItem> pending = undelivered(chatId, DeliveryType.MATCH_NOTIFICATION,
                     candidates);
             if (pending.isEmpty()) continue;
@@ -89,6 +93,7 @@ public class TelegramReviewNotifier {
         if (candidates.isEmpty()) return;
         for (String chat : settings.allowedChatIds()) {
             long chatId = Long.parseLong(chat);
+            if (!identity.isLegacyOwner(chatId)) continue;
             List<JobQueueItem> pending = undelivered(chatId, DeliveryType.REVIEW_DIGEST_ITEM,
                     candidates);
             if (pending.isEmpty()) continue;

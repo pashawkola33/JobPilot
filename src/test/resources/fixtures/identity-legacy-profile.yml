@@ -1,0 +1,41 @@
+jobpilot:
+  candidate-profile:
+    candidate-key: default
+    profile-version: 2
+    full-name: Test Candidate
+    location: Bucharest, Romania
+    education-institution: Test University
+    degree: BSc in Informatics
+    study-start-year: 2025
+    current-student: true
+    final-year-student: false
+    commercial-java-experience-years: 0
+    skills:
+      - stable-key: java
+        normalized-name: java
+        display-name: java
+        category: JAVA
+        evidence-text: Verified test evidence
+        active: true
+        display-order: 0
+    languages:
+      - stable-key: english
+        language: English
+        verified-level: FLUENT
+        allowed-in-cv: true
+        active: true
+        display-order: 0
+    projects:
+      - stable-key: sample-project
+        name: Sample Project
+        description: Verified personal project
+        project-type: PERSONAL_PROJECT
+        technologies: [Java, Spring Boot]
+        active: true
+        display-order: 0
+        bullets:
+          - stable-key: verified-api
+            verified-text: Implements a verified REST API.
+            keywords: [Java]
+            active: true
+            display-order: 0

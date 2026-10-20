@@ -59,7 +59,7 @@ class TelegramReviewNotifierTest {
 
     private TelegramReviewNotifier notifier(JobPilotProperties.Telegram settings) {
         return new TelegramReviewNotifier(client, deliveries, review,
-                new TelegramMessageRenderer(), TestProperties.create(settings), CLOCK);
+                new TelegramMessageRenderer(), TestProperties.create(settings), CLOCK, new com.jobpilot.identity.IdentityProperties(false,false,777L,List.of(),null,null));
     }
 
     private JobPilotProperties.Telegram enabled(List<String> chats, int cap) {
@@ -135,9 +135,9 @@ class TelegramReviewNotifierTest {
         notifier(enabled(List.of("777", "888"), 5)).notifyIngestion(List.of(1L), List.of());
 
         verify(client).sendMessage(eq("777"), anyString(), any());
-        verify(client).sendMessage(eq("888"), anyString(), any());
+        verify(client, never()).sendMessage(eq("888"), anyString(), any());
         assertThat(saved).extracting(TelegramJobDelivery::getChatId)
-                .containsExactlyInAnyOrder(777L, 888L);
+                .containsExactly(777L);
     }
 
     @Test

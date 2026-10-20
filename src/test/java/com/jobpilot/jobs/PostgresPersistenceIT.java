@@ -106,6 +106,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 @SpringBootTest
 @Transactional
 class PostgresPersistenceIT {
+    @org.springframework.beans.factory.annotation.Autowired private org.springframework.jdbc.core.JdbcTemplate matchingCleanupJdbc;
+
     @Container
     static final PostgreSQLContainer<?> POSTGRES = new PostgreSQLContainer<>("postgres:16-alpine");
 
@@ -272,6 +274,8 @@ class PostgresPersistenceIT {
                 "Java internship in Bucharest with mentorship. Java and SQL."));
         Long jobId = result.job().getId();
 
+        // This legacy cascade fixture deliberately has no retained Phase 4 history.
+        com.jobpilot.support.MatchingTestCleanup.clear(jdbcTemplate);
         jobs.deleteById(jobId);
         jobs.flush();
 
@@ -562,7 +566,8 @@ class PostgresPersistenceIT {
                                 reservation.getJob().getId())).toList();
                 llmBudgetReservations.deleteAll(createdReservations);
                 llmBudgetReservations.flush();
-                jobs.deleteAllById(createdJobIds);
+                com.jobpilot.support.MatchingTestCleanup.clear(matchingCleanupJdbc);
+        jobs.deleteAllById(createdJobIds);
                 jobs.flush();
             });
         }
@@ -844,7 +849,8 @@ class PostgresPersistenceIT {
     private void deleteJobs(List<Long> ids) {
         if (ids.isEmpty()) return;
         new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
-            jobs.deleteAllById(ids);
+            com.jobpilot.support.MatchingTestCleanup.clear(matchingCleanupJdbc);
+        jobs.deleteAllById(ids);
             jobs.flush();
         });
     }

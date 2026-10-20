@@ -22,6 +22,8 @@ import org.springframework.boot.test.context.SpringBootTest;
         "spring.flyway.enabled=true"
 })
 class ManualJobPersistenceConcurrencyTest {
+    @org.springframework.beans.factory.annotation.Autowired private org.springframework.jdbc.core.JdbcTemplate matchingCleanupJdbc;
+
     @Autowired
     private ManualJobPersistenceService persistence;
     @Autowired
@@ -30,6 +32,7 @@ class ManualJobPersistenceConcurrencyTest {
     @BeforeEach
     @AfterEach
     void cleanJobs() {
+        com.jobpilot.support.MatchingTestCleanup.clear(matchingCleanupJdbc);
         jobs.deleteAll();
         jobs.flush();
     }

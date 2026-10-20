@@ -8,21 +8,33 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
-import jakarta.persistence.MapsId;
-import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import java.time.Instant;
 import java.util.Objects;
 
 @Entity
+@org.hibernate.annotations.DynamicInsert
 @Table(name = "job_workflow_state")
 public class JobWorkflowState {
+    @Column(name = "candidate_id", updatable = false)
+    private Long candidateId;
+
+    public Long getCandidateId() { return candidateId; }
+    public JobWorkflowState ownedBy(long candidateId) {
+        if (candidateId <= 0 || this.candidateId != null && this.candidateId != candidateId) throw new IllegalArgumentException("Invalid owner");
+        this.candidateId = candidateId;
+        return this;
+    }
+
     @Id
+    @jakarta.persistence.GeneratedValue(strategy = jakarta.persistence.GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(name = "job_id", insertable = false, updatable = false)
     private Long jobId;
 
-    @MapsId
-    @OneToOne(fetch = FetchType.LAZY, optional = false)
+    @jakarta.persistence.ManyToOne(fetch = FetchType.LAZY, optional = false)
     @JoinColumn(name = "job_id", nullable = false)
     private Job job;
 
@@ -104,7 +116,7 @@ public class JobWorkflowState {
     }
 
     public long getVersion() { return version; }
-    public Long getJobId() { return jobId; }
+    public Long getJobId() { return jobId == null ? job.getId() : jobId; }
     public Job getJob() { return job; }
     public WorkflowStatus getStatus() { return status; }
     public String getNote() { return note; }

@@ -13,23 +13,33 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
-import jakarta.persistence.OneToOne;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 import java.time.Instant;
 import java.time.LocalDate;
 
 @Entity
+@org.hibernate.annotations.DynamicInsert
 @Table(name = "applications")
 public class ApplicationRecord {
+    @Column(name = "candidate_id", updatable = false)
+    private Long candidateId;
+
+    public Long getCandidateId() { return candidateId; }
+    public ApplicationRecord ownedBy(long candidateId) {
+        if (candidateId <= 0 || this.candidateId != null && this.candidateId != candidateId) throw new IllegalArgumentException("Invalid owner");
+        this.candidateId = candidateId;
+        return this;
+    }
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     @Version
     @Column(nullable = false)
     private long version;
-    @OneToOne(fetch = FetchType.LAZY, optional = false)
-    @JoinColumn(name = "job_id", nullable = false, unique = true)
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "job_id", nullable = false)
     private Job job;
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 40)

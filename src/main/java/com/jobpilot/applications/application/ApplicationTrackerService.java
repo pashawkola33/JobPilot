@@ -104,10 +104,25 @@ public class ApplicationTrackerService {
     private ApplicationMutationResult transitionOnce(long jobId, ApplicationStatus requested,
                                                      Instant interviewAt, String reason,
                                                      ApplicationStatusChangeSource source) {
+        return transitionOwned(null, jobId, requested, interviewAt, reason, source);
+    }
+
+    public ApplicationMutationResult transitionInCurrentTransaction(long candidateId, long jobId,
+            ApplicationStatus requested, Instant interviewAt, String rejectionReason,
+            ApplicationStatusChangeSource source) {
+        if (candidateId <= 0 || !TransactionSynchronizationManager.isActualTransactionActive())
+            throw new IllegalStateException("Candidate transaction is required");
+        return transitionOwned(candidateId, jobId, requested, interviewAt,
+                validated(requested, interviewAt, rejectionReason, source), source);
+    }
+
+    private ApplicationMutationResult transitionOwned(Long candidateId, long jobId,
+            ApplicationStatus requested, Instant interviewAt, String reason,
+            ApplicationStatusChangeSource source) {
         Instant now = clock.instant();
         Job job = jobs.findById(jobId).orElseThrow(() -> new ApplicationTrackingException(
                 ApplicationTrackingException.Category.JOB_NOT_FOUND, "Job was not found."));
-        ApplicationRecord existing = applications.findByJobId(jobId).orElse(null);
+        ApplicationRecord existing = (candidateId == null ? applications.findByJobId(jobId) : applications.findByCandidateIdAndJobIdForUpdate(candidateId, jobId)).orElse(null);
         if (existing == null) {
             if (!transitions.canCreate(requested)) {
                 throw new ApplicationTrackingException(
@@ -115,6 +130,7 @@ public class ApplicationTrackerService {
                         "Create the application as SAVED or APPLIED first.");
             }
             ApplicationRecord created = ApplicationRecord.create(job, requested, now);
+            if (candidateId != null) created.ownedBy(candidateId);
             created = applications.saveAndFlush(created);
             history.save(new ApplicationStatusHistory(
                     created, null, requested, now, source));
@@ -218,7 +234,7 @@ public class ApplicationTrackerService {
                 "No application exists for that job."));
     }
 
-    private ApplicationView view(ApplicationRecord application) {
+    public ApplicationView view(ApplicationRecord application) {
         Job job = application.getJob();
         return new ApplicationView(application.getId(), job.getId(), job.getTitle(), job.getCompany(),
                 job.getCanonicalUrl(), application.getStatus(), application.getApplicationDate(),
@@ -237,7 +253,7 @@ public class ApplicationTrackerService {
         throw new IllegalStateException("Unreachable conflict retry state");
     }
 
-    private String normalize(String value, int limit, String label) {
+    public String normalize(String value, int limit, String label) {
         if (value == null || value.isBlank()) return null;
         String normalized = value.strip().replaceAll("\\s+", " ");
         if (normalized.length() > limit) throw invalid(label + " is too long.");

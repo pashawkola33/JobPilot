@@ -11,9 +11,11 @@ public interface ApplicationStatusHistoryRepository
         extends Repository<ApplicationStatusHistory, Long> {
     ApplicationStatusHistory save(ApplicationStatusHistory history);
     List<ApplicationStatusHistory> findByApplicationIdOrderByChangedAtAscIdAsc(Long applicationId);
+    List<ApplicationStatusHistory> findByCandidateIdAndApplicationIdOrderByChangedAtAscIdAsc(long candidateId, long applicationId);
     long countByApplicationId(Long applicationId);
 
     Optional<ApplicationStatusHistory> findById(Long id);
+    Optional<ApplicationStatusHistory> findByCandidateIdAndId(long candidateId, Long id);
 
     /**
      * Removes one history row by identity. Mini App reversal only, and only the row the ledger

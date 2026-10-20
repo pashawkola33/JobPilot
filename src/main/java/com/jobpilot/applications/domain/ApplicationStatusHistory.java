@@ -15,9 +15,13 @@ import java.time.Instant;
 import org.hibernate.annotations.Immutable;
 
 @Entity
+@org.hibernate.annotations.DynamicInsert
 @Immutable
 @Table(name = "application_status_history")
 public class ApplicationStatusHistory {
+    @Column(name = "candidate_id", updatable = false)
+    private Long candidateId;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -43,6 +47,7 @@ public class ApplicationStatusHistory {
                                     ApplicationStatus newStatus, Instant changedAt,
                                     ApplicationStatusChangeSource source) {
         this.application = application;
+        this.candidateId = application.getCandidateId();
         this.previousStatus = previousStatus;
         this.newStatus = newStatus;
         this.changedAt = changedAt;

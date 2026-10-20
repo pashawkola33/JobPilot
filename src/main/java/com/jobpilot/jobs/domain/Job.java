@@ -89,6 +89,7 @@ public class Job {
     private JobStatus status;
     private String rawPayloadHash;
     private String descriptionHash;
+    private boolean legacyAdmissionPending;
     private String normalizedFingerprint;
 
     protected Job() {
@@ -382,6 +383,19 @@ public class Job {
 
     public void changeStatus(JobStatus next) {
         status = next;
+    }
+
+    public boolean isLegacyAdmissionPending() { return legacyAdmissionPending; }
+    public void markCatalogueOnly() { legacyAdmissionPending = true; }
+    public void admitLegacy() { legacyAdmissionPending = false; }
+
+    /** Shared source content can change while owner screening remains rejected. */
+    public void refreshCatalogueContent(Job updated, Instant now) {
+        title=updated.title; location=updated.location; remoteType=updated.remoteType;
+        employmentType=updated.employmentType; description=updated.description;
+        deadline=updated.deadline; if(updated.publishedAt!=null)publishedAt=updated.publishedAt;
+        rawPayloadHash=updated.rawPayloadHash;descriptionHash=updated.descriptionHash;
+        normalizedFingerprint=updated.normalizedFingerprint;seenAgain(now);
     }
 
     public Long getId() { return id; }

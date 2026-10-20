@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { repository } from '../data/repository';
+import { createWorkspaceRepository } from '../data/repository';
 import type {
   Application,
   ApplicationCounts,
@@ -78,6 +78,7 @@ const newMutationId = () =>
  * writes global state itself.
  */
 export function useJobPilot() {
+  const repository = useMemo(createWorkspaceRepository, []);
   const [phase, setPhase] = useState<Phase>('loading');
   const [failure, setFailure] = useState<FailureKind>('unavailable');
   /** A mutation the server refused, surfaced without discarding the queue. */
@@ -164,7 +165,7 @@ export function useJobPilot() {
         setPhase('error');
       },
     ),
-    [applySnapshot],
+    [applySnapshot, repository],
   );
 
   const load = useCallback(() => {
@@ -227,7 +228,7 @@ export function useJobPilot() {
   }, [armUndo, disarmUndo, pipeline, setJob]);
 
   const decide = useCallback(
-    (job: Job, status: WorkflowStatus, action: string) => {
+    (job: Job, status: WorkflowStatus, action: string, advanceReview = true) => {
       // An unresolved job accepts no further writes until its own operation has a verdict (I9).
       if (isBlocked(jobStates[job.id])) return;
 
@@ -236,8 +237,7 @@ export function useJobPilot() {
           candidate.id === job.id ? { ...candidate, workflowStatus: status } : candidate,
         ),
       );
-      setDirection(1);
-      setCursor((index) => index + 1);
+      if (advanceReview) { setDirection(1); setCursor((index) => index + 1); }
       // Any new action retires the toast for the previous one; the server decides whether this
       // action gets its own, and settle() arms it only if a live token came back.
       disarmUndo();
@@ -277,7 +277,7 @@ export function useJobPilot() {
         ),
       );
     },
-    [disarmUndo, focusJob, jobQueue, jobStates, pipeline, setJob, settle],
+    [disarmUndo, focusJob, jobQueue, jobStates, pipeline, repository, setJob, settle],
   );
 
   /** Reversal is a server operation; the client sends a capability, never a state. */
@@ -314,7 +314,7 @@ export function useJobPilot() {
         },
       ),
     );
-  }, [disarmUndo, focusJob, jobQueue, pipeline, setJob, settle, undo]);
+  }, [disarmUndo, focusJob, jobQueue, pipeline, repository, setJob, settle, undo]);
 
   /**
    * The deterministic retry for an unresolved job — and the only thing that can clear its
@@ -384,7 +384,7 @@ export function useJobPilot() {
         },
       ),
     );
-  }, [jobQueue, pipeline, setJob]);
+  }, [jobQueue, pipeline, repository, setJob]);
 
   const skipToNext = useCallback(() => {
     setDirection(1);

@@ -11,69 +11,82 @@ import type {
   WorkflowStatus,
 } from './types';
 import { JobPilotError } from './types';
-import { available, initData } from '../lib/telegram';
+import { captureWorkspaceCredential, invalidateAccount } from './account';
 
 /**
  * Talks to the JobPilot Mini App API.
  *
  * Same-origin relative paths only, so the browser sends no cross-origin preflight and the
- * server needs no CORS rule. The raw Telegram initData travels in one header on every
- * request: it is never stored, never logged, and never put in a URL.
+ * server needs no CORS rule. Owner v1 uses signed launch data; beta v2 uses its memory-only
+ * bearer. The transport captures one immutable account generation for all operations.
  */
-const BASE = '/api/mini-app/v1';
-const HEADER = 'X-Telegram-Init-Data';
 const TIMEOUT_MS = 10_000;
 
-export const httpRepository: JobPilotRepository = {
-  async load(): Promise<Snapshot> {
-    const body = (await call('/snapshot')) as ApiSnapshot;
-    return snapshot(body);
-  },
+export function createHttpRepository(): JobPilotRepository {
+  const credential = captureWorkspaceCredential();
+  const call = (path: string, init?: RequestInit) => request(credential, path, init);
+  return {
+    async load(): Promise<Snapshot> {
+      const body = (await call('/snapshot')) as ApiSnapshot;
+      return snapshot(body);
+    },
 
-  /** Returns an operation result, never a snapshot: global state comes only from load(). */
-  async setWorkflowStatus(
-    jobId: number,
-    status: WorkflowStatus,
-    mutationId: string,
-  ): Promise<MutationOutcome> {
-    return (await call(`/jobs/${jobId}/workflow`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status, mutationId }),
-    })) as MutationOutcome;
-  },
+    /** Returns an operation result, never a snapshot: global state comes only from load(). */
+    async setWorkflowStatus(
+      jobId: number,
+      status: WorkflowStatus,
+      mutationId: string,
+    ): Promise<MutationOutcome> {
+      return (await call(`/jobs/${jobId}/workflow`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status, mutationId }),
+      })) as MutationOutcome;
+    },
 
-  async undo(mutationId: string, undoToken: string): Promise<MutationOutcome> {
-    return (await call('/undo', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mutationId, undoToken }),
-    })) as MutationOutcome;
-  },
-};
+    async undo(mutationId: string, undoToken: string): Promise<MutationOutcome> {
+      return (await call('/undo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mutationId, undoToken }),
+      })) as MutationOutcome;
+    },
+  };
+}
 
-async function call(path: string, init?: RequestInit): Promise<unknown> {
-  const auth = initData();
-  // Fail closed rather than degrading to mock data: an unauthenticated API session must
-  // look broken, not empty.
-  if (!available || !auth) throw new JobPilotError('telegram-required');
+async function request(credential: ReturnType<typeof captureWorkspaceCredential>, path: string, init?: RequestInit): Promise<unknown> {
+  const auth = credential.headers();
 
   let response: Response;
   try {
-    response = await fetch(BASE + path, {
+    response = await fetch(credential.base + path, {
       ...init,
-      headers: { ...init?.headers, [HEADER]: auth },
+      headers: { ...init?.headers, ...auth },
       // The header is the only credential; cookies would add an ambient one.
       credentials: 'omit',
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
   } catch {
+    credential.headers();
     // Network failure or timeout — indistinguishable from here and identical to the user.
     throw new JobPilotError('unavailable');
   }
 
-  if (!response.ok) throw new JobPilotError(await failureKind(response));
-  return response.json();
+  credential.headers();
+  if (!response.ok) {
+    const failure = await failureKind(response);
+    credential.headers();
+    if (response.status === 401 || response.status === 403) invalidateAccount(failure);
+    throw new JobPilotError(failure);
+  }
+  try {
+    const body: unknown = await response.json();
+    credential.headers();
+    return body;
+  } catch {
+    credential.headers();
+    throw new JobPilotError('unavailable');
+  }
 }
 
 /** The server's own category decides the message; the status code is the fallback. */
