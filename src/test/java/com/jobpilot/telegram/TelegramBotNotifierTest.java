@@ -31,10 +31,27 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 class TelegramBotNotifierTest {
     @Test
+    void catalogueOnlyCannotEnterImmediateOrDailyLegacyNotifications() {
+        ExternalHttpClient http=org.mockito.Mockito.mock(ExternalHttpClient.class);
+        var notifier=new TelegramBotNotifier(http,TestProperties.create(commandsEnabledTelegram()),new com.jobpilot.identity.IdentityProperties(false,false,777L,List.of(),null,null));
+        Job vacancy=job();vacancy.markCatalogueOnly();
+        notifier.notifyExcellent(vacancy,score());
+        notifier.sendGoodMatchDigest(List.of(new JobScore(vacancy,score(),Instant.now())));
+        verify(http,never()).postJson(any(),any());
+    }
+
+    @Test
+    void doesNotSendCandidateExplanationsToAdditionalDestination() {
+        ExternalHttpClient http = org.mockito.Mockito.mock(ExternalHttpClient.class);
+        var notifier = new TelegramBotNotifier(http, TestProperties.create(new JobPilotProperties.Telegram("secret-token", "888")), new com.jobpilot.identity.IdentityProperties(false,false,777L,List.of(),null,null));
+        notifier.notifyExcellent(job(), score());
+        verify(http, never()).postJson(any(), any());
+    }
+    @Test
     void sendsExcellentMatchWithOpenVacancySaveAndAppliedButtons() {
         ExternalHttpClient http = org.mockito.Mockito.mock(ExternalHttpClient.class);
         var properties = TestProperties.create(commandsEnabledTelegram());
-        var notifier = new TelegramBotNotifier(http, properties);
+        var notifier = new TelegramBotNotifier(http, properties, new com.jobpilot.identity.IdentityProperties(false,false,777L,List.of(),null,null));
 
         Job job = job();
         ReflectionTestUtils.setField(job, "id", 42L);
@@ -43,7 +60,7 @@ class TelegramBotNotifierTest {
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, Object>> body = ArgumentCaptor.forClass(Map.class);
         verify(http).postJson(eq("https://api.telegram.org/botsecret-token/sendMessage"), body.capture());
-        assertThat(body.getValue()).containsEntry("chat_id", "-100123");
+        assertThat(body.getValue()).containsEntry("chat_id", "777");
         assertThat(body.getValue().get("text").toString()).contains("87/100", "Java &lt;Intern&gt;");
         assertThat(body.getValue()).containsKey("reply_markup");
         assertThat(body.getValue().get("reply_markup").toString())
@@ -54,8 +71,8 @@ class TelegramBotNotifierTest {
     @Test
     void sendsOnlyOpenVacancyButtonWhenCommandsAreDisabled() {
         ExternalHttpClient http = org.mockito.Mockito.mock(ExternalHttpClient.class);
-        var properties = TestProperties.create(new JobPilotProperties.Telegram("secret-token", "-100123"));
-        var notifier = new TelegramBotNotifier(http, properties);
+        var properties = TestProperties.create(new JobPilotProperties.Telegram("secret-token", "777"));
+        var notifier = new TelegramBotNotifier(http, properties, new com.jobpilot.identity.IdentityProperties(false,false,777L,List.of(),null,null));
         Job job = job();
         ReflectionTestUtils.setField(job, "id", 42L);
 
@@ -72,7 +89,7 @@ class TelegramBotNotifierTest {
     @Test
     void isNoOpWithoutTokenAndChannel() {
         ExternalHttpClient http = org.mockito.Mockito.mock(ExternalHttpClient.class);
-        var notifier = new TelegramBotNotifier(http, TestProperties.create());
+        var notifier = new TelegramBotNotifier(http, TestProperties.create(), new com.jobpilot.identity.IdentityProperties(false,false,777L,List.of(),null,null));
         notifier.notifyExcellent(job(), score());
         verify(http, never()).postJson(any(), any());
     }
@@ -81,8 +98,8 @@ class TelegramBotNotifierTest {
     void neverNotifiesReviewVacancyAutomatically() {
         ExternalHttpClient http = org.mockito.Mockito.mock(ExternalHttpClient.class);
         var properties = TestProperties.create(
-                new JobPilotProperties.Telegram("secret-token", "-100123"));
-        var notifier = new TelegramBotNotifier(http, properties);
+                new JobPilotProperties.Telegram("secret-token", "777"));
+        var notifier = new TelegramBotNotifier(http, properties, new com.jobpilot.identity.IdentityProperties(false,false,777L,List.of(),null,null));
         Job review = job();
         review.applyScreening(new ScreeningDecision(null, ScreeningDisposition.MATCH,
                 ScreeningDisposition.REVIEW, ScreeningDisposition.MATCH, List.of()));
@@ -96,8 +113,8 @@ class TelegramBotNotifierTest {
     @Test
     void splitsLongDigestIntoMessagesUnderTelegramLimit() {
         ExternalHttpClient http = org.mockito.Mockito.mock(ExternalHttpClient.class);
-        var properties = TestProperties.create(new JobPilotProperties.Telegram("secret-token", "-100123"));
-        var notifier = new TelegramBotNotifier(http, properties);
+        var properties = TestProperties.create(new JobPilotProperties.Telegram("secret-token", "777"));
+        var notifier = new TelegramBotNotifier(http, properties, new com.jobpilot.identity.IdentityProperties(false,false,777L,List.of(),null,null));
         List<JobScore> digest = new ArrayList<>();
         Instant now = Instant.parse("2026-07-17T12:00:00Z");
         for (int i = 0; i < 20; i++) {
@@ -126,8 +143,8 @@ class TelegramBotNotifierTest {
     @Test
     void neverExposesTheBotTokenWhenTheApiCallFails() {
         ExternalHttpClient http = org.mockito.Mockito.mock(ExternalHttpClient.class);
-        var properties = TestProperties.create(new JobPilotProperties.Telegram("secret-token", "-100123"));
-        var notifier = new TelegramBotNotifier(http, properties);
+        var properties = TestProperties.create(new JobPilotProperties.Telegram("secret-token", "777"));
+        var notifier = new TelegramBotNotifier(http, properties, new com.jobpilot.identity.IdentityProperties(false,false,777L,List.of(),null,null));
         when(http.postJson(any(), any())).thenThrow(new ResourceAccessException(
                 "I/O error on POST request for \"https://api.telegram.org/botsecret-token/sendMessage\""));
 
@@ -153,7 +170,7 @@ class TelegramBotNotifierTest {
 
     private JobPilotProperties.Telegram commandsEnabledTelegram() {
         return new JobPilotProperties.Telegram(
-                "secret-token", "-100123", "JobPilotBot", true, "-100123", "777",
+                "secret-token", "777", "JobPilotBot", true, "777", "777",
                 Duration.ofSeconds(25), Duration.ofSeconds(2), 50, 3, true);
     }
 }

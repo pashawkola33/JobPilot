@@ -1,6 +1,7 @@
 package com.jobpilot.telegram.commands;
 
 import com.jobpilot.config.JobPilotProperties;
+import com.jobpilot.identity.IdentityProperties;
 import com.jobpilot.telegram.api.TelegramUpdate.TelegramCallbackQuery;
 import com.jobpilot.telegram.api.TelegramUpdate.TelegramChat;
 import com.jobpilot.telegram.api.TelegramUpdate.TelegramMessage;
@@ -16,11 +17,13 @@ public class TelegramAuthorizationPolicy {
     private final String allowedChatId;
     private final String allowedUserId;
     private final JobPilotProperties.Telegram settings;
+    private final IdentityProperties identity;
 
-    public TelegramAuthorizationPolicy(JobPilotProperties properties) {
+    public TelegramAuthorizationPolicy(JobPilotProperties properties, IdentityProperties identity) {
         this.settings = properties.telegram();
         this.allowedChatId = settings.allowedChatId();
         this.allowedUserId = settings.allowedUserId();
+        this.identity = identity;
     }
 
     public boolean authorized(TelegramMessage message) {
@@ -34,6 +37,7 @@ public class TelegramAuthorizationPolicy {
 
     private boolean authorized(TelegramChat chat, TelegramUser from) {
         if (chat == null || from == null) return false;
+        if (!identity.isLegacyOwner(from.id()) || chat.id() != from.id()) return false;
         return legacyPair(chat, from) || privateReviewChat(chat, from);
     }
 

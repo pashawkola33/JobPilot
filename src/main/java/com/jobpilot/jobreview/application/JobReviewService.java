@@ -115,18 +115,40 @@ public class JobReviewService {
         return view(existing, changed);
     }
 
+    @Transactional
+    public WorkflowView transition(long candidateId, long jobId, WorkflowStatus status) {
+        if (candidateId <= 0) throw new IllegalArgumentException("Candidate is required");
+        if (status == WorkflowStatus.UNREVIEWED) return reset(candidateId, jobId);
+        return transitionOwned(candidateId, jobId, status);
+    }
+
     private WorkflowView transition(long jobId, WorkflowStatus status) {
+        return transitionOwned(null, jobId, status);
+    }
+
+    private WorkflowView transitionOwned(Long candidateId, long jobId, WorkflowStatus status) {
         Job job = requireJob(jobId);
         Instant now = clock.instant();
-        JobWorkflowState existing = workflowStates.findByJobIdForUpdate(jobId).orElse(null);
+        JobWorkflowState existing = (candidateId == null ? workflowStates.findByJobIdForUpdate(jobId) : workflowStates.findByCandidateIdAndJobIdForUpdate(candidateId, jobId)).orElse(null);
         if (existing == null) {
             return view(workflowStates.saveAndFlush(
-                    JobWorkflowState.create(job, status, null, now)), true);
+                    owned(JobWorkflowState.create(job, status, null, now), candidateId)), true);
         }
         // Repeating an action keeps the existing note and reports no change.
         boolean changed = existing.update(status, existing.getNote(), now);
         if (changed) workflowStates.flush();
         return view(existing, changed);
+    }
+
+    private JobWorkflowState owned(JobWorkflowState state, Long candidateId) {
+        return candidateId == null ? state : state.ownedBy(candidateId);
+    }
+
+    private WorkflowView reset(long candidateId, long jobId) {
+        requireJob(jobId);
+        JobWorkflowState existing = workflowStates.findByCandidateIdAndJobIdForUpdate(candidateId, jobId).orElse(null);
+        if (existing != null) { workflowStates.delete(existing); workflowStates.flush(); }
+        return new WorkflowView(jobId, WorkflowStatus.UNREVIEWED, null, null, null, existing != null);
     }
 
     private Job requireJob(long jobId) {

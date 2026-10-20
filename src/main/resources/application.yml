@@ -34,6 +34,13 @@ logging:
     org.apache.pdfbox.pdmodel.font.FileSystemFontProvider: OFF
 
 jobpilot:
+  identity:
+    enabled: ${IDENTITY_API_ENABLED:false}
+    registration-enabled: ${IDENTITY_REGISTRATION_ENABLED:false}
+    legacy-owner-telegram-user-id: ${LEGACY_TELEGRAM_USER_ID:}
+    beta-allowed-user-ids: ${IDENTITY_BETA_ALLOWED_USER_IDS:}
+    session-lifetime: ${IDENTITY_SESSION_LIFETIME:15m}
+    credential-epoch: ${IDENTITY_CREDENTIAL_EPOCH:1}
   scheduled-tasks-enabled: ${JOBPILOT_SCHEDULING_ENABLED:true}
   score-rescore-preview:
     enabled: ${JOBPILOT_SCORE_RESCORE_PREVIEW_ENABLED:false}

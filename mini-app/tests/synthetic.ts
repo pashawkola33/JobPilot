@@ -452,6 +452,7 @@ export async function context(browser: Browser, server: SyntheticServer): Promis
     };
   }, SYNTHETIC_INIT_DATA);
   await result.route('**/api/mini-app/v1/**', (route) => server.route(route));
+  await result.route('**/api/mini-app/v2/**', (route) => route.fulfill({ status: 503, json: { category: 'IDENTITY_DISABLED' } }));
   return result;
 }
 

@@ -32,6 +32,9 @@ import java.util.stream.Collectors;
 @Entity
 @Table(name = "cover_notes")
 public class CoverNote {
+    @Column(name = "candidate_id", nullable = false, updatable = false)
+    private Long candidateId;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -113,6 +116,7 @@ public class CoverNote {
         CoverNote value = new CoverNote();
         value.job = job;
         value.candidateProfile = profile;
+        value.candidateId = profile.getCandidate().getId();
         value.resumeVersion = resume;
         value.sourceAnalysis = analysis;
         value.profileVersion = profile.getProfileVersion();
@@ -135,6 +139,7 @@ public class CoverNote {
                      String content, String contentHash, Instant generatedAt) {
         this.job = job;
         this.candidateProfile = candidateProfile;
+        this.candidateId = candidateProfile.getCandidate().getId();
         this.resumeVersion = resumeVersion;
         this.profileVersion = candidateProfile.getProfileVersion();
         this.content = content;

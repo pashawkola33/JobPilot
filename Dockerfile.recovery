@@ -1,0 +1,28 @@
+# Only a verified, already-packaged JAR enters this small runtime context.
+# The script requires a resolved repository digest, never a mutable base tag.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+ARG JAR_SHA256
+ARG SOURCE_SHA256
+ARG BUILD_COMMIT
+RUN addgroup -S -g 10001 jobpilot \
+    && adduser -S -D -H -u 10001 -G jobpilot jobpilot \
+    && mkdir -p /var/lib/jobpilot/documents /tmp/jobpilot \
+    && chown -R jobpilot:jobpilot /var/lib/jobpilot /tmp/jobpilot \
+    && chmod 700 /var/lib/jobpilot/documents /tmp/jobpilot
+WORKDIR /app
+COPY jobpilot.jar /app/jobpilot.jar
+RUN echo "${JAR_SHA256}  /app/jobpilot.jar" | sha256sum -c -
+ENV SPRING_PROFILES_ACTIVE=recovery \
+    BUILD_COMMIT=${BUILD_COMMIT} \
+    JOBPILOT_VERSION=phase4-recovery \
+    JOBPILOT_SOURCE_SHA256=${SOURCE_SHA256}
+LABEL org.opencontainers.image.revision=${BUILD_COMMIT} \
+      com.jobpilot.source.sha256=${SOURCE_SHA256} \
+      com.jobpilot.jar.sha256=${JAR_SHA256} \
+      com.jobpilot.schema.version=19
+USER jobpilot
+EXPOSE 8080
+HEALTHCHECK --interval=20s --timeout=5s --start-period=60s --retries=3 \
+  CMD wget -qO- http://localhost:8080/health || exit 1
+ENTRYPOINT ["java", "-XX:MaxRAMPercentage=75", "-Djava.io.tmpdir=/tmp/jobpilot", "-jar", "/app/jobpilot.jar"]

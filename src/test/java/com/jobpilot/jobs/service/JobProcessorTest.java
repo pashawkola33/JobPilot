@@ -41,6 +41,23 @@ class JobProcessorTest {
     private JdbcTemplate jdbc;
 
     @Test
+    void catalogueOnlyVacancyIsRetainedWithoutLegacyScoreAndFirstOwnerAdmissionStaysNew() {
+        RawJob marketing=rawWithIdentity("catalogue-marketing","Marketing graduate","Bucharest, Romania","English B2 required. No experience required. Marketing role.");
+        var first=processor.process(marketing);
+        assertThat(first.persisted()).isTrue();
+        assertThat(first.accepted()).isFalse();
+        assertThat(first.finalDisposition()).isEqualTo(ScreeningDisposition.REJECT);
+        assertThat(scores.findByJobId(first.job().getId())).isEmpty();
+        var admitted=processor.process(rawWithIdentity("catalogue-marketing","Java Developer Intern","Bucharest, Romania","No experience required. Build Java services with Spring Boot, SQL and mentorship."));
+        assertThat(admitted.job().getId()).isEqualTo(first.job().getId());
+        assertThat(admitted.newlyCreated()).as("first legacy admission must retain immediate notification membership").isTrue();
+        assertThat(admitted.finalDisposition()).isEqualTo(ScreeningDisposition.MATCH);
+        assertThat(admitted.score()).isNotNull();
+        assertThat(processor.process(rawWithIdentity("catalogue-marketing","Java Developer Intern","Bucharest, Romania","No experience required. Build Java services with Spring Boot, SQL and mentorship.")).newlyCreated()).isFalse();
+        assertThat(jobs.count()).isEqualTo(1);
+    }
+
+    @Test
     void rescoresAnExistingJobWhenItsDescriptionChanges() {
         var first = processor.process(raw("Requires 1 year of experience with Java."));
         assertThat(first.newlyCreated()).isTrue();
@@ -153,7 +170,7 @@ class JobProcessorTest {
                 "Remote", "Java role", null, null, null, "unknown"));
 
         assertThat(outside.accepted()).isFalse();
-        assertThat(outside.persistenceOutcome()).isEqualTo(JobPersistenceOutcome.NOT_PERSISTED);
+        assertThat(outside.persistenceOutcome()).isEqualTo(JobPersistenceOutcome.CREATED);
         assertThat(outside.eligibilityDecision().locationEligibility())
                 .isEqualTo(LocationEligibility.REJECTED_LOCATION);
         assertThat(unknown.accepted()).isTrue();
@@ -162,7 +179,7 @@ class JobProcessorTest {
         assertThat(unknown.finalDisposition()).isEqualTo(ScreeningDisposition.REVIEW);
         assertThat(unknown.score()).isNotNull();
         assertThat(unknown.job().getScreeningDisposition()).isEqualTo(ScreeningDisposition.REVIEW);
-        assertThat(jobs.count()).isEqualTo(1);
+        assertThat(jobs.count()).isEqualTo(2);
         assertThat(requirements.count()).isEqualTo(1);
         assertThat(scores.count()).isEqualTo(1);
     }
@@ -372,7 +389,7 @@ class JobProcessorTest {
         assertThat(unknown.finalDisposition()).isEqualTo(ScreeningDisposition.REVIEW);
         assertThat(senior.accepted()).isFalse();
         assertThat(senior.earlyCareerDecision().seniorityLevel()).isEqualTo(SeniorityLevel.SENIOR);
-        assertThat(jobs.count()).isEqualTo(1);
+        assertThat(jobs.count()).isEqualTo(2);
         assertThat(requirements.count()).isEqualTo(1);
         assertThat(scores.count()).isEqualTo(1);
     }

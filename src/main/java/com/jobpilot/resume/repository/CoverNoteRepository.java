@@ -37,4 +37,9 @@ public interface CoverNoteRepository extends JpaRepository<CoverNote, Long> {
     boolean existsByDocxPathOrPdfPath(String docxPath, String pdfPath);
 
     long countByRenderStatus(DocumentRenderStatus status);
+    Optional<CoverNote> findByCandidateProfileCandidateIdAndId(long candidateId, long id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select note from CoverNote note where note.id = :id and note.candidateProfile.candidate.id = :candidateId")
+    Optional<CoverNote> findByCandidateIdAndIdForUpdate(long candidateId, long id);
 }

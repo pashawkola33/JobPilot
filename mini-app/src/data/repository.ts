@@ -1,6 +1,6 @@
 import type { JobPilotRepository } from './types';
 import { mockRepository } from './mockRepository';
-import { httpRepository } from './httpRepository';
+import { createHttpRepository } from './httpRepository';
 
 /**
  * Which backend the build talks to. Mock is the default so `npm run dev` and the Playwright
@@ -9,5 +9,5 @@ import { httpRepository } from './httpRepository';
 export const mode: 'mock' | 'api' =
   import.meta.env.VITE_JOBPILOT_MODE === 'api' ? 'api' : 'mock';
 
-export const repository: JobPilotRepository =
-  mode === 'api' ? httpRepository : mockRepository;
+export const createWorkspaceRepository = (): JobPilotRepository =>
+  mode === 'api' ? createHttpRepository() : mockRepository;

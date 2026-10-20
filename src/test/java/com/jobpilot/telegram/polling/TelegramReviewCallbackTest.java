@@ -52,7 +52,7 @@ class TelegramReviewCallbackTest {
                 new JobPilotProperties.Telegram("1234:obviously-fake", true,
                         List.of(Long.toString(ALLOWED)), true, true, 5, 500));
         processor = new TelegramUpdateProcessor(client,
-                new TelegramAuthorizationPolicy(properties),
+                new TelegramAuthorizationPolicy(properties, new com.jobpilot.identity.IdentityProperties(false,false,ALLOWED,List.of(),null,null)),
                 new TelegramCommandParser(properties), dispatcher, new TelegramMessageRenderer());
         when(dispatcher.applyWorkflow(any(), anyLong()))
                 .thenReturn(new TelegramCommandResult("done", "Saved"));

@@ -3,6 +3,7 @@ package com.jobpilot.miniapp.auth;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jobpilot.config.JobPilotProperties;
+import com.jobpilot.common.Hashing;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
@@ -47,17 +48,17 @@ public class TelegramInitDataValidator {
     }
 
     /** Exactly one of {@code userId} and {@code failure} is present. */
-    public record Result(Long userId, Failure failure) {
+    public record Result(Long userId, Failure failure, Instant issuedAt, String fingerprint) {
         public boolean valid() {
             return userId != null;
         }
 
-        static Result of(long userId) {
-            return new Result(userId, null);
+        static Result of(long userId, Instant issuedAt, String fingerprint) {
+            return new Result(userId, null, issuedAt, fingerprint);
         }
 
         static Result failed(Failure failure) {
-            return new Result(null, failure);
+            return new Result(null, failure, null, null);
         }
     }
 
@@ -73,6 +74,10 @@ public class TelegramInitDataValidator {
     }
 
     public Result validate(String initData) {
+        return validate(initData, properties.miniApp().maxAuthAge(), MAX_CLOCK_SKEW);
+    }
+
+    public Result validate(String initData, Duration maxAge, Duration clockSkew) {
         if (initData == null || initData.isBlank() || initData.length() > MAX_LENGTH) {
             return Result.failed(Failure.MALFORMED);
         }
@@ -116,11 +121,12 @@ public class TelegramInitDataValidator {
         if (!hashMatches(dataCheckString, hash)) return Result.failed(Failure.INVALID_HASH);
 
         // Freshness is only meaningful once the payload is proven authentic.
-        Failure freshness = checkFreshness(authDate);
+        Failure freshness = checkFreshness(authDate, maxAge, clockSkew);
         if (freshness != null) return Result.failed(freshness);
 
         Long userId = userId(user);
-        return userId == null ? Result.failed(Failure.MALFORMED) : Result.of(userId);
+        return userId == null ? Result.failed(Failure.MALFORMED)
+                : Result.of(userId, Instant.ofEpochSecond(Long.parseLong(authDate)), Hashing.sha256(dataCheckString));
     }
 
     private boolean hashMatches(String dataCheckString, String receivedHash) {
@@ -139,7 +145,7 @@ public class TelegramInitDataValidator {
         return received != null && MessageDigest.isEqual(expected, received);
     }
 
-    private Failure checkFreshness(String authDate) {
+    private Failure checkFreshness(String authDate, Duration maxAge, Duration clockSkew) {
         long seconds;
         try {
             seconds = Long.parseLong(authDate);
@@ -155,8 +161,8 @@ public class TelegramInitDataValidator {
             return Failure.MALFORMED;
         }
         Instant now = clock.instant();
-        if (issued.isAfter(now.plus(MAX_CLOCK_SKEW))) return Failure.NOT_YET_VALID;
-        return issued.isBefore(now.minus(properties.miniApp().maxAuthAge())) ? Failure.EXPIRED : null;
+        if (issued.isAfter(now.plus(clockSkew))) return Failure.NOT_YET_VALID;
+        return issued.isBefore(now.minus(maxAge)) ? Failure.EXPIRED : null;
     }
 
     /** Only the numeric id is read; the rest of the user object is never surfaced. */
@@ -166,7 +172,7 @@ public class TelegramInitDataValidator {
             if (node == null || !node.isObject()) return null;
             JsonNode id = node.get("id");
             // A string id, a float, or a missing id is not a Telegram user object.
-            if (id == null || !id.isIntegralNumber()) return null;
+            if (id == null || !id.isIntegralNumber() || !id.canConvertToLong()) return null;
             long value = id.longValue();
             return value > 0 ? value : null;
         } catch (RuntimeException | com.fasterxml.jackson.core.JacksonException malformed) {

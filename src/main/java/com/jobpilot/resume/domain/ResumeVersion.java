@@ -34,6 +34,9 @@ import java.util.stream.Collectors;
 @Entity
 @Table(name = "resume_versions")
 public class ResumeVersion {
+    @Column(name = "candidate_id", nullable = false, updatable = false)
+    private Long candidateId;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -129,6 +132,7 @@ public class ResumeVersion {
         ResumeVersion value = new ResumeVersion();
         value.job = job;
         value.candidateProfile = profile;
+        value.candidateId = profile.getCandidate().getId();
         value.sourceAnalysis = sourceAnalysis;
         value.profileVersion = profile.getProfileVersion();
         value.cacheKey = cacheKey;
@@ -152,6 +156,7 @@ public class ResumeVersion {
                          String pdfPath, String contentHash, Instant generatedAt) {
         this.job = job;
         this.candidateProfile = candidateProfile;
+        this.candidateId = candidateProfile.getCandidate().getId();
         this.profileVersion = profileVersion;
         this.selectedTitle = selectedTitle;
         this.summary = summary;

@@ -1225,3 +1225,51 @@ p {
   animation-iteration-count: 1 !important;
   transition-duration: 0.01ms !important;
 }
+
+/* Beta catalogue deliberately renders vacancy facts without owner matching components. */
+.beta-workspace { padding: calc(var(--safe-top) + 24px) 20px 100px; overflow-y: auto; overscroll-behavior: contain; }
+.beta-workspace header, .beta-vacancy { margin-bottom: 24px; }
+.beta-workspace h1 { font-size: 26px; }
+.beta-workspace p { margin: 12px 0; }
+.beta-actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0; }
+.beta-vacancy { padding: 20px 0; border-bottom: 1px solid var(--rule-soft); }
+.beta-vacancy h2 { font-size: 21px; }
+.beta-actions .btn { min-height: 44px; }
+.beta-actions [aria-pressed="true"] { outline: 2px solid currentColor; }
+.beta-workspace .toast { position: fixed; bottom: calc(var(--safe-bottom) + 16px); max-width: 420px; margin-inline: auto; }
+
+/* Forms scroll with the viewport so mobile keyboards do not cover the active input. */
+.profile-screen { overflow-y: auto; overscroll-behavior: contain; padding: calc(var(--safe-top) + 24px) 20px calc(var(--safe-bottom) + 40px); }
+.profile-screen header, .profile-fields h2 { margin-bottom: 20px; }
+.profile-screen h1 { font-size: 27px; line-height: 1.2; margin: 8px 0 16px; }
+.profile-screen h2 { font-size: 21px; }
+.profile-screen p { margin-block: 12px; line-height: 1.5; }
+.profile-eyebrow { color: var(--muted); font-size: 13px; }
+.profile-notice { padding: 12px 14px; background: var(--bg); border: 1px solid var(--rule); border-radius: 12px; }
+.profile-fields { border: 0; padding: 0; margin: 24px 0; min-inline-size: 0; }
+.profile-field { display: grid; gap: 8px; margin-block: 18px; font-weight: 600; }
+.profile-field input, .profile-field textarea, .profile-field select { width: 100%; min-width: 0; min-height: 48px; border: 1px solid var(--rule); border-radius: 10px; padding: 12px; font: inherit; font-size: 16px; font-weight: 400; background: var(--bg); color: var(--text); scroll-margin-block: 80px; }
+.profile-field textarea { min-height: 110px; resize: vertical; }
+.profile-field small { color: var(--muted); font-weight: 400; line-height: 1.45; }
+.profile-choices, .profile-language { border: 1px solid var(--rule); border-radius: 12px; padding: 14px; margin-block: 20px; min-inline-size: 0; }
+.profile-choices legend, .profile-language legend { padding-inline: 4px; }
+.profile-choices label { display: flex; align-items: center; min-height: 48px; gap: 12px; }
+.profile-choices input { width: 22px; height: 22px; }
+.profile-actions { display: flex; gap: 12px; flex-wrap: wrap; padding-block: 12px; }
+.profile-actions .btn, .profile-screen .btn { min-height: 48px; }
+.profile-review div { padding-block: 14px; border-bottom: 1px solid var(--rule-soft); }
+.profile-review dt { font-weight: 600; color: var(--muted); font-size: 13px; }
+.profile-review dd { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+.profile-entry { position: fixed; top: calc(var(--safe-top) + 6px); right: 12px; z-index: 10; font-size: 12px; padding: 6px 10px; background: var(--bg); min-height: 36px; }
+
+.matching-workspace select { max-width: 100%; padding: .6rem; border-radius: .5rem; }
+.matching-vacancy h3 { font-size: 1.1rem; }
+.matching-vacancy blockquote { margin: .3rem 0 .8rem; padding-left: .7rem; border-left: 2px solid currentColor; font-size: .9rem; opacity: .8; overflow-wrap: anywhere; }
+.matching-vacancy ul { padding-left: 1.2rem; }
+.matching-vacancy li { margin-bottom: .7rem; }
+.matching-vacancy dl > div { display: flex; justify-content: space-between; gap: 1rem; }
+.matching-description { white-space: pre-wrap; overflow-wrap: anywhere; }
+.compatibility-score { font-size: 1.2rem; font-weight: 700; }
+.eligibility { font-weight: 600; }
+.eligibility--unknown { color: #8b5900; }
+.eligibility--ineligible { color: #a32424; }

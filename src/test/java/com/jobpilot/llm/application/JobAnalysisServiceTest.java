@@ -68,6 +68,8 @@ import org.springframework.transaction.support.TransactionTemplate;
         "jobpilot.llm.output-cost-per-million-tokens=2"
 })
 class JobAnalysisServiceTest {
+    @org.springframework.beans.factory.annotation.Autowired private org.springframework.jdbc.core.JdbcTemplate matchingCleanupJdbc;
+
     @Autowired private JobAnalysisService service;
     @Autowired private JobProcessor processor;
     @Autowired private JobRepository jobs;
@@ -91,6 +93,7 @@ class JobAnalysisServiceTest {
         reservations.deleteAll();
         requirements.deleteAll();
         scores.deleteAll();
+        com.jobpilot.support.MatchingTestCleanup.clear(matchingCleanupJdbc);
         jobs.deleteAll();
     }
 

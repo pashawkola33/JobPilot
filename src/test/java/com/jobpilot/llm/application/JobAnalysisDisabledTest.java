@@ -26,6 +26,8 @@ import org.springframework.boot.test.mock.mockito.MockBean;
         "jobpilot.llm.enabled=false"
 })
 class JobAnalysisDisabledTest {
+    @org.springframework.beans.factory.annotation.Autowired private org.springframework.jdbc.core.JdbcTemplate matchingCleanupJdbc;
+
     @Autowired private JobAnalysisService service;
     @Autowired private JobProcessor processor;
     @Autowired private JobRepository jobs;
@@ -43,6 +45,7 @@ class JobAnalysisDisabledTest {
         reservations.deleteAll();
         requirements.deleteAll();
         scores.deleteAll();
+        com.jobpilot.support.MatchingTestCleanup.clear(matchingCleanupJdbc);
         jobs.deleteAll();
     }
 

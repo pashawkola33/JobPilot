@@ -32,11 +32,11 @@ public class JobReviewQueryRepository {
 
     /** Screened-in and still live. REJECT vacancies carry no score and are never queued. */
     private static final String ACTIVE =
-            "j.status <> 'EXPIRED' and j.screening_disposition in ('MATCH', 'REVIEW')";
+            "j.status <> 'EXPIRED' and not j.legacy_admission_pending and j.screening_disposition in ('MATCH', 'REVIEW')";
 
     private static final String FROM = " from jobs j "
             + "left join job_scores s on s.job_id = j.id "
-            + "left join job_workflow_state w on w.job_id = j.id ";
+            + "left join job_workflow_state w on w.job_id = j.id and w.candidate_id = (select id from candidates where stable_key = 'default') ";
 
     private static final String COLUMNS = "select j.id, j.title, j.company, j.location, "
             + "j.screening_disposition, coalesce(s.score, 0) score, "

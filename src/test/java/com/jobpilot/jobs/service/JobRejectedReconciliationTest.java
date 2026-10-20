@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test;
 
 class JobRejectedReconciliationTest {
     @Test
-    void newRejectedIdentityDoesNotNormalizeExtractScoreOrPersist() {
+    void newRejectedIdentityPersistsCatalogueWithoutLegacyExtractionOrScoring() {
         JobNormalizer normalizer = mock(JobNormalizer.class);
         LocationEligibilityService locationService = mock(LocationEligibilityService.class);
         EarlyCareerEligibilityService career = mock(EarlyCareerEligibilityService.class);
@@ -47,15 +47,19 @@ class JobRejectedReconciliationTest {
         when(jobs.findByStableIdentityForUpdate(
                 raw.source(), raw.providerTenant(), raw.externalId())).thenReturn(Optional.empty());
 
+        var normalized=new JobNormalizer(clock,new UrlCanonicalizer()).normalize(raw,location,null,com.jobpilot.jobs.domain.ScreeningDecision.of(location,null,null));
+        when(normalizer.normalize(org.mockito.ArgumentMatchers.eq(raw),org.mockito.ArgumentMatchers.eq(location),org.mockito.ArgumentMatchers.isNull(),org.mockito.ArgumentMatchers.any())).thenReturn(normalized);
+        when(deduplication.findDuplicate(normalized)).thenReturn(Optional.empty());
         JobProcessingResult result = processor.reconcileRejected(raw, location, null, null);
 
-        assertThat(result.persistenceOutcome()).isEqualTo(JobPersistenceOutcome.NOT_PERSISTED);
-        assertThat(result.job()).isNull();
+        assertThat(result.persistenceOutcome()).isEqualTo(JobPersistenceOutcome.CREATED);
+        assertThat(result.job()).isSameAs(normalized);
+        assertThat(normalized.isLegacyAdmissionPending()).isTrue();
         assertThat(result.score()).isNull();
         verify(jobs).findByStableIdentityForUpdate(
                 raw.source(), raw.providerTenant(), raw.externalId());
-        verify(jobs, never()).save(org.mockito.ArgumentMatchers.any());
-        verifyNoInteractions(normalizer, locationService, career, relevance, deduplication,
+        verify(jobs).save(normalized);
+        verifyNoInteractions(locationService, career, relevance,
                 extractor, matching, requirements, scores, canonicalizer);
     }
 }

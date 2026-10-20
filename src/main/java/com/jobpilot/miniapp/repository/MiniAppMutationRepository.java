@@ -13,6 +13,7 @@ public interface MiniAppMutationRepository extends JpaRepository<MiniAppMutation
      * queued behind the original sees its committed row. The unique constraint remains the real
      * guarantee; this is what turns a duplicate into an answer instead of an error.
      */
+    @org.springframework.data.jpa.repository.Query("select m from MiniAppMutation m where m.mutationKey = :mutationKey and m.candidateId = (select c.id from Candidate c where c.stableKey = 'default')")
     Optional<MiniAppMutation> findByMutationKey(String mutationKey);
 
     /**
@@ -21,11 +22,22 @@ public interface MiniAppMutationRepository extends JpaRepository<MiniAppMutation
      * is refused as stale rather than as unknown, and a replayed undo can prove which mutation
      * it consumed.
      */
+    @org.springframework.data.jpa.repository.Query("select m from MiniAppMutation m where m.undoToken = :undoToken and m.candidateId = (select c.id from Candidate c where c.stableKey = 'default')")
     Optional<MiniAppMutation> findByUndoToken(String undoToken);
 
     /** Every still-reversible mutation for a job, so a newer one can supersede them. */
+    @org.springframework.data.jpa.repository.Query("select m from MiniAppMutation m where m.jobId = :jobId and m.reversalState = :state and m.candidateId = (select c.id from Candidate c where c.stableKey = 'default')")
     List<MiniAppMutation> findByJobIdAndReversalState(long jobId, MiniAppReversalState state);
 
     /** Newest first: the staleness check on every reversal. */
-    Optional<MiniAppMutation> findTopByJobIdOrderByMutationRevisionDesc(long jobId);
+    default Optional<MiniAppMutation> findTopByJobIdOrderByMutationRevisionDesc(long jobId) {
+        return legacyNewest(jobId, org.springframework.data.domain.PageRequest.of(0,1)).stream().findFirst();
+    }
+    @org.springframework.data.jpa.repository.Query("select m from MiniAppMutation m where m.jobId = :jobId and m.candidateId = (select c.id from Candidate c where c.stableKey = 'default') order by m.mutationRevision desc")
+    List<MiniAppMutation> legacyNewest(long jobId, org.springframework.data.domain.Pageable page);
+
+    Optional<MiniAppMutation> findByCandidateIdAndMutationKey(long candidateId, String mutationKey);
+    Optional<MiniAppMutation> findByCandidateIdAndUndoToken(long candidateId, String undoToken);
+    List<MiniAppMutation> findByCandidateIdAndJobIdAndReversalState(long candidateId, long jobId, MiniAppReversalState state);
+    Optional<MiniAppMutation> findTopByCandidateIdAndJobIdOrderByMutationRevisionDesc(long candidateId, long jobId);
 }

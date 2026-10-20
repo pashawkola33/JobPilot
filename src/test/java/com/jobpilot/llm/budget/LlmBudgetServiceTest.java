@@ -47,6 +47,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 })
 @Import(LlmBudgetServiceTest.MutableClockConfiguration.class)
 class LlmBudgetServiceTest {
+    @org.springframework.beans.factory.annotation.Autowired private org.springframework.jdbc.core.JdbcTemplate matchingCleanupJdbc;
+
     @Autowired private LlmBudgetService budget;
     @Autowired private LlmBudgetReservationRepository reservations;
     @Autowired private LlmUsageEventRepository usage;
@@ -61,6 +63,7 @@ class LlmBudgetServiceTest {
         usage.deleteAll();
         analyses.deleteAll();
         reservations.deleteAll();
+        com.jobpilot.support.MatchingTestCleanup.clear(matchingCleanupJdbc);
         jobs.deleteAll();
         clock.set(Instant.parse("2026-07-19T10:00:00Z"));
         job = jobs.save(job("budget"));

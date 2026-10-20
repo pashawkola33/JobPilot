@@ -11,8 +11,16 @@ import org.springframework.data.jpa.repository.Query;
 
 public interface JobWorkflowStateRepository extends JpaRepository<JobWorkflowState, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select state from JobWorkflowState state where state.jobId = :jobId")
+    @Query("select state from JobWorkflowState state where state.jobId = :jobId and state.candidateId = (select c.id from Candidate c where c.stableKey = 'default')")
     Optional<JobWorkflowState> findByJobIdForUpdate(long jobId);
 
+    @Query("select state from JobWorkflowState state where state.jobId in :jobIds and state.candidateId = (select c.id from Candidate c where c.stableKey = 'default')")
     List<JobWorkflowState> findAllByJobIdIn(Collection<Long> jobIds);
+    @Override
+    @Query("select state from JobWorkflowState state where state.jobId = :jobId and state.candidateId = (select c.id from Candidate c where c.stableKey = 'default')")
+    Optional<JobWorkflowState> findById(Long jobId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select state from JobWorkflowState state where state.candidateId = :candidateId and state.jobId = :jobId")
+    Optional<JobWorkflowState> findByCandidateIdAndJobIdForUpdate(long candidateId, long jobId);
 }

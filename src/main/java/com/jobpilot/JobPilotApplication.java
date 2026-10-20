@@ -5,6 +5,7 @@ import com.jobpilot.browser.config.ScraperWorkerProperties;
 import com.jobpilot.config.BuildInfoProperties;
 import com.jobpilot.config.JobPilotProperties;
 import com.jobpilot.config.MaintenanceProperties;
+import com.jobpilot.identity.IdentityProperties;
 import com.jobpilot.matching.preview.ScoreRescorePreviewProperties;
 import com.jobpilot.matching.rescore.ScoreRescoreCommandProperties;
 import com.jobpilot.resume.config.DocumentProperties;
@@ -17,7 +18,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 @EnableConfigurationProperties({JobPilotProperties.class, CandidateProfileProperties.class,
         DocumentProperties.class, MaintenanceProperties.class, BuildInfoProperties.class,
         ScraperWorkerProperties.class, ScoreRescorePreviewProperties.class,
-        ScoreRescoreCommandProperties.class, SourceLogCleanupProperties.class})
+        ScoreRescoreCommandProperties.class, SourceLogCleanupProperties.class, IdentityProperties.class})
 public class JobPilotApplication {
     public static void main(String[] args) {
         var context = SpringApplication.run(JobPilotApplication.class, args);

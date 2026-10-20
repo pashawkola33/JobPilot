@@ -52,11 +52,11 @@ public class ApplicationDocumentSelectionService {
                         .orElseThrow(() -> failure(
                                 ApplicationDocumentSelectionException.Category.APPLICATION_NOT_FOUND,
                                 "Application record was not found."));
-                ResumeVersion resume = resumes.findByIdForUpdate(resumeVersionId)
+                ResumeVersion resume = resumes.findByCandidateIdAndIdForUpdate(application.getCandidateId(), resumeVersionId)
                         .orElseThrow(() -> failure(
                                 ApplicationDocumentSelectionException.Category.RESUME_NOT_FOUND,
                                 "Resume version was not found."));
-                CoverNote note = coverNoteId == null ? null : coverNotes.findByIdForUpdate(coverNoteId)
+                CoverNote note = coverNoteId == null ? null : coverNotes.findByCandidateIdAndIdForUpdate(application.getCandidateId(), coverNoteId)
                         .orElseThrow(() -> failure(
                                 ApplicationDocumentSelectionException.Category.COVER_NOTE_NOT_FOUND,
                                 "Cover note was not found."));
@@ -82,14 +82,13 @@ public class ApplicationDocumentSelectionService {
     }
 
     private SelectionSnapshot snapshot(long jobId, long resumeId, Long coverId) {
-        if (!applications.findByJobId(jobId).isPresent()) {
-            throw failure(ApplicationDocumentSelectionException.Category.APPLICATION_NOT_FOUND,
-                    "Application record was not found.");
-        }
-        ResumeVersion resume = resumes.findById(resumeId).orElseThrow(() -> failure(
+        ApplicationRecord application = applications.findByJobId(jobId).orElseThrow(() -> failure(
+                ApplicationDocumentSelectionException.Category.APPLICATION_NOT_FOUND,
+                "Application record was not found."));
+        ResumeVersion resume = resumes.findByCandidateProfileCandidateIdAndId(application.getCandidateId(),resumeId).orElseThrow(() -> failure(
                 ApplicationDocumentSelectionException.Category.RESUME_NOT_FOUND,
                 "Resume version was not found."));
-        CoverNote cover = coverId == null ? null : coverNotes.findById(coverId).orElseThrow(() -> failure(
+        CoverNote cover = coverId == null ? null : coverNotes.findByCandidateProfileCandidateIdAndId(application.getCandidateId(),coverId).orElseThrow(() -> failure(
                 ApplicationDocumentSelectionException.Category.COVER_NOTE_NOT_FOUND,
                 "Cover note was not found."));
         validateCompatibility(jobId, resume, cover);

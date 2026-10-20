@@ -92,6 +92,8 @@ import org.springframework.test.context.DynamicPropertySource;
 })
 @Import(ControlledRenderers.Configuration.class)
 class ResumeGenerationServiceTest {
+    @org.springframework.beans.factory.annotation.Autowired private org.springframework.jdbc.core.JdbcTemplate matchingCleanupJdbc;
+
     private static final Path STORAGE = temporaryStorage();
 
     @DynamicPropertySource
@@ -136,6 +138,7 @@ class ResumeGenerationServiceTest {
         reservations.deleteAll();
         requirements.deleteAll();
         scores.deleteAll();
+        com.jobpilot.support.MatchingTestCleanup.clear(matchingCleanupJdbc);
         jobs.deleteAll();
         if (Files.exists(STORAGE)) {
             try (var paths = Files.walk(STORAGE)) {

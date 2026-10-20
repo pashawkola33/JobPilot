@@ -48,7 +48,10 @@ jobs:
       # Failsafe integration tests start real PostgreSQL through Testcontainers,
       # which uses the Docker daemon already present on the runner.
       - name: Integration tests (PostgreSQL Testcontainers)
-        run: ./mvnw -B --no-transfer-progress verify
+        run: ./mvnw -B --no-transfer-progress -Dapi.version=1.44 verify
+
+      - name: Require PostgreSQL suites to execute
+        run: python3 scripts/check-integration-results.py target/failsafe-reports
 
       - name: Validate development Compose file
         run: docker compose config --quiet

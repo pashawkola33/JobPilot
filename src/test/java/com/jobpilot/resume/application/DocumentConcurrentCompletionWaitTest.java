@@ -77,6 +77,8 @@ import org.springframework.test.context.DynamicPropertySource;
 })
 @Import(ControlledRenderers.Configuration.class)
 class DocumentConcurrentCompletionWaitTest {
+    @org.springframework.beans.factory.annotation.Autowired private org.springframework.jdbc.core.JdbcTemplate matchingCleanupJdbc;
+
     private static final Path STORAGE = temporaryStorage();
     /** Comfortably inside the configured 1s budget. */
     private static final Duration WITHIN_BUDGET = Duration.ofMillis(200);
@@ -119,6 +121,7 @@ class DocumentConcurrentCompletionWaitTest {
         reservations.deleteAll();
         requirements.deleteAll();
         scores.deleteAll();
+        com.jobpilot.support.MatchingTestCleanup.clear(matchingCleanupJdbc);
         jobs.deleteAll();
         clearStorage();
     }

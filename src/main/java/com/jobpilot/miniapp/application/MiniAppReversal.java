@@ -75,6 +75,9 @@ public class MiniAppReversal {
     public boolean isStillReversible(MiniAppMutation mutation, JobWorkflowState workflow,
                                      ApplicationRecord application) {
         if (!mutation.isReversible()) return false;
+        Long owner=mutation.getCandidateId();
+        if (owner != null && (workflow != null && !Objects.equals(owner,workflow.getCandidateId())
+                || application != null && !Objects.equals(owner,application.getCandidateId()))) return false;
 
         WorkflowStatus currentWorkflow = workflow == null ? null : workflow.getStatus();
         Long currentWorkflowVersion = workflow == null ? null : workflow.getVersion();
@@ -109,7 +112,9 @@ public class MiniAppReversal {
         restoreWorkflow(mutation, workflow, now);
 
         if (mutation.getCreatedHistoryId() != null) {
-            history.findById(mutation.getCreatedHistoryId()).ifPresent(history::delete);
+            (mutation.getCandidateId() == null ? history.findById(mutation.getCreatedHistoryId())
+                    : history.findByCandidateIdAndId(mutation.getCandidateId(),mutation.getCreatedHistoryId()))
+                    .ifPresent(history::delete);
             history.flush();
         }
 
@@ -159,7 +164,9 @@ public class MiniAppReversal {
                     .orElseThrow(MiniAppMutationException::undoStale);
             // create(...) derives applied-at from the status; restore below overwrites it with
             // the recorded value, which is the only one that is true.
-            target = workflowStates.save(JobWorkflowState.create(job, previous, null, now));
+            target = JobWorkflowState.create(job, previous, null, now);
+            if (mutation.getCandidateId() != null) target.ownedBy(mutation.getCandidateId());
+            target = workflowStates.save(target);
         }
         target.restore(previous, mutation.getPreviousWorkflowNote(),
                 mutation.getPreviousWorkflowAppliedAt(), now);

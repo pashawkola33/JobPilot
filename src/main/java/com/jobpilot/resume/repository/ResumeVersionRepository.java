@@ -37,4 +37,9 @@ public interface ResumeVersionRepository extends JpaRepository<ResumeVersion, Lo
     boolean existsByDocxPathOrPdfPath(String docxPath, String pdfPath);
 
     long countByRenderStatus(DocumentRenderStatus status);
+    Optional<ResumeVersion> findByCandidateProfileCandidateIdAndId(long candidateId, long id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select resume from ResumeVersion resume where resume.id = :id and resume.candidateProfile.candidate.id = :candidateId")
+    Optional<ResumeVersion> findByCandidateIdAndIdForUpdate(long candidateId, long id);
 }

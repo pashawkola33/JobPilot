@@ -78,6 +78,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 })
 @Import(PostgresDocumentGenerationConcurrencyIT.RendererConfiguration.class)
 class PostgresDocumentGenerationConcurrencyIT {
+    @org.springframework.beans.factory.annotation.Autowired private org.springframework.jdbc.core.JdbcTemplate matchingCleanupJdbc;
+
     private static final Path STORAGE = temporaryStorage();
 
     @Container
@@ -126,6 +128,7 @@ class PostgresDocumentGenerationConcurrencyIT {
         reservations.deleteAll();
         requirements.deleteAll();
         scores.deleteAll();
+        com.jobpilot.support.MatchingTestCleanup.clear(matchingCleanupJdbc);
         jobs.deleteAll();
         clearStorage();
     }
