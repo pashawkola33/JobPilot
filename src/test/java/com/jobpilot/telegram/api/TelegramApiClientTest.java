@@ -99,6 +99,19 @@ class TelegramApiClientTest {
         assertThat(invalid).isInstanceOf(IllegalArgumentException.class);
     }
 
+    @Test void preservesPrivateEvidenceAndForwardIndicatorsWithoutInventingMissingEvidence() throws Exception {
+        ExternalHttpClient http=org.mockito.Mockito.mock(ExternalHttpClient.class);
+        when(http.postJson(any(),any())).thenReturn(json.readTree("""
+          {"ok":true,"result":[
+           {"update_id":1,"message":{"message_id":1,"date":1790000000,"from":{"id":9002,"is_bot":false},"chat":{"id":9002,"type":"private"},"text":"/start notify_synthetic","forward_origin":{"type":"user"}}},
+           {"update_id":2,"message":{"message_id":2,"from":{"id":9002},"chat":{"id":9002},"text":"/notifications_off"}}
+          ]}
+          """));
+        var updates=new TelegramApiClient(http,properties()).getUpdates(null,Duration.ZERO,10);
+        var first=updates.getFirst().message();assertThat(first.chat().type()).isEqualTo("private");assertThat(first.from().isBot()).isFalse();assertThat(first.date()).isEqualTo(1790000000L);assertThat(first.forwarded()).isTrue();
+        var missing=updates.getLast().message();assertThat(missing.chat().type()).isNull();assertThat(missing.from().isBot()).isNull();assertThat(missing.date()).isNull();
+    }
+
     private JobPilotProperties properties() {
         return TestProperties.create(new JobPilotProperties.Telegram(
                 "fake-stage3-token", "-100555", "JobPilotBot", true, "-100555", "777",

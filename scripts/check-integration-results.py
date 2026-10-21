@@ -5,6 +5,12 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 required = {
+    "com.jobpilot.identity.V20NotificationMigrationIT",
+    "com.jobpilot.notifications.NotificationSettingsIT",
+    "com.jobpilot.notifications.NotificationActivationIT",
+    "com.jobpilot.notifications.NotificationDeliveryIT",
+    "com.jobpilot.notifications.NotificationConcurrencyIT",
+    "com.jobpilot.notifications.NotificationCapacityIT",
     "com.jobpilot.personalizedmatching.MatchingCapacityIT",
     "com.jobpilot.personalizedmatching.PersonalizedMatchingIT",
     "com.jobpilot.identity.V19MatchingMigrationIT",

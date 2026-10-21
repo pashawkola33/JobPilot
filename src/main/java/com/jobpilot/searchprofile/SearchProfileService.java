@@ -19,6 +19,8 @@ public class SearchProfileService {
     private final TelegramIdentityService identities;
     private final ObjectMapper json;
     private final Clock clock;
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.core.env.Environment notificationEnvironment=new org.springframework.core.env.StandardEnvironment();
     public SearchProfileService(JdbcTemplate jdbc,TelegramIdentityService identities,ObjectMapper json,Clock clock) {
         this.jdbc=jdbc;this.identities=identities;this.json=json;this.clock=clock;
     }
@@ -27,7 +29,7 @@ public class SearchProfileService {
         identities.me(principal);
         return current(principal.candidateId());
     }
-    @Transactional
+    @Transactional(timeout=15)
     public View save(AuthenticatedCandidate principal,Update update) {
         identities.me(principal);
         if(update==null || update.expectedRevision()==null || update.expectedRevision()<0 || update.expectedRevision()==Long.MAX_VALUE
@@ -35,7 +37,7 @@ public class SearchProfileService {
             throw new IdentityException(400,"INVALID_SEARCH_PROFILE");
         long candidate=principal.candidateId();
         // This lock exists even before a profile does, and remains held through activation/commit.
-        jdbc.queryForObject("select id from candidates where id=? for update",Long.class,candidate);
+        com.jobpilot.notifications.NotificationLocks.bound(jdbc).lockCandidate(candidate);
         identities.me(principal);
         String payload=encode(update.profile());
         View active=current(candidate);
@@ -54,6 +56,8 @@ public class SearchProfileService {
         if(active.activeRevision()==0)jdbc.update("insert into search_profile_state(candidate_id,active_revision) values(?,?)",candidate,revision);
         else jdbc.update("update search_profile_state set active_revision=? where candidate_id=?",revision,candidate);
         com.jobpilot.personalizedmatching.MatchingWorkService.activate(jdbc,candidate,revision,completed);
+        if(!java.util.Arrays.asList(notificationEnvironment.getActiveProfiles()).contains("recovery"))
+            com.jobpilot.notifications.NotificationSettingsService.rebaseline(jdbc,candidate,"PROFILE_CHANGED");
         return current(candidate);
     }
     private View current(long candidate) {

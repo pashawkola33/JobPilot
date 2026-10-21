@@ -1273,3 +1273,13 @@ p {
 .eligibility { font-weight: 600; }
 .eligibility--unknown { color: #8b5900; }
 .eligibility--ineligible { color: #a32424; }
+
+.notification-settings { max-width: 640px; overflow-wrap: anywhere; }
+.notification-settings h2 { font-size: 23px; }
+.notification-settings .setting { padding-inline: 0; min-height: 56px; }
+.notification-settings .profile-fields { margin-top: 12px; }
+.notification-settings details { border: 1px solid var(--rule); padding: 12px; border-radius: 12px; margin-block: 20px; }
+.notification-settings summary { cursor: pointer; min-height: 44px; display: list-item; padding-block: 10px; }
+.notification-settings .btn { min-height: 48px; max-width: 100%; white-space: normal; }
+.notification-settings .notification-status { border-left: 3px solid var(--rule); padding-left: 12px; }
+.notification-settings :disabled { opacity: .55; }

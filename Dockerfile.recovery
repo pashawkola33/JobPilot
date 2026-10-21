@@ -15,12 +15,12 @@ COPY jobpilot.jar /app/jobpilot.jar
 RUN echo "${JAR_SHA256}  /app/jobpilot.jar" | sha256sum -c -
 ENV SPRING_PROFILES_ACTIVE=recovery \
     BUILD_COMMIT=${BUILD_COMMIT} \
-    JOBPILOT_VERSION=phase4-recovery \
+    JOBPILOT_VERSION=phase5-recovery \
     JOBPILOT_SOURCE_SHA256=${SOURCE_SHA256}
 LABEL org.opencontainers.image.revision=${BUILD_COMMIT} \
       com.jobpilot.source.sha256=${SOURCE_SHA256} \
       com.jobpilot.jar.sha256=${JAR_SHA256} \
-      com.jobpilot.schema.version=19
+      com.jobpilot.schema.version=20
 USER jobpilot
 EXPOSE 8080
 HEALTHCHECK --interval=20s --timeout=5s --start-period=60s --retries=3 \

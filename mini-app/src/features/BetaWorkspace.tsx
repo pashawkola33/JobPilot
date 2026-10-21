@@ -1,4 +1,5 @@
 import { RecommendedVacancies } from './RecommendedVacancies';
+import { NotificationSettings } from './NotificationSettings';
 import { useState } from 'react';
 import { UndoToast } from '../components/UndoToast';
 import { FAILURE_MESSAGES, type FailureKind, type Job } from '../data/types';
@@ -8,7 +9,7 @@ import { openLink } from '../lib/telegram';
 /** Shared vacancy facts and the current account's workflow only; no matching projection. */
 export function BetaWorkspace() {
   const store = useJobPilot();
-  const [tab, setTab] = useState<'catalogue' | 'saved' | 'applications' | 'recommended'>('catalogue');
+  const [tab, setTab] = useState<'catalogue' | 'saved' | 'applications' | 'recommended' | 'settings'>('catalogue');
   const jobs = tab === 'catalogue' ? (store.current ? [store.current] : []) : store.savedJobs;
   const retryable = (failure: FailureKind) => ['unavailable', 'not-found', 'conflict'].includes(failure);
   const vacancy = (job: Job) => {
@@ -38,12 +39,14 @@ export function BetaWorkspace() {
       <button className="btn btn--quiet" type="button" aria-pressed={tab === 'catalogue'} onClick={() => setTab('catalogue')}>Catalogue</button>
       <button className="btn btn--quiet" type="button" aria-pressed={tab === 'saved'} onClick={() => setTab('saved')}>Saved</button>
       <button className="btn btn--quiet" type="button" aria-pressed={tab === 'applications'} onClick={() => setTab('applications')}>Applications</button>
+      <button className="btn btn--quiet" type="button" aria-pressed={tab === 'settings'} onClick={() => setTab('settings')}>Settings</button>
     </nav>
-    {store.phase === 'loading' && <p role="status">Loading vacancies…</p>}
-    {store.phase === 'error' && <section role="alert"><h2>{FAILURE_MESSAGES[store.failure].title}</h2>
+    {tab === 'settings' && <NotificationSettings />}
+    {tab !== 'settings' && store.phase === 'loading' && <p role="status">Loading vacancies…</p>}
+    {tab !== 'settings' && store.phase === 'error' && <section role="alert"><h2>{FAILURE_MESSAGES[store.failure].title}</h2>
       <p>{FAILURE_MESSAGES[store.failure].text}</p>
       {retryable(store.failure) && <button className="btn btn--quiet" type="button" onClick={store.reload}>Try again</button>}</section>}
-    {store.phase === 'ready' && <>
+    {tab !== 'settings' && store.phase === 'ready' && <>
       <p>Saved: {store.stats.saved} · Applied: {store.stats.applied} · Dismissed: {store.stats.dismissed}</p>
       {store.writeFailure && <section role="alert"><p>{FAILURE_MESSAGES[store.writeFailure].title}</p>
         <p>{FAILURE_MESSAGES[store.writeFailure].text}</p></section>}

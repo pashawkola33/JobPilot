@@ -1,13 +1,15 @@
-# Candidate-aware V19 recovery: keep the explicitly authorized owner online.
+# Candidate-aware V20 recovery: keep the explicitly authorized owner online.
 # These are literal settings so ordinary production aliases cannot reopen background work.
 spring:
   flyway:
     enabled: true
-    target: "19"
+    target: "20"
     validate-on-migrate: true
     # A single empty pattern clears Flyway's default *:future; an empty list does not.
     ignore-migration-patterns: [""]
 jobpilot:
+  notifications:
+    enabled: false
   personalized-matching:
     enabled: false
   identity:

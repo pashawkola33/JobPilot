@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify a dirty source snapshot and create a local-only V19 recovery image.
+"""Verify a dirty source snapshot and create a local-only V20 recovery image.
 
 No registry login/push, deployment or production connection is performed. Run
 `verify` first and `image` afterward, or `build` for both. Output must be outside
@@ -65,10 +65,7 @@ def run(command, cwd, output, name, env=None):
                        check=True, env=env)
 
 
-def validate_jar(jar, frontend):
-    with zipfile.ZipFile(jar) as archive:
-        names = set(archive.namelist())
-        required = {
+REQUIRED_JAR_ENTRIES = {
             "BOOT-INF/classes/application-recovery.yml",
             "BOOT-INF/classes/com/jobpilot/config/RecoveryConfigurationGuard.class",
             "BOOT-INF/classes/com/jobpilot/config/SchemaCompatibilityGuard.class",
@@ -86,6 +83,20 @@ def validate_jar(jar, frontend):
             "BOOT-INF/classes/com/jobpilot/personalizedmatching/PersonalizedMatcher.class",
             "BOOT-INF/classes/static/mini-app/index.html",
         }
+REQUIRED_JAR_ENTRIES |= {
+    "BOOT-INF/classes/db/migration/V20__candidate_notifications.class",
+    "BOOT-INF/classes/db/notifications/V20-schema.sql",
+    "BOOT-INF/classes/db/notifications/V20-postgresql.sql",
+    "BOOT-INF/classes/com/jobpilot/telegram/polling/TelegramPollingLease.class",
+} | {"BOOT-INF/classes/com/jobpilot/notifications/" + name + ".class" for name in (
+    "NotificationController", "NotificationSettingsService", "NotificationActivationService", "NotificationProperties",
+    "NotificationRuntimeGate", "NotificationDiscovery", "NotificationOutboxService", "NotificationDeliveryWorker",
+    "NotificationSchedule", "NotificationScheduler", "NotificationTransport", "TelegramNotificationTransport", "NotificationLocks")}
+
+def validate_jar(jar, frontend):
+    with zipfile.ZipFile(jar) as archive:
+        names = set(archive.namelist())
+        required = REQUIRED_JAR_ENTRIES
         if not required <= names or not any(n.startswith("BOOT-INF/lib/") for n in names):
             raise ValueError(f"not a candidate-aware recovery fat JAR; missing {sorted(required - names)}")
         assets = [p for p in frontend.rglob("*") if p.is_file()]
@@ -137,6 +148,8 @@ def verify(root, output):
             info.mode = entry["mode"]
             with (stage / entry["path"]).open("rb") as stream:
                 archive.addfile(info, stream)
+    run([sys.executable, "scripts/test-recovery-artifact.py"], stage, output, "artifact-self-tests")
+    run([sys.executable, "scripts/test-integration-results.py"], stage, output, "integration-guard-self-tests")
     # The default Playwright server needs fixtures; its second server sets API mode itself.
     env = frontend_environment("mock")
     frontend = stage / "mini-app"
@@ -167,7 +180,7 @@ def verify(root, output):
              "git_status": capture(["git", "status", "--short"], root),
              "java": java_version, "node": node_version,
              "files": {name: sha(output / name) for name in files},
-             "schema": 19, "frontend_mode": "api", "verification": "passed"}
+             "schema": 20, "frontend_mode": "api", "verification": "passed"}
     write_json(output / "verification.json", proof)
     print(f"Verified source {identity}; proof: {output / 'verification.json'}")
     return output / "verification.json"
@@ -175,13 +188,14 @@ def verify(root, output):
 
 def validate_proof(root, proof_path):
     proof = json.loads(proof_path.read_text())
-    if (proof.get("format") != 1 or proof.get("schema") != 19
+    if (proof.get("format") != 1 or proof.get("schema") != 20
             or proof.get("frontend_mode") != "api" or proof.get("verification") != "passed"):
         raise ValueError("unsupported or failed verification proof")
     if source_inventory(root)[1] != proof["source_sha256"]:
         raise ValueError("source has changed since verification; reverify this candidate")
     required = {"source.tar", "source-files.json", "jobpilot.jar", "Dockerfile.recovery",
                 "backend-verify.log", "required-postgres-suites.log", "frontend-tests.log",
+                "artifact-self-tests.log", "integration-guard-self-tests.log",
                 "frontend-api-build.log", "frontend-typecheck.log", "frontend-lint.log", "npm-ci.log"}
     if not required <= proof["files"].keys():
         raise ValueError("verification proof omits required evidence")
@@ -219,7 +233,7 @@ def image(root, proof_path, base, platform):
         "platform": platform, "local_tag": tag, "image_id": image_id,
         "archive": archive.name, "archive_sha256": sha(archive),
         "verification_sha256": sha(proof_path), "registry_digest": None,
-        "default_profile": "recovery", "schema": 19,
+        "default_profile": "recovery", "schema": 20,
         "note": "Local image ID and archive SHA are not a registry RepoDigest. No push performed."})
     print(f"Local recovery artifact: {output / 'image-manifest.json'}")
 
@@ -227,7 +241,7 @@ def image(root, proof_path, base, platform):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("action", choices=("source-hash", "verify", "image", "build"))
-    parser.add_argument("--output", type=Path, default=Path("/private/tmp/jobpilot-phase3/artifact"))
+    parser.add_argument("--output", type=Path, default=Path("/private/tmp/jobpilot-phase5/artifact"))
     parser.add_argument("--verification", type=Path)
     parser.add_argument("--base-image", type=pinned_base)
     parser.add_argument("--platform", choices=("linux/amd64",), default="linux/amd64")

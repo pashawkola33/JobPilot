@@ -63,6 +63,7 @@ class RecoveryConfigurationTest {
                     assertThat(properties.telegram().channelConfigured()).isFalse();
                     assertThat(properties.telegram().matchNotificationsEnabled()).isFalse();
                     assertThat(properties.telegram().reviewDigestEnabled()).isFalse();
+                    assertThat(context.getEnvironment().getProperty("jobpilot.notifications.enabled", Boolean.class)).isFalse();
                     assertThat(context.getBean(MaintenanceProperties.class).enabled()).isFalse();
                     assertThat(context.getEnvironment().getProperty("jobpilot.score-rescore-preview.enabled", Boolean.class)).isFalse();
                     assertThat(context.getEnvironment().getProperty("jobpilot.scheduled-tasks-enabled", Boolean.class)).isFalse();
@@ -84,7 +85,7 @@ class RecoveryConfigurationTest {
             "spring.flyway.enabled=false", "spring.flyway.target=17", "spring.flyway.validate-on-migrate=false",
             "spring.flyway.ignore-migration-patterns=*:future",
             "jobpilot.score-rescore-command.mode=APPLY", "jobpilot.source-log-cleanup.mode=APPLY",
-            "jobpilot.score-rescore-preview.enabled=true", "jobpilot.personalized-matching.enabled=true" })
+            "jobpilot.score-rescore-preview.enabled=true", "jobpilot.personalized-matching.enabled=true", "jobpilot.notifications.enabled=true" })
     void rejectsUnsafeOverrideBeforeContextRefresh(String override) {
         var refreshed = new AtomicBoolean();
         recovery().withPropertyValues("jobpilot.telegram.allowed-chat-ids=4242",
@@ -106,7 +107,7 @@ class RecoveryConfigurationTest {
     }
 
     @ParameterizedTest
-    @ValueSource(strings = {"JOBPILOT_IDENTITY_REGISTRATION_ENABLED", "JOBPILOT_SCORE_RESCORE_PREVIEW_ENABLED"})
+    @ValueSource(strings = {"JOBPILOT_IDENTITY_REGISTRATION_ENABLED", "JOBPILOT_SCORE_RESCORE_PREVIEW_ENABLED", "JOBPILOT_NOTIFICATIONS_ENABLED"})
     void relaxedEnvironmentOverrideCannotStartUnsafeRecovery(String variable) {
         var refreshed = new AtomicBoolean();
         recovery().withInitializer(context -> context.getEnvironment().getPropertySources().addFirst(

@@ -91,12 +91,14 @@ public class MatchingWorkService {
     }
     public void initializeExistingProfiles() {
         if(recovery())return;
-        tx.executeWithoutResult(t->{
-            var candidates=jdbc.queryForList("select s.candidate_id from search_profile_state s join search_profile_revisions r on r.candidate_id=s.candidate_id and r.revision=s.active_revision left join candidate_matching_state w on w.candidate_id=s.candidate_id where r.completed=true and (w.candidate_id is null or w.profile_revision<>s.active_revision or w.extractor_version<>? or w.scorer_version<>?) order by s.candidate_id limit ?",Long.class,VacancyFactExtractor.VERSION,PersonalizedMatcher.VERSION,settings.batchSize());
-            for(long candidate:candidates){jdbc.queryForObject("select id from candidates where id=? for update",Long.class,candidate);long revision=jdbc.queryForObject("select active_revision from search_profile_state where candidate_id=?",Long.class,candidate);
-                boolean needed=!Boolean.TRUE.equals(jdbc.queryForObject("select exists(select 1 from candidate_matching_state where candidate_id=? and profile_revision=? and extractor_version=? and scorer_version=?)",Boolean.class,candidate,revision,VacancyFactExtractor.VERSION,PersonalizedMatcher.VERSION));
-                boolean complete=Boolean.TRUE.equals(jdbc.queryForObject("select completed from search_profile_revisions where candidate_id=? and revision=?",Boolean.class,candidate,revision));
-                if(needed&&complete)activate(jdbc,candidate,revision,true);}
+        var candidates=jdbc.queryForList("select s.candidate_id from search_profile_state s join search_profile_revisions r on r.candidate_id=s.candidate_id and r.revision=s.active_revision left join candidate_matching_state w on w.candidate_id=s.candidate_id where r.completed=true and (w.candidate_id is null or w.profile_revision<>s.active_revision or w.extractor_version<>? or w.scorer_version<>?) order by s.candidate_id limit ?",Long.class,VacancyFactExtractor.VERSION,PersonalizedMatcher.VERSION,settings.batchSize());
+        for(long candidate:candidates)tx.executeWithoutResult(t->{
+            com.jobpilot.notifications.NotificationLocks.bound(jdbc);
+            if(jdbc.queryForList("select id from candidates where id=? for update skip locked",Long.class,candidate).isEmpty())return;
+            long revision=jdbc.queryForObject("select active_revision from search_profile_state where candidate_id=?",Long.class,candidate);
+            boolean needed=!Boolean.TRUE.equals(jdbc.queryForObject("select exists(select 1 from candidate_matching_state where candidate_id=? and profile_revision=? and extractor_version=? and scorer_version=?)",Boolean.class,candidate,revision,VacancyFactExtractor.VERSION,PersonalizedMatcher.VERSION));
+            boolean complete=Boolean.TRUE.equals(jdbc.queryForObject("select completed from search_profile_revisions where candidate_id=? and revision=?",Boolean.class,candidate,revision));
+            if(needed&&complete)activate(jdbc,candidate,revision,true);
         });
     }
     /** Caller holds the candidate lock and the profile activation transaction. */

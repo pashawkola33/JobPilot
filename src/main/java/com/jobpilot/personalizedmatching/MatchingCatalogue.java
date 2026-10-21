@@ -18,6 +18,8 @@ public class MatchingCatalogue {
     public record Facts(long jobId,long revision,String extractor,VacancyFacts facts) { }
     private final JdbcTemplate jdbc;private final JobRepository jobs;private final ObjectMapper json;
     private final VacancyFactExtractor extractor;private final Clock clock;private final MatchingProperties settings;private final Environment env;
+    private org.springframework.transaction.support.TransactionTemplate bootstrapTransaction;
+    @org.springframework.beans.factory.annotation.Autowired void bootstrapTransactions(org.springframework.transaction.PlatformTransactionManager manager){bootstrapTransaction=new org.springframework.transaction.support.TransactionTemplate(manager);bootstrapTransaction.setTimeout(10);bootstrapTransaction.setPropagationBehavior(org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);}
     public MatchingCatalogue(JdbcTemplate jdbc,JobRepository jobs,ObjectMapper json,VacancyFactExtractor extractor,Clock clock,MatchingProperties settings,Environment env){this.jdbc=jdbc;this.jobs=jobs;this.json=json;this.extractor=extractor;this.clock=clock;this.settings=settings;this.env=env;}
     @Transactional(propagation=Propagation.MANDATORY)
     public boolean capture(Job job,RawJob raw) {
@@ -41,12 +43,19 @@ public class MatchingCatalogue {
         jdbc.update("update matching_catalogue_state set change_revision=? where id=1",next);
         return true;
     }
-    @Transactional(timeout=10)
     public int bootstrap() {
         if(Arrays.asList(env.getActiveProfiles()).contains("recovery"))return 0;
-        var ids=jdbc.queryForList("select j.id from jobs j where not exists(select 1 from vacancy_fact_state s where s.job_id=j.id and s.extractor_version=?) order by j.id limit ? for update of j skip locked",Long.class,VacancyFactExtractor.VERSION,settings.bootstrapBatchSize());
-        for(long id:ids)capture(jobs.findById(id).orElseThrow(),null);
-        return ids.size();
+        int captured=0;
+        while(captured<settings.bootstrapBatchSize()) {
+            Boolean one=bootstrapTransaction.execute(t->{
+                com.jobpilot.notifications.NotificationLocks.bound(jdbc);
+                var ids=jdbc.queryForList("select j.id from jobs j where not exists(select 1 from vacancy_fact_state s where s.job_id=j.id and s.extractor_version=?) order by j.id limit 1 for update of j skip locked",Long.class,VacancyFactExtractor.VERSION);
+                if(ids.isEmpty())return false;
+                capture(jobs.findById(ids.getFirst()).orElseThrow(),null);return true;
+            });
+            if(!Boolean.TRUE.equals(one))break;captured++;
+        }
+        return captured;
     }
     public String encode(Object value){try{return json.writeValueAsString(value);}catch(JsonProcessingException e){throw new IllegalStateException("Cannot encode matching data",e);}}
     public VacancyFacts decode(String value){try{return json.readValue(value,VacancyFacts.class);}catch(JsonProcessingException e){throw new IllegalStateException("Invalid stored vacancy facts",e);}}

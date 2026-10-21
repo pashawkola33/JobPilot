@@ -18,7 +18,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 @EnableConfigurationProperties({JobPilotProperties.class, CandidateProfileProperties.class,
         DocumentProperties.class, MaintenanceProperties.class, BuildInfoProperties.class,
         ScraperWorkerProperties.class, ScoreRescorePreviewProperties.class,
-        ScoreRescoreCommandProperties.class, SourceLogCleanupProperties.class, IdentityProperties.class})
+        ScoreRescoreCommandProperties.class, SourceLogCleanupProperties.class, IdentityProperties.class, com.jobpilot.notifications.NotificationProperties.class})
 public class JobPilotApplication {
     public static void main(String[] args) {
         var context = SpringApplication.run(JobPilotApplication.class, args);

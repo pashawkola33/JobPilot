@@ -80,7 +80,7 @@ class V19MatchingMigrationIT {
             execute(c,"insert into search_profile_revisions(candidate_id,revision,expected_revision,request_id,payload,created_at) values("+beta+",1,0,'synthetic-profile-1','{}',current_timestamp)");
             execute(c,"insert into search_profile_state(candidate_id,active_revision) values("+beta+",1)");
             var profilesBefore=rows(c,"search_profile_revisions",List.of("candidate_id","revision","expected_revision","request_id","payload","completed","created_at"));
-            var latest=Flyway.configure().dataSource(DB.getJdbcUrl(),DB.getUsername(),DB.getPassword()).load();
+            var latest=Flyway.configure().dataSource(DB.getJdbcUrl(),DB.getUsername(),DB.getPassword()).target("19").load();
             assertThat(latest.migrate().migrationsExecuted).isEqualTo(1);
             assertThat(latest.info().current().getVersion().toString()).isEqualTo("19");
             assertThat(latest.validateWithResult().validationSuccessful).isTrue();

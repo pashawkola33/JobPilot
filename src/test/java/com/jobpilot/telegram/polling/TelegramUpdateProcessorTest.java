@@ -55,6 +55,46 @@ class TelegramUpdateProcessorTest {
     }
 
     @Test
+    void retainedLegacyIdsCannotDispatchWhenOnlyPersonalizedPollingIsEnabled() {
+        var telegram=new JobPilotProperties.Telegram("synthetic-token","","JobPilotBot",false,"777","777",Duration.ofSeconds(15),Duration.ofSeconds(2),50,3,false,false,List.of(),true,true,5,500);
+        var properties=TestProperties.create(telegram);
+        var disabled=new TelegramUpdateProcessor(client,new TelegramAuthorizationPolicy(properties,new com.jobpilot.identity.IdentityProperties(true,true,777L,List.of(9002L),null,null)),new TelegramCommandParser(properties),dispatcher,new TelegramMessageRenderer());
+        disabled.process(message(1,777,777,"/save 42"));disabled.process(callback(2,"app:save:42",777,777));
+        verify(dispatcher,never()).dispatch(any(),any());verify(client,never()).sendMessage(any(),any(),any());verify(client,never()).answerCallbackQuery(any(),any());
+    }
+
+    @Test
+    void retainedLegacyIdsDispatchDuringReviewPollingOutsideReviewAllowlist() {
+        var telegram = new JobPilotProperties.Telegram(
+                "synthetic-token", "", "JobPilotBot", false, "777", "777",
+                Duration.ofSeconds(15), Duration.ofSeconds(2), 50, 3, false,
+                true, List.of("999"), true, true, 5, 500);
+        var properties = TestProperties.create(telegram);
+        var review = new TelegramUpdateProcessor(client,
+                new TelegramAuthorizationPolicy(properties,
+                        new com.jobpilot.identity.IdentityProperties(false, false, 777L, List.of(), null, null)),
+                new TelegramCommandParser(properties), dispatcher, new TelegramMessageRenderer());
+
+        review.process(message(1, 777, 777, "/save 42"));
+        review.process(callback(2, "app:save:42", 777, 777));
+
+        verify(dispatcher).dispatch(eq(new TelegramCommand(TelegramCommand.Kind.SAVE, 42L,
+                null, null, null, null)), eq(com.jobpilot.applications.domain.ApplicationStatusChangeSource.TELEGRAM_COMMAND));
+        verify(dispatcher).dispatch(eq(new TelegramCommand(TelegramCommand.Kind.SAVE, 42L,
+                null, null, null, null)), eq(com.jobpilot.applications.domain.ApplicationStatusChangeSource.TELEGRAM_CALLBACK));
+        verify(client).sendMessage(eq("777"), eq("done"), any());
+        verify(client).answerCallbackQuery("cb-2", "Saved");
+    }
+
+    @Test
+    void privateReviewAuthorizationRemainsIndependentOfDisabledLegacyCommands() {
+        var telegram=new JobPilotProperties.Telegram("synthetic-token","","JobPilotBot",false,"888","888",Duration.ofSeconds(15),Duration.ofSeconds(2),50,3,false,true,List.of("777"),true,true,5,500);
+        var properties=TestProperties.create(telegram);
+        var review=new TelegramUpdateProcessor(client,new TelegramAuthorizationPolicy(properties,new com.jobpilot.identity.IdentityProperties(false,false,777L,List.of(),null,null)),new TelegramCommandParser(properties),dispatcher,new TelegramMessageRenderer());
+        review.process(message(1,777,777,"/save 42"));verify(dispatcher).dispatch(any(),any());
+    }
+
+    @Test
     void malformedAuthorizedCommandGetsSafeReplyWithoutDispatch() {
         processor.process(message(1, 777, 777, "/save nope"));
         verify(dispatcher, never()).dispatch(any(), any());

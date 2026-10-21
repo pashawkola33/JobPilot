@@ -35,6 +35,7 @@ public class RecoveryConfigurationGuard implements SmartInitializingSingleton {
                 || telegram.pollingEnabled() || telegram.channelConfigured()
                 || telegram.matchNotificationsEnabled() || telegram.reviewDigestEnabled()
                 || maintenance.enabled()
+                || environment.getProperty("jobpilot.notifications.enabled", Boolean.class, false)
                 || environment.getProperty("jobpilot.personalized-matching.enabled", Boolean.class, false)
                 || environment.getProperty("jobpilot.score-rescore-preview.enabled", Boolean.class, false)
                 || !"OFF".equalsIgnoreCase(environment.getProperty("jobpilot.score-rescore-command.mode", "OFF"))
@@ -43,10 +44,10 @@ public class RecoveryConfigurationGuard implements SmartInitializingSingleton {
         }
         Flyway migrations = flyway.getIfAvailable();
         if (!environment.getProperty("spring.flyway.enabled", Boolean.class, true) || migrations == null
-                || !MigrationVersion.fromVersion("19").equals(migrations.getConfiguration().getTarget())
+                || !MigrationVersion.fromVersion("20").equals(migrations.getConfiguration().getTarget())
                 || !migrations.getConfiguration().isValidateOnMigrate()
                 || migrations.getConfiguration().getIgnoreMigrationPatterns().length != 0) {
-            throw new IllegalArgumentException("Recovery requires enabled Flyway, target V19 and strict migration validation");
+            throw new IllegalArgumentException("Recovery requires enabled Flyway, target V20 and strict migration validation");
         }
     }
 }

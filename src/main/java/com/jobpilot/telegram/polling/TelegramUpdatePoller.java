@@ -29,6 +29,10 @@ public class TelegramUpdatePoller {
     private final AtomicBoolean firstScheduledPoll = new AtomicBoolean(true);
     private final ApplicationLifecycleGate lifecycle;
     private final OperationalCounters counters;
+    private com.jobpilot.notifications.NotificationProperties notificationSettings=new com.jobpilot.notifications.NotificationProperties(false);
+    @Autowired void notificationSettings(com.jobpilot.notifications.NotificationProperties value){notificationSettings=value;}
+    private TelegramPollingLease pollingLease;
+    @Autowired void pollingLease(TelegramPollingLease value){pollingLease=value;}
 
     @Autowired
     public TelegramUpdatePoller(TelegramClient client, TelegramUpdateProcessor processor,
@@ -71,13 +75,14 @@ public class TelegramUpdatePoller {
                     settings.discardPendingOnFirstStart(), settings.pollTimeout(),
                     settings.pollDelay(), lifecycle.acceptingWork());
         }
-        if (settings.pollingEnabled()) pollOnce();
+        if (pollingEnabled()) pollOnce();
     }
 
     public boolean pollOnce() {
-        if (!settings.pollingEnabled() || !lifecycle.acceptingWork()
+        if (!pollingEnabled() || !lifecycle.acceptingWork()
                 || !polling.compareAndSet(false, true)) return false;
-        try {
+        try (AutoCloseable lease = pollingLease==null?()->{}:pollingLease.acquire()) {
+            if(lease==null)return false;
             var initial = state.load();
             if (initial.isEmpty() && settings.discardPendingOnFirstStart()) {
                 discardPendingUpdates();
@@ -91,7 +96,7 @@ public class TelegramUpdatePoller {
                     .sorted(Comparator.comparingLong(TelegramUpdate::updateId)).toList();
             process(updates, lastProcessed);
             return true;
-        } catch (RuntimeException transportOrStateFailure) {
+        } catch (Exception transportOrStateFailure) {
             log.warn("Telegram polling cycle failed category=poll_or_transport_failure "
                             + "exceptionClass={}",
                     transportOrStateFailure.getClass().getName());
@@ -100,6 +105,8 @@ public class TelegramUpdatePoller {
             polling.set(false);
         }
     }
+
+    private boolean pollingEnabled(){return settings.pollingEnabled()||notificationSettings.enabled()&&settings.botToken()!=null&&!settings.botToken().isBlank();}
 
     private void process(List<TelegramUpdate> updates, Long lastProcessed) {
         long watermark = lastProcessed == null ? Long.MIN_VALUE : lastProcessed;

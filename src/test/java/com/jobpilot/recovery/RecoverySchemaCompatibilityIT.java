@@ -20,12 +20,12 @@ class RecoverySchemaCompatibilityIT {
 
     @BeforeEach void supportedSchema() {
         var flyway = Flyway.configure().dataSource(DB.getJdbcUrl(), DB.getUsername(), DB.getPassword())
-                .cleanDisabled(false).target("19").load();
+                .cleanDisabled(false).target("20").load();
         flyway.clean();
         flyway.migrate();
     }
 
-    @Test void supportedV19StartsInRecoveryAndNormalMode() {
+    @Test void supportedV20StartsInRecoveryAndNormalMode() {
         for (String profile : new String[]{"recovery", "normal"}) {
             RecoveryConfigurationTest.recovery(DB.getJdbcUrl(), DB.getUsername(), DB.getPassword())
                     .withPropertyValues("spring.profiles.active=" + profile)
@@ -35,18 +35,18 @@ class RecoverySchemaCompatibilityIT {
 
     @ParameterizedTest
     @ValueSource(strings = {"recovery", "normal"})
-    void committedUnknownV20CannotServeOrRefreshInEitherMode(String profile) throws Exception {
+    void committedUnknownV21CannotServeOrRefreshInEitherMode(String profile) throws Exception {
         execute("insert into flyway_schema_history(installed_rank,version,description,type,script,checksum,installed_by,execution_time,success) "
-                + "values(20,'20','unknown future schema','SQL','V20__unknown.sql',123,'synthetic',0,true)");
+                + "values(21,'21','unknown future schema','SQL','V21__unknown.sql',123,'synthetic',0,true)");
         refusesStartup(profile);
     }
 
     @ParameterizedTest
     @ValueSource(strings = {
             "update flyway_schema_history set checksum=123 where version='1'",
-            "update flyway_schema_history set success=false where version='19'",
+            "update flyway_schema_history set success=false where version='20'",
             "delete from flyway_schema_history where version='16'",
-            "delete from flyway_schema_history where version='19'"})
+            "delete from flyway_schema_history where version='20'"})
     void incompatibleHistoryCannotStartRecovery(String corruption) throws Exception {
         execute(corruption);
         refusesStartup("recovery");
@@ -54,7 +54,7 @@ class RecoverySchemaCompatibilityIT {
 
     @Test void recoveryCannotSuppressMissingMigrationValidation() throws Exception {
         execute("insert into flyway_schema_history(installed_rank,version,description,type,script,checksum,installed_by,execution_time,success) "
-                + "values(20,'20','unknown future schema','SQL','V20__unknown.sql',123,'synthetic',0,true)");
+                + "values(21,'21','unknown future schema','SQL','V21__unknown.sql',123,'synthetic',0,true)");
         RecoveryConfigurationTest.recovery(DB.getJdbcUrl(), DB.getUsername(), DB.getPassword())
                 .withPropertyValues("spring.flyway.ignore-migration-patterns=*:future")
                 .run(context -> assertThat(context).hasFailed());

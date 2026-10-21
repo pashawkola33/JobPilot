@@ -43,7 +43,7 @@ public class TelegramAuthorizationPolicy {
 
     /** Phase 3 application-tracking surface: one explicit chat plus one explicit user. */
     private boolean legacyPair(TelegramChat chat, TelegramUser from) {
-        return allowedChatId != null && !allowedChatId.isBlank()
+        return settings.pollingEnabled() && allowedChatId != null && !allowedChatId.isBlank()
                 && allowedChatId.equals(Long.toString(chat.id()))
                 && allowedUserId != null && allowedUserId.equals(Long.toString(from.id()));
     }

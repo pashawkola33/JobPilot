@@ -21,6 +21,7 @@ interface TelegramWebApp {
    */
   initData: string;
   openLink(url: string): void;
+  openTelegramLink?(url: string): void;
   onEvent(event: 'themeChanged', handler: () => void): void;
   offEvent(event: 'themeChanged', handler: () => void): void;
   BackButton: {
@@ -125,4 +126,11 @@ export function setBackButton(handler: (() => void) | null): () => void {
     button.offClick(handler);
     button.hide();
   };
+}
+
+/** Use the native Telegram handoff when this client supports it; anchors handle older clients. */
+export function openTelegramLink(url: string): boolean {
+  if (!webApp?.openTelegramLink) return false;
+  webApp.openTelegramLink(url);
+  return true;
 }

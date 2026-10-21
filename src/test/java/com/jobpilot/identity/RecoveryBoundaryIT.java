@@ -33,10 +33,13 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 class RecoveryBoundaryIT {
     private static final ObjectMapper JSON=new ObjectMapper();
     private static final HttpClient HTTP=HttpClient.newHttpClient();
-    private static final AtomicInteger SENDS=new AtomicInteger(), POLLS=new AtomicInteger();
+    private static final AtomicInteger SENDS=new AtomicInteger(), POLLS=new AtomicInteger(), PERSONAL_SENDS=new AtomicInteger();
 
     @TestConfiguration(proxyBeanMethods=false)
     static class SyntheticTelegram {
+        @Bean @Primary com.jobpilot.notifications.NotificationTransport personalizedTestClient() {
+            return (chat,html)->{PERSONAL_SENDS.incrementAndGet();return new com.jobpilot.notifications.NotificationTransport.Outcome("SENT","SYNTHETIC_ACCEPTED",123L,0);};
+        }
         @Bean @Primary TelegramClient recoveryTestClient() {
             return new TelegramClient() {
                 public List<TelegramUpdate> getUpdates(Long offset,Duration timeout,int limit){POLLS.incrementAndGet();return List.of();}
@@ -67,7 +70,7 @@ class RecoveryBoundaryIT {
     private Connection connection(PostgreSQLContainer<?> db)throws SQLException {
         return DriverManager.getConnection(db.getJdbcUrl(),db.getUsername(),db.getPassword());
     }
-    private ConfigurableApplicationContext start(PostgreSQLContainer<?> db,boolean recovery,boolean fail) {
+    private ConfigurableApplicationContext start(PostgreSQLContainer<?> db,boolean recovery,boolean fail,String... extra) {
         var sources=new ArrayList<Class<?>>(List.of(JobPilotApplication.class,SyntheticTelegram.class));
         if(fail)sources.add(FailedRelease.class);
         var args=new ArrayList<>(List.of("--spring.config.additional-location=classpath:fixtures/identity-legacy-profile.yml",
@@ -79,7 +82,8 @@ class RecoveryBoundaryIT {
         else args.addAll(List.of("--jobpilot.scheduled-tasks-enabled=false","--jobpilot.telegram.enabled=true",
                 "--jobpilot.telegram.commands-enabled=false","--jobpilot.mini-app.enabled=true",
                 "--jobpilot.identity.enabled=true","--jobpilot.identity.registration-enabled=true",
-                "--jobpilot.identity.beta-allowed-user-ids=9002,9003"));
+                "--jobpilot.identity.beta-allowed-user-ids=9002,9003","--jobpilot.notifications.enabled=true","--jobpilot.telegram.bot-username=JobPilotTestBot"));
+        args.addAll(List.of(extra));
         return new SpringApplication(sources.toArray(Class<?>[]::new)).run(args.toArray(String[]::new));
     }
     private String base(ConfigurableApplicationContext ctx){return "http://127.0.0.1:"+((ServletWebServerApplicationContext)ctx).getWebServer().getPort();}
@@ -122,10 +126,11 @@ class RecoveryBoundaryIT {
     }
 
     @Test void failedReleaseRecoversOwnerWithoutLosingBetaRowsOrReplayingNotifications()throws Exception {
-        SENDS.set(0);POLLS.set(0);
-        try(var db=database()) {
+        SENDS.set(0);POLLS.set(0);PERSONAL_SENDS.set(0);
+        try(var db=database();var pollHold=new RecoveryImageRehearsal.PollHold(db)) {
             seed(db);String a,b,oldOwner,foreignUndo;long betaApplication;
             Map<String,List<List<String>>> before;
+            NotificationRecoveryFixture.Snapshot notifications;AuthenticatedCandidate betaPrincipal;String activationText;
             List<List<String>> deliveries,botState,legacyApps,legacyHistory;
             try(var c=connection(db);var normal=start(db,false,false)) {
                 String url=base(normal);oldOwner=login(url,4242);a=login(url,9002);b=login(url,9003);
@@ -149,6 +154,17 @@ class RecoveryBoundaryIT {
                 ok(url,"PUT","/api/mini-app/v2/applications/"+aid+"/notes",a,"{\"notes\":\"Beta A private recovery note\"}");
                 normal.getBean(com.jobpilot.personalizedmatching.MatchingCatalogue.class).bootstrap();
                 for(int i=0;i<20;i++)normal.getBean(com.jobpilot.personalizedmatching.MatchingWorkService.class).runOne();
+                ok(url,"PUT","/api/mini-app/v2/me/notifications",a,notificationUpdate(true,"UTC"));
+                ok(url,"PUT","/api/mini-app/v2/me/notifications",b,notificationUpdate(false,"Europe/Bucharest"));
+                var challenge=ok(url,"POST","/api/mini-app/v2/me/notifications/activation",a,null);
+                activationText="/start "+challenge.path("activationUrl").asText().split("start=")[1];
+                assertThat(normal.getBean(com.jobpilot.notifications.NotificationActivationService.class).process(activation(activationText))).isTrue();
+                ok(url,"POST","/api/mini-app/v2/me/notifications/activation",a,null);
+                betaPrincipal=normal.getBean(TelegramIdentityService.class).authenticate(a);
+                NotificationRecoveryFixture.seed(c,betaPrincipal.candidateId());notifications=NotificationRecoveryFixture.snapshot(c);
+                assertThat(notifications.tables()).hasSize(11);
+                assertThat(normal.getBean(com.jobpilot.telegram.polling.TelegramUpdatePoller.class).pollOnce()).isFalse();
+                assertThat(POLLS.get()).isZero();
                 before=betaRows(c);deliveries=rows(c,"telegram_job_delivery","");botState=rows(c,"telegram_bot_state","");
                 legacyApps=rows(c,"applications","where id in (201,202)");legacyHistory=rows(c,"application_status_history","where id in (301,302)");
                 assertThat(snapshot(url,a).path("workflowCounts").path("applied").asInt()).isEqualTo(1);
@@ -158,6 +174,7 @@ class RecoveryBoundaryIT {
             try(var c=connection(db);var recovery=start(db,true,false)) {
                 String url=base(recovery);
                 assertThat(betaRows(c)).isEqualTo(before);
+                assertThat(NotificationRecoveryFixture.snapshot(c)).isEqualTo(notifications);
                 assertThat(call(url,"GET","/api/mini-app/v2/snapshot","Authorization","Bearer "+a,null).statusCode()).isEqualTo(401);
                 assertThat(call(url,"POST","/api/mini-app/v2/auth/telegram","X-Telegram-Init-Data",launch(9003),null).statusCode()).isEqualTo(403);
                 assertThat(call(url,"GET","/api/mini-app/v2/me/search-profile","Authorization","Bearer "+a,null).statusCode()).isEqualTo(401);
@@ -178,6 +195,20 @@ class RecoveryBoundaryIT {
                 assertThat(recovery.getBean(com.jobpilot.personalizedmatching.MatchingWorkService.class).claim()).isNull();
                 assertThat(recovery.getBean(com.jobpilot.personalizedmatching.MatchingWorkService.class).runOne()).isFalse();
                 recovery.getBean(com.jobpilot.personalizedmatching.MatchingWorker.class).tick();
+                assertThat(recovery.getBean(com.jobpilot.notifications.NotificationOutboxService.class).admitOne()).isFalse();
+                assertThat(recovery.getBean(com.jobpilot.notifications.NotificationDeliveryWorker.class).deliverOne()).isFalse();
+                recovery.getBean(com.jobpilot.notifications.NotificationScheduler.class).tick();
+                var activation=recovery.getBean(com.jobpilot.notifications.NotificationActivationService.class);
+                assertThat(activation.process(activation(activationText))).isTrue();
+                assertThat(activation.process(activation("/notifications_off"))).isTrue();
+                assertThatThrownBy(()->activation.challenge(betaPrincipal)).isInstanceOf(IdentityException.class).hasMessageContaining("RECOVERY_MODE");
+                var settings=recovery.getBean(com.jobpilot.notifications.NotificationSettingsService.class);
+                assertThatThrownBy(()->settings.disconnect(betaPrincipal)).isInstanceOf(IdentityException.class);
+                assertThatThrownBy(()->settings.save(betaPrincipal,null)).isInstanceOf(IdentityException.class);
+                assertThat(recovery.getBean(com.jobpilot.telegram.polling.TelegramUpdatePoller.class).pollOnce()).isFalse();
+                assertThat(recovery.getBean(com.jobpilot.telegram.polling.TelegramPollingLease.class).acquire()).isNull();
+                assertThat(NotificationRecoveryFixture.snapshot(c)).isEqualTo(notifications);
+                assertThat(PERSONAL_SENDS.get()).isZero();
                 recovery.getBean(TelegramReviewNotifier.class).notifyIngestion(List.of(101L),List.of());
                 assertThat(SENDS.get()).isEqualTo(1);assertThat(POLLS.get()).isZero();
                 assertThat(betaRows(c)).isEqualTo(before);
@@ -188,6 +219,13 @@ class RecoveryBoundaryIT {
             }
             try(var c=connection(db);var normal=start(db,false,false)) {
                 assertThat(betaRows(c)).isEqualTo(before);
+                assertThat(normal.getEnvironment().getProperty("jobpilot.notifications.enabled",Boolean.class)).isTrue();
+                assertThat(normal.getBean(com.jobpilot.notifications.NotificationRuntimeGate.class).permitted()).isFalse();
+                NotificationRecoveryFixture.assertDeliverablePending(c,betaPrincipal.candidateId());
+                assertThat(normal.getBean(com.jobpilot.notifications.NotificationOutboxService.class).admitOne()).isFalse();
+                assertThat(normal.getBean(com.jobpilot.notifications.NotificationDeliveryWorker.class).deliverOne()).isFalse();
+                assertThat(NotificationRecoveryFixture.snapshot(c)).isEqualTo(notifications);
+                assertThat(PERSONAL_SENDS.get()).isZero();
                 normal.getBean(TelegramReviewNotifier.class).notifyIngestion(List.of(101L),List.of());
                 assertThat(SENDS.get()).isEqualTo(1);assertThat(POLLS.get()).isZero();
                 String url=base(normal),freshA=login(url,9002),freshB=login(url,9003);
@@ -207,22 +245,86 @@ class RecoveryBoundaryIT {
             assertThat(flyway(db,null).validateWithResult().validationSuccessful).isTrue();
         }
     }
+    private String notificationUpdate(boolean immediate,String timezone)throws Exception {
+        return JSON.writeValueAsString(Map.of("expectedRevision",0,"requestId",UUID.randomUUID().toString(),"enabled",true,"paused",false,"immediate",immediate,"digest",!immediate,"minimumScore",88,"timezone",timezone));
+    }
+    private TelegramUpdate activation(String text) {
+        return new TelegramUpdate(9001,new TelegramUpdate.TelegramMessage(1,new TelegramUpdate.TelegramUser(9002,false),new TelegramUpdate.TelegramChat(9002,"private"),text,Instant.now().getEpochSecond(),false),null);
+    }
     private void normalOwnerHasOnlyOwnData(String url,String owner)throws Exception {
         assertThat(snapshot(url,owner).path("applications").path("total").asInt()).isEqualTo(3);
         assertThat(call(url,"GET","/internal/v1/applications",null,null,null).statusCode()).isEqualTo(403);
     }
 
-    @Test void failedTransactionalFutureMigrationLeavesV19Recoverable()throws Exception {
+    @Test void stoppedDatabaseRewindAndEveryFreshProcessRequireNewExternalApproval()throws Exception {
+        Path directory=Files.createTempDirectory("recovery-arming-");Path approval=directory.resolve("approval");
+        String option="--jobpilot.notifications.approval-file="+approval;PERSONAL_SENDS.set(0);
+        try(var db=database();var pollHold=new RecoveryImageRehearsal.PollHold(db)) {
+            seed(db);NotificationRecoveryFixture.Snapshot before;String originalNonce,acceptedProcessNonce;long pendingJob;
+            try(var normal=start(db,false,false,option);var c=connection(db)) {
+                String token=login(base(normal),9002);searchProfile(base(normal),token,0,"restore-profile-a1","Engineer");
+                ok(base(normal),"PUT","/api/mini-app/v2/me/notifications",token,notificationUpdate(true,"UTC"));
+                NotificationRecoveryFixture.seed(c,NotificationRecoveryFixture.candidate(c,9002));
+                NotificationRecoveryFixture.sql(c,"update notification_outbox set next_attempt_at=current_timestamp+interval '1 hour' where state='RETRY'");
+                pendingJob=NotificationRecoveryFixture.scalar(c,"select job_id from notification_outbox where state='PENDING'");
+                before=NotificationRecoveryFixture.snapshot(c);
+                var gate=normal.getBean(com.jobpilot.notifications.NotificationRuntimeGate.class);assertThat(gate.permitted()).isFalse();
+                originalNonce=gate.operatorIdentity().nonce();approve(approval,gate);assertThat(gate.permitted()).isTrue();
+            }
+            // No app process is running at either the backup or restore maintenance boundary.
+            var backup=db.execInContainer("sh","-c","umask 077\nexec pg_dump --clean --if-exists --no-owner -U \"$1\" -d \"$2\" > /tmp/notification-restore.sql","snapshot",db.getUsername(),db.getDatabaseName());
+            assertThat(backup.getExitCode()).as("actual disposable pg_dump").isZero();
+            try(var restarted=start(db,false,false,option);var c=connection(db)) {
+                var gate=restarted.getBean(com.jobpilot.notifications.NotificationRuntimeGate.class);
+                assertThat(gate.operatorIdentity().nonce()).isNotEqualTo(originalNonce);assertThat(gate.permitted()).isFalse();
+                assertThat(NotificationRecoveryFixture.snapshot(c)).isEqualTo(before);
+                acceptedProcessNonce=gate.operatorIdentity().nonce();approve(approval,gate);assertThat(gate.permitted()).isTrue();
+                assertThat(restarted.getBean(com.jobpilot.notifications.NotificationDeliveryWorker.class).deliverOne()).isTrue();
+                assertThat(PERSONAL_SENDS.get()).isEqualTo(1);
+                assertThat(NotificationRecoveryFixture.scalar(c,"select count(*) from notification_outbox where job_id=? and state='SENT'",pendingJob)).isEqualTo(1);
+                assertThat(NotificationRecoveryFixture.snapshot(c)).isNotEqualTo(before);
+            }
+            var restore=db.execInContainer("psql","-v","ON_ERROR_STOP=1","-U",db.getUsername(),"-d",db.getDatabaseName(),"-f","/tmp/notification-restore.sql");
+            assertThat(restore.getExitCode()).as("actual disposable psql restore: %s",restore.getStderr()).isZero();
+            try(var restored=start(db,false,false,option);var c=connection(db)) {
+                var gate=restored.getBean(com.jobpilot.notifications.NotificationRuntimeGate.class);
+                assertThat(gate.operatorIdentity().nonce()).isNotEqualTo(originalNonce);assertThat(gate.permitted()).isFalse();
+                assertThat(gate.operatorIdentity().nonce()).isNotEqualTo(acceptedProcessNonce);
+                NotificationRecoveryFixture.assertDeliverablePending(c,NotificationRecoveryFixture.candidate(c,9002));
+                assertThat(NotificationRecoveryFixture.scalar(c,"select count(*) from notification_outbox where job_id=? and state='PENDING'",pendingJob)).isEqualTo(1);
+                assertThat(PERSONAL_SENDS.get()).isEqualTo(1);
+                assertThat(restored.getBean(com.jobpilot.notifications.NotificationOutboxService.class).admitOne()).isFalse();
+                assertThat(restored.getBean(com.jobpilot.notifications.NotificationDeliveryWorker.class).deliverOne()).isFalse();
+                assertThat(NotificationRecoveryFixture.snapshot(c)).isEqualTo(before);
+                assertThat(PERSONAL_SENDS.get()).isEqualTo(1);
+                assertThat(gate.permitted()).as("external accepted history is unreconciled: restored pending work must remain disarmed").isFalse();
+            }
+            try(var recovery=start(db,true,false,option);var c=connection(db)) {
+                var gate=recovery.getBean(com.jobpilot.notifications.NotificationRuntimeGate.class);approve(approval,gate);
+                assertThat(gate.permitted()).as("even this recovery instance's otherwise-correct private approval cannot arm it").isFalse();
+                assertThat(recovery.getBean(com.jobpilot.notifications.NotificationOutboxService.class).admitOne()).isFalse();
+                assertThat(recovery.getBean(com.jobpilot.notifications.NotificationDeliveryWorker.class).deliverOne()).isFalse();
+                assertThat(NotificationRecoveryFixture.snapshot(c)).isEqualTo(before);
+            }
+        }finally{Files.deleteIfExists(approval);Files.deleteIfExists(directory);}
+    }
+    private void approve(Path path,com.jobpilot.notifications.NotificationRuntimeGate gate)throws Exception {
+        var identity=gate.operatorIdentity();Files.writeString(path,identity.epoch()+"\n"+identity.nonce()+"\n");
+        Files.setPosixFilePermissions(path,java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"));
+    }
+
+    @Test void failedTransactionalFutureMigrationLeavesV20Recoverable()throws Exception {
         try(var db=database()) {
             seed(db);flyway(db,null).migrate();
             Path directory=Files.createTempDirectory("jobpilot-failed-migration-");
             try {
-                Files.writeString(directory.resolve("V20__synthetic_failure.sql"),"create table failed_release_probe(id bigint); select cast('synthetic-failure' as integer);");
+                Files.writeString(directory.resolve("V21__synthetic_failure.sql"),"create table failed_release_probe(id bigint); select cast('synthetic-failure' as integer);");
                 assertThatThrownBy(()->flyway(db,null,"classpath:db/migration","filesystem:"+directory).migrate()).isInstanceOf(org.flywaydb.core.api.FlywayException.class);
-                try(var c=connection(db)) {assertThat(rows(c,"flyway_schema_history","where success=false")).isEmpty();}
-                assertThat(flyway(db,null).info().current().getVersion().toString()).isEqualTo("19");
+                try(var c=connection(db)) {assertThat(rows(c,"flyway_schema_history","where success=false")).isEmpty();
+                    try(var statement=c.createStatement();var result=statement.executeQuery("select to_regclass('public.failed_release_probe')")){result.next();assertThat(result.getString(1)).as("failing V21 SQL actually ran and rolled back").isNull();}}
+                assertThat(flyway(db,null).info().current().getVersion().toString()).isEqualTo("20");
                 try(var ctx=start(db,true,false)){assertThat(snapshot(base(ctx),login(base(ctx),4242)).path("applications").path("total").asInt()).isEqualTo(2);}
-            } finally {Files.deleteIfExists(directory.resolve("V20__synthetic_failure.sql"));Files.deleteIfExists(directory);}
+            } finally {Files.deleteIfExists(directory.resolve("V21__synthetic_failure.sql"));Files.deleteIfExists(directory);}
         }
     }
 
@@ -231,13 +333,13 @@ class RecoveryBoundaryIT {
             seed(db);flyway(db,null).migrate();
             Path directory=Files.createTempDirectory("jobpilot-future-schema-");
             try {
-                Files.writeString(directory.resolve("V20__synthetic_future.sql"),"create table future_release_probe(id bigint);");
+                Files.writeString(directory.resolve("V21__synthetic_future.sql"),"create table future_release_probe(id bigint);");
                 flyway(db,null,"classpath:db/migration","filesystem:"+directory).migrate();
                 assertThatThrownBy(()->start(db,true,false)).isInstanceOf(RuntimeException.class);
                 assertThatThrownBy(()->start(db,false,false)).isInstanceOf(RuntimeException.class);
                 try(var c=connection(db)){assertThat(rows(c,"applications","")).hasSize(2);}
-                assertThat(flyway(db,null,"classpath:db/migration","filesystem:"+directory).info().current().getVersion().toString()).isEqualTo("20");
-            } finally {Files.deleteIfExists(directory.resolve("V20__synthetic_future.sql"));Files.deleteIfExists(directory);}
+                assertThat(flyway(db,null,"classpath:db/migration","filesystem:"+directory).info().current().getVersion().toString()).isEqualTo("21");
+            } finally {Files.deleteIfExists(directory.resolve("V21__synthetic_future.sql"));Files.deleteIfExists(directory);}
         }
     }
 }

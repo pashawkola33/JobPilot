@@ -1,0 +1,39 @@
+# Phase 5 notification recovery and local verification
+
+This additive release supports exactly validated schema V20. V1–V19 and retained prior artifacts stay immutable. The actual preserved V19 image must refuse a committed V20 database; V20 must refuse a committed V21 database. Do not downgrade a database or delete migration history to make an older binary start. The [earlier release runbook](phase-2.5-release-runbook.md) retains the backup, storage, owner-binding and separately authorized production prerequisites. This document authorizes no production operation or release.
+
+## Preserve notification history
+
+Stop every application process before database rewind. Restore matching, consent, notification history and private document storage consistently; database markers cannot reveal every lost external side effect. Reconcile retained external delivery evidence before considering dispatch approval. A database rewind cannot undo a Telegram message. If reconciliation is incomplete, leave dispatch disarmed indefinitely.
+
+Snapshot every column and row of all eleven `notification_*` tables, including immutable attempt members, outcomes, process nonces, preference cursors and delivery fairness ordinals. Discover the table set and compare it with the explicit V20 inventory rather than silently omitting a new table. Preserve `notification_delivery_checks` sequence `last_value` and `is_called`; PostgreSQL's internal WAL `log_cnt` is not an application delivery ordinal and pg_dump restores it differently. Preserve original bot offsets, legacy delivery ledgers, candidate profile/results and workflow histories separately. Compare before new authentication or profile/preference mutations, which can legitimately add or rebaseline data.
+
+Never automatically retry an ambiguous send or rewrite a committed SENDING marker during recovery/disarmed startup. SENDING and UNCERTAIN remain held. A definitive retryable outcome retains lifetime candidate/job identity and bounded policy; it is not permission to retry unknown acceptance. Owner alerts and digests remain on the legacy path.
+
+## External approval after every normal process start
+
+Notifications are disabled by default. Enabling notifications permits candidate opt-in and connection setup; external dispatch additionally starts DISARMED in every fresh process. The startup operator log supplies the persisted runtime epoch and the fresh live process nonce. Candidate APIs do not expose them.
+
+Only after external reconciliation, place the exact ASCII bytes `epoch + '\n' + processNonce + '\n'` in the absolute server-configured `jobpilot.notifications.approval-file` (default `/run/jobpilot-notifications/approval`). It must be a regular file, owned by the application user, mode 0600, with no symlink. Keep its parent private and controlled by the operator. Keep approval outside source, image, database/document backups and candidate settings; never bake or automatically regenerate it. An old approval file cannot arm a new process, even after restoring its epoch. Recovery refuses dispatch even with its own otherwise-correct file. Permission to arm is process-specific and does not authorize replay of old SENDING/UNCERTAIN attempts.
+
+Recovery uses literal notification/background/polling disables and rejects unsafe overrides before refresh. It preserves owner access while closing beta admission and mutations. Direct producer, worker, scheduler, activation, stop-command and preference mutation calls must remain inert or fail closed before writes/network.
+
+## Local artifact verification
+
+Freeze the integrated source after independent review. Use Java 21, Node 22.12+, Python 3, existing Maven/npm/Chromium caches and disposable local PostgreSQL; do not accept skipped required PostgreSQL suites. Run `scripts/test-recovery-artifact.py` with optional `JOBPILOT_PRESERVED_V19_JAR` set to the retained actual old JAR to execute that regression, plus `scripts/test-integration-results.py`. Then use `scripts/build-recovery-artifact.py verify --output <new-private-directory-outside-checkout>`.
+
+Verification copies the exact dirty tracked/untracked source, runs both artifact/guard self-tests, npm ci, typecheck, lint, full Playwright, API build, full clean Maven verify and the required PostgreSQL report gate. It checks all existing V17–V19 and current V20 migration/resources/services plus exact packaged frontend assets. Preserve logs, XML, source inventory/archive and passing proof. Reverification is required after a source change. Build/save locally with the existing pinned `eclipse-temurin@sha256:51ab5e3302e7141ce665ca3ea85e8b5cd648eafbc3c0c90dd79d6537684e4555` and `linux/amd64`; no push. The runtime keeps UID 10001, default recovery, a two-file context and no approval file.
+
+The mandatory Phase 5 PostgreSQL suites are `V20NotificationMigrationIT`, `NotificationSettingsIT`, `NotificationActivationIT`, `NotificationDeliveryIT`, `NotificationConcurrencyIT` and `NotificationCapacityIT`; retain every existing required suite as well. Missing, empty, failed, erroneous or skipped suites fail the gate.
+
+## Saved-image rehearsal containment
+
+Run `com.jobpilot.identity.RecoveryImageRehearsal <new V20 manifest> <new private evidence directory> <preserved actual V19 manifest>` using the verified source's compiled test/runtime classpath. It checks both manifests, proof/evidence/JAR/source/archive hashes and pinned base/platform before image boot, uses exact image IDs without application pulls, and retains refusal logs and full private notification checkpoints.
+
+Normal scheduling and matching run. Personalized notifications intentionally enable the existing poller even when both legacy Telegram flags are false. Before any image starts, the harness acquires the real per-bot PostgreSQL SESSION advisory lease on a dedicated connection. Derive the key exactly as production: unsigned first 16 SHA-256 hex digits of `"jobpilot-poller" + actual NUL character + resolved synthetic token`. Keep that connection alive until every app container stops. The harness asserts its owning session and proves the actual `TelegramPollingLease` refuses a competing connection before HTTP; app polling must leave bot state unchanged. Recovery independently refuses the lease. Do not introduce production test flags or rely on a fake token to make HTTP harmless.
+
+Mount no external approval in this image rehearsal. Seed real authenticated consent and exact owned current eligible pending work plus populated RETRY/SENDING/SENT/UNCERTAIN/CANCELED/DROPPED/digest history. Historical attempts remain outside current local-day/rolling budgets so the pending row is actually deliverable once authorized; disarm is the missing gate. Compare all notification/sequence fingerprints before failed release, after old-image refusal, after failed release, during recovery/owner operations, and after a fresh enabled normal restart before new authentication. The Java fake-only regression also restores a real older pg_dump after one fake accepted send and proves that the restored pending row cannot replay under old approval.
+
+The real browser must load `/mini-app/` from the saved image, with no Vite server or API stubs. Abort only the external Telegram SDK script so a synthetic signed host fixture remains intact. Exercise two-account onboarding/matching/workflows and notification opt-out/save/reload/advanced timezone/score/quiet hours/connection handoff/pause/resume/disconnect/isolation/storage/mobile bounds, then check exact PostgreSQL preferences/revision counts. Never open real Telegram or employer pages.
+
+A local GO requires the final independent review, frozen-source complete verification, actual saved-image/browser rehearsal and unchanged V1–V19/prior-evidence hashes. Focused tests alone do not satisfy this gate. Production remains NO-GO pending separate authorization and production-specific checks.

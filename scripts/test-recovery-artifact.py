@@ -95,14 +95,14 @@ class RecoveryArtifactTest(unittest.TestCase):
 
     def test_wrong_or_incomplete_verification_is_rejected(self):
         proof = self.root.parent / "proof.json"
-        proof.write_text(json.dumps({"format": 1, "schema": 19}))
+        proof.write_text(json.dumps({"format": 1, "schema": 20}))
         with self.assertRaisesRegex(ValueError, "unsupported"):
             BUILD.validate_proof(self.root, proof)
-        proof.write_text(json.dumps({"format": 1, "schema": 19, "frontend_mode": "api",
+        proof.write_text(json.dumps({"format": 1, "schema": 20, "frontend_mode": "api",
                                      "verification": "passed", "source_sha256": "0" * 64}))
         with self.assertRaisesRegex(ValueError, "source has changed"):
             BUILD.validate_proof(self.root, proof)
-        proof.write_text(json.dumps({"format": 1, "schema": 19, "frontend_mode": "api",
+        proof.write_text(json.dumps({"format": 1, "schema": 20, "frontend_mode": "api",
                                      "verification": "passed", "source_sha256": self.identity(), "files": {}}))
         with self.assertRaisesRegex(ValueError, "omits required evidence"):
             BUILD.validate_proof(self.root, proof)
@@ -110,12 +110,13 @@ class RecoveryArtifactTest(unittest.TestCase):
     def test_evidence_mutation_and_path_escape_are_rejected(self):
         names = ("source.tar", "source-files.json", "jobpilot.jar", "Dockerfile.recovery",
                  "backend-verify.log", "required-postgres-suites.log", "frontend-tests.log",
+                 "artifact-self-tests.log", "integration-guard-self-tests.log",
                  "frontend-api-build.log", "frontend-typecheck.log", "frontend-lint.log", "npm-ci.log")
         evidence = self.root.parent / "evidence"
         evidence.mkdir()
         for name in names:
             (evidence / name).write_text("test evidence\n")
-        proof = {"format": 1, "schema": 19, "frontend_mode": "api", "verification": "passed",
+        proof = {"format": 1, "schema": 20, "frontend_mode": "api", "verification": "passed",
                  "source_sha256": self.identity(), "files": {n: BUILD.sha(evidence / n) for n in names}}
         path = evidence / "verification.json"
         path.write_text(json.dumps(proof))
@@ -129,11 +130,11 @@ class RecoveryArtifactTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unsafe path"):
             BUILD.validate_proof(self.root, path)
 
-    def test_runtime_metadata_identifies_v19_recovery(self):
+    def test_runtime_metadata_identifies_v20_recovery(self):
         dockerfile = SCRIPT.parent.parent / "Dockerfile.recovery"
         source = dockerfile.read_text()
-        self.assertIn("JOBPILOT_VERSION=phase4-recovery", source)
-        self.assertIn("com.jobpilot.schema.version=19", source)
+        self.assertIn("JOBPILOT_VERSION=phase5-recovery", source)
+        self.assertIn("com.jobpilot.schema.version=20", source)
         self.assertIn("SPRING_PROFILES_ACTIVE=recovery", source)
         self.assertIn("USER jobpilot", source)
 
@@ -143,6 +144,44 @@ class RecoveryArtifactTest(unittest.TestCase):
             archive.writestr("BOOT-INF/classes/static/mini-app/index.html", "old")
         with self.assertRaisesRegex(ValueError, "not a candidate-aware recovery fat JAR"):
             BUILD.validate_jar(jar, self.root / "dist")
+
+    def test_v19_proof_cannot_be_reused(self):
+        proof = self.root.parent / "v19.json"
+        proof.write_text(json.dumps({"format": 1, "schema": 19, "frontend_mode": "api",
+                                     "verification": "passed", "source_sha256": self.identity(), "files": {}}))
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            BUILD.validate_proof(self.root, proof)
+
+    def test_v20_requirements_and_exact_frontend_are_enforced(self):
+        # A complete pre-V20 fat JAR is materially different from a thin JAR.
+        required = BUILD.REQUIRED_JAR_ENTRIES
+        dist = self.root / "dist"
+        dist.mkdir()
+        for name in ("index.html", "app.js", "app.css"):
+            (dist / name).write_text("verified-" + name)
+        def jar_without(missing=None, corrupt=False):
+            jar = self.root / "candidate.jar"
+            with zipfile.ZipFile(jar, "w") as archive:
+                for name in required - ({missing} if missing else set()) - {"BOOT-INF/classes/static/mini-app/index.html"}:
+                    archive.writestr(name, "class")
+                archive.writestr("BOOT-INF/lib/spring.jar", "library")
+                for path in dist.iterdir():
+                    archive.writestr("BOOT-INF/classes/static/mini-app/" + path.name,
+                                     "wrong" if corrupt else path.read_text())
+            return jar
+        BUILD.validate_jar(jar_without(), dist)
+        v20 = {n for n in required if "V20" in n or "/notifications/" in n or "TelegramPollingLease" in n}
+        self.assertGreaterEqual(len(v20), 10)
+        for missing in v20:
+            with self.subTest(missing=missing), self.assertRaisesRegex(ValueError, "not a candidate-aware"):
+                BUILD.validate_jar(jar_without(missing), dist)
+        with self.assertRaisesRegex(ValueError, "frontend asset differs"):
+            BUILD.validate_jar(jar_without(corrupt=True), dist)
+
+    @unittest.skipUnless(os.environ.get("JOBPILOT_PRESERVED_V19_JAR"), "optional retained V19 artifact input")
+    def test_actual_preserved_v19_fat_jar_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "not a candidate-aware"):
+            BUILD.validate_jar(Path(os.environ["JOBPILOT_PRESERVED_V19_JAR"]), self.root / "unused-dist")
 
     def test_cli_rejects_unsafe_inputs_without_running_docker(self):
         for args in (["image"], ["build", "--base-image", "eclipse-temurin:latest"],

@@ -45,6 +45,16 @@ class TelegramUpdatePollerTest {
     }
 
     @Test
+    void personalizedActivationUsesExistingPollerWhenLegacySurfacesAreDisabled() {
+        var telegram=new JobPilotProperties.Telegram("synthetic-token","");
+        TelegramUpdatePoller poller=new TelegramUpdatePoller(client,processor,state,TestProperties.create(telegram));
+        org.springframework.test.util.ReflectionTestUtils.setField(poller,"notificationSettings",new com.jobpilot.notifications.NotificationProperties(true));
+        when(state.load()).thenReturn(Optional.of(new TelegramBotStateService.StateSnapshot(5L,null,0)));
+        when(client.getUpdates(any(),any(),anyInt())).thenReturn(List.of());
+        assertThat(poller.pollOnce()).isTrue();verify(client,times(1)).getUpdates(eq(6L),any(),anyInt());
+    }
+
+    @Test
     void requestsNextOffsetSortsUpdatesAndIgnoresDuplicates() {
         when(state.load()).thenReturn(Optional.of(
                 new TelegramBotStateService.StateSnapshot(5L, null, 0)));

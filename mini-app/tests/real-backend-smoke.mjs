@@ -1,6 +1,5 @@
 // Opt-in real browser -> API -> PostgreSQL rehearsal. No HTTP responses are stubbed.
 import { createHmac, randomUUID } from 'node:crypto';
-import { createServer } from 'vite';
 import { chromium, expect } from '@playwright/test';
 
 const backend = new URL(process.argv[2]);
@@ -14,16 +13,15 @@ function launch(user) {
   const secret = createHmac('sha256', 'WebAppData').update(BOT).digest();
   return new URLSearchParams({ ...fields, hash: createHmac('sha256', secret).update(data).digest('hex') }).toString();
 }
-process.env.VITE_JOBPILOT_MODE = 'api';
-const server = await createServer({ server: { host: '127.0.0.1', port: 0, proxy: { '/api': backend.origin } } });
-await server.listen();
-const base = `http://127.0.0.1:${server.httpServer.address().port}`;
+const base = new URL('/mini-app/', backend).href;
 const browser = await chromium.launch();
 try {
   async function account(id) {
     const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    await context.route('https://telegram.org/js/telegram-web-app.js*', route => route.abort());
     await context.addInitScript((data) => {
-      window.Telegram = { WebApp: { initData: data, colorScheme: 'light', ready() {}, expand() {}, openLink() {},
+      window.__telegramLinks = [];
+      window.Telegram = { WebApp: { initData: data, colorScheme: 'light', ready() {}, expand() {}, openLink() {}, openTelegramLink(url) { window.__telegramLinks.push(url); },
         onEvent() {}, offEvent() {}, BackButton: { show() {}, hide() {}, onClick() {}, offClick() {} } } };
     }, launch(id));
     const page = await context.newPage();
@@ -89,9 +87,80 @@ try {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   }
   if (process.argv[3]) await a.screenshot({ path: process.argv[3], fullPage: true });
+  async function settings(page) {
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Notifications', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Save notification settings' })).toBeEnabled();
+  }
+  async function save(page) {
+    await page.getByRole('button', { name: 'Save notification settings', exact: true }).click();
+    await expect(page.getByText('Notification settings saved.', { exact: true })).toBeVisible();
+  }
+  async function freshReload(page, user) {
+    await page.reload();
+    await expect(page.getByText('Reopen JobPilot in Telegram')).toBeVisible();
+    await page.evaluate((data) => { window.Telegram.WebApp.initData = data; window.dispatchEvent(new Event('focus')); }, launch(user));
+    await expect(page.getByRole('button', { name: 'Settings', exact: true })).toBeVisible();
+    await settings(page);
+  }
+  await settings(a); await settings(b);
+  for (const page of [a,b]) {
+    await expect(page.getByLabel('Allow Telegram notifications', { exact: true })).not.toBeChecked();
+    await expect(page.getByLabel('Minimum score', { exact: true })).not.toBeVisible();
+    await expect(page.getByText(/Saved timezone: UTC/)).toBeVisible();
+  }
+  await a.getByLabel('Allow Telegram notifications', { exact: true }).check();
+  await a.getByLabel('Daily digest at 09:00 local time', { exact: true }).check();
+  await a.getByText('Advanced notification settings', { exact: true }).click();
+  await a.getByLabel('Minimum score', { exact: true }).fill('91');
+  await a.getByLabel('Timezone', { exact: true }).fill('Europe/Bucharest');
+  await a.getByLabel('Quiet hours start', { exact: true }).fill('22:30');
+  await a.getByLabel('Quiet hours end', { exact: true }).fill('07:15');
+  await save(a);
+  expect(await a.evaluate(() => window.__telegramLinks)).toEqual([]);
+  await expect(a.getByRole('link', { name: 'Open bot to connect' })).toHaveCount(0);
+  await a.getByRole('button', { name: 'Prepare bot connection', exact: true }).click();
+  await expect(a.getByRole('link', { name: 'Open bot to connect' })).toHaveAttribute('href', /^https:\/\/t\.me\/JobPilotTestBot\?start=notify_[A-Za-z0-9_-]{43}$/);
+  expect(await a.evaluate(() => window.__telegramLinks)).toEqual([]);
+  await a.getByRole('link', { name: 'Open bot to connect' }).click();
+  expect(await a.evaluate(() => window.__telegramLinks.length)).toBe(1);
+  expect(a.url()).toBe(base);
+  await b.getByRole('button', { name: 'Refresh notification status', exact: true }).click();
+  await expect(b.getByLabel('Allow Telegram notifications', { exact: true })).not.toBeChecked();
+  await b.getByLabel('Allow Telegram notifications', { exact: true }).check();
+  await b.getByLabel('Immediate notifications', { exact: true }).uncheck();
+  await b.getByLabel('Daily digest at 09:00 local time', { exact: true }).check();
+  await b.getByText('Advanced notification settings', { exact: true }).click();
+  await b.getByLabel('Minimum score', { exact: true }).fill('87');
+  await b.getByLabel('Timezone', { exact: true }).fill('Asia/Kathmandu');
+  await save(b);
+  await freshReload(a,9002);
+  await expect(a.getByLabel('Allow Telegram notifications', { exact: true })).toBeChecked();
+  await expect(a.getByText(/Saved timezone: Europe\/Bucharest/)).toBeVisible();
+  await expect(a.getByLabel('Minimum score', { exact: true })).not.toBeVisible();
+  await a.getByText('Advanced notification settings', { exact: true }).click();
+  await expect(a.getByLabel('Minimum score', { exact: true })).toHaveValue('91');
+  await expect(a.getByLabel('Timezone', { exact: true })).toHaveValue('Europe/Bucharest');
+  await expect(a.getByLabel('Quiet hours start', { exact: true })).toHaveValue('22:30');
+  await expect(a.getByLabel('Quiet hours end', { exact: true })).toHaveValue('07:15');
+  await a.getByLabel('Pause notifications', { exact: true }).check(); await save(a);
+  await a.getByLabel('Pause notifications', { exact: true }).uncheck(); await save(a);
+  await a.getByRole('button', { name: 'Disconnect Telegram', exact: true }).click();
+  await expect(a.getByLabel('Allow Telegram notifications', { exact: true })).not.toBeChecked();
+  await freshReload(a,9002);
+  await expect(a.getByLabel('Allow Telegram notifications', { exact: true })).not.toBeChecked();
+  await b.getByRole('button', { name: 'Refresh notification status', exact: true }).click();
+  await expect(b.getByLabel('Allow Telegram notifications', { exact: true })).toBeChecked();
+  await expect(b.getByLabel('Immediate notifications', { exact: true })).not.toBeChecked();
+  await expect(b.getByLabel('Timezone', { exact: true })).toHaveValue('Asia/Kathmandu');
+  for (const page of [a,b]) {
+    expect(await page.evaluate(() => [localStorage.length, sessionStorage.length])).toEqual([0,0]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+  if(process.argv[3]) await a.screenshot({ path: process.argv[3].replace(/[^/]+$/, 'notification-settings-mobile.png'), fullPage: true });
+  console.log('PASS: packaged image assets → real notification API → PostgreSQL; opt-out defaults, advanced preferences, deliberate connection tap, pause/resume/disconnect, reload, two-account isolation and mobile/storage bounds.');
   console.log('PASS: real Recommended browser → authenticated API → persisted matching → owned workflow, UNKNOWN/coverage, detail and mobile bounds.');
   console.log('PASS: two real browser accounts independently save/dismiss/apply/undo one PostgreSQL vacancy and restore their own state after a fresh launch.');
 } finally {
   await browser.close();
-  await server.close();
 }

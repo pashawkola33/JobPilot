@@ -102,13 +102,15 @@ public class TelegramApiClient implements TelegramClient {
         long messageId = requiredLong(node, "message_id");
         TelegramUser from = node.has("from") ? toUser(node.get("from")) : null;
         TelegramChat chat = node.has("chat")
-                ? new TelegramChat(requiredLong(node.get("chat"), "id")) : null;
+                ? new TelegramChat(requiredLong(node.get("chat"), "id"),node.path("chat").path("type").isTextual()?node.path("chat").path("type").asText():null) : null;
         String text = node.hasNonNull("text") ? node.get("text").asText() : null;
-        return new TelegramMessage(messageId, from, chat, text);
+        return new TelegramMessage(messageId, from, chat, text,
+                node.path("date").isIntegralNumber()&&node.path("date").canConvertToLong()?node.path("date").longValue():null,
+                node.has("forward_origin")||node.has("forward_from")||node.has("forward_from_chat")||node.has("forward_date")||node.has("forward_sender_name")||node.has("is_automatic_forward"));
     }
 
     private TelegramUser toUser(JsonNode node) {
-        return node == null ? null : new TelegramUser(requiredLong(node, "id"));
+        return node == null ? null : new TelegramUser(requiredLong(node, "id"),node.path("is_bot").isBoolean()?node.path("is_bot").booleanValue():null);
     }
 
     private long requiredLong(JsonNode node, String field) {

@@ -38,7 +38,7 @@ public class IdentityWebBoundary implements WebMvcConfigurer {
                         if (authorization==null || !authorization.startsWith("Bearer ")) throw new IdentityException(401,"UNAUTHENTICATED");
                         request.setAttribute(PRINCIPAL, identities.authenticate(authorization.substring(7)));
                     }
-                    boolean jsonWrite = (request.getMethod().equals("PUT") && request.getRequestURI().equals("/api/mini-app/v2/me/search-profile")) || (request.getMethod().equals("PUT") && request.getRequestURI().matches("/api/mini-app/v2/(jobs/[1-9][0-9]*/workflow|applications/[1-9][0-9]*/(notes|follow-up|status))"))
+                    boolean jsonWrite = (request.getMethod().equals("PUT") && request.getRequestURI().equals("/api/mini-app/v2/me/notifications")) || (request.getMethod().equals("PUT") && request.getRequestURI().equals("/api/mini-app/v2/me/search-profile")) || (request.getMethod().equals("PUT") && request.getRequestURI().matches("/api/mini-app/v2/(jobs/[1-9][0-9]*/workflow|applications/[1-9][0-9]*/(notes|follow-up|status))"))
                             || (request.getMethod().equals("POST") && request.getRequestURI().equals("/api/mini-app/v2/undo"));
                     boolean matchesRead=request.getMethod().equals("GET")&&request.getRequestURI().equals("/api/mini-app/v2/matches");
                     if(matchesRead)for(var parameter:request.getParameterMap().entrySet()) {

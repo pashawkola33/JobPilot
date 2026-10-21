@@ -23,6 +23,8 @@ public class TelegramIdentityService {
     private final IdentityProperties settings;
     private final TelegramInitDataValidator validator;
     private final Clock clock;
+    @org.springframework.beans.factory.annotation.Autowired
+    private org.springframework.core.env.Environment notificationEnvironment=new org.springframework.core.env.StandardEnvironment();
     private final String credentialScope;
     private final String replayScope;
     private final SecureRandom random = new SecureRandom();
@@ -110,10 +112,16 @@ public class TelegramIdentityService {
         return new Account(Long.toString(current.candidateId()), complete?"READY":"ONBOARDING_REQUIRED", !complete,
                 settings.isLegacyOwner(current.telegramUserId()), current.expiresAt());
     }
+    @Transactional(timeout=15)
     public void revoke(AuthenticatedCandidate principal) {
         me(principal);
+        com.jobpilot.notifications.NotificationLocks.bound(jdbc).lockCandidate(principal.candidateId());
+        me(principal);
         jdbc.update("update auth_sessions set revoked_at=? where token_hash=?", Timestamp.from(clock.instant()), principal.sessionHash());
+        if(!java.util.Arrays.asList(notificationEnvironment.getActiveProfiles()).contains("recovery"))
+            com.jobpilot.notifications.NotificationSettingsService.revokedSession(jdbc,principal.candidateId(),principal.sessionHash(),clock.instant());
     }
+    public String credentialScope() { return credentialScope; }
     private void requireEnabled() {
         if (!settings.enabled()) throw new IdentityException(503, "IDENTITY_DISABLED");
     }

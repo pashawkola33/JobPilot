@@ -40,7 +40,11 @@ public class TelegramUpdateProcessor {
         this.renderer = renderer;
     }
 
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private com.jobpilot.notifications.NotificationActivationService activation;
+
     public void process(TelegramUpdate update) {
+        if(activation!=null&&activation.process(update))return;
         if (update.message() != null) {
             processMessage(update);
         } else if (update.callbackQuery() != null) {

@@ -42,9 +42,12 @@ public class JobProcessor {
     private final UrlCanonicalizer urlCanonicalizer;
     private final Clock clock;
     private com.jobpilot.personalizedmatching.MatchingCatalogue catalogue;
+    private com.jobpilot.notifications.NotificationDiscovery discovery;
+    @Autowired void notificationDiscovery(com.jobpilot.notifications.NotificationDiscovery value){discovery=value;}
     @Autowired void matchingCatalogue(com.jobpilot.personalizedmatching.MatchingCatalogue value) { catalogue=value; }
-    private JobProcessingResult captured(JobProcessingResult result,RawJob raw) {
-        if(catalogue!=null&&result.job()!=null)catalogue.capture(result.job(),raw);
+    private JobProcessingResult captured(JobProcessingResult result,RawJob raw) {return captured(result,raw,false);}
+    private JobProcessingResult captured(JobProcessingResult result,RawJob raw,boolean actualInsert) {
+        if(catalogue!=null&&result.job()!=null){catalogue.capture(result.job(),raw);if(actualInsert&&discovery!=null)discovery.inserted(result.job().getId());}
         return result;
     }
 
@@ -130,7 +133,7 @@ public class JobProcessor {
         Optional<Job> duplicate = deduplication.findDuplicate(normalized);
         if (duplicate.isEmpty()) {
             return captured(new JobProcessingResult(normalized, extractScoreAndSave(normalized),
-                    JobPersistenceOutcome.CREATED, location, earlyCareer, relevanceDecision, screening),raw);
+                    JobPersistenceOutcome.CREATED, location, earlyCareer, relevanceDecision, screening),raw,true);
         }
         Job existing = duplicate.get();
         if(existing.isLegacyAdmissionPending()) {
@@ -180,7 +183,7 @@ public class JobProcessor {
             if(deduplication.findDuplicate(normalized).isPresent())
                 return new JobProcessingResult(null,null,JobPersistenceOutcome.NOT_PERSISTED,location,career,relevanceDecision,current);
             normalized.markCatalogueOnly();jobs.save(normalized);
-            return captured(new JobProcessingResult(normalized,null,JobPersistenceOutcome.CREATED,location,career,relevanceDecision,current),raw);
+            return captured(new JobProcessingResult(normalized,null,JobPersistenceOutcome.CREATED,location,career,relevanceDecision,current),raw,true);
         }
 
         Job existing = stored.get();

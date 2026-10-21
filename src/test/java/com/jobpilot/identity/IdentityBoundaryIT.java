@@ -51,7 +51,7 @@ class IdentityBoundaryIT {
 
     @BeforeEach void resetIdentityFixtures() {
         if (Boolean.TRUE.equals(jdbc.queryForObject("select exists(select 1 from information_schema.tables where table_name='telegram_identities')", Boolean.class))) {
-            jdbc.execute("truncate telegram_auth_exchanges, auth_sessions, telegram_identities");
+            jdbc.execute("truncate telegram_auth_exchanges, auth_sessions, telegram_identities cascade");
             jdbc.update("delete from candidates where stable_key like 'account-%'");
         }
     }
